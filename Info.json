@@ -1,0 +1,10 @@
+{
+  "Id": "CheryTools",
+  "DisplayName": "Chery Tools",
+  "Author": "Chery",
+  "Version": "1.0.4.3",
+  "AssemblyName": "CheryTools.dll",
+  "EntryMethod": "CheryTools.Main.Load",
+  "HomePage": "",
+  "Repository": ""
+}
