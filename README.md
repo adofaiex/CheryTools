@@ -32,7 +32,7 @@
 
 1. 确保已安装 **UnityModManager (UMM)** 并正确配置 ADOFAI 游戏目录。
 2. 下载最新版本的 `CheryTools` 压缩包。
-3. 将压缩包拖入 UMM 的 Mods 界面，或者解压到游戏根目录的 `Mods` 文件夹中。
+3. 将压缩包拖入 UMM 的 Mods 界面
 4. 启动游戏，按下默认呼出组合键 (通常是 `Ctrl + F10`) 即可在 UMM 菜单中看到 Chery Tools，也可以使用快捷键 `Insert` 呼出本 Mod 专属的 ImGui 设置界面。
 
 ## 设置与使用 (Usage)
