@@ -1,4 +1,6 @@
-using System;
+﻿using System;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using UnityEngine;
 using ImGuiNET;
 
@@ -19,10 +21,305 @@ namespace CheryTools
         private static float _fpsTimer = 0f;
         private static float _cachedFps = 0f;
         private static int _draggingIndex = -1;
+        private static int _draggingIndexImg = -1;
+        private static int _draggingIndexBar = -1;
+        private const float OvSnapThreshold = 5f;
+        private static float _ovDragStartX = 0f;
+        private static float _ovDragStartY = 0f;
+        private static float _ovDragTotalDeltaX = 0f;
+        private static float _ovDragTotalDeltaY = 0f;
+        private static readonly Regex RichTextTagRegex = new Regex("<.*?>", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex FpsTagRegex = new Regex(@"\{fps(?:[:](\d+))?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex AccTagRegex = new Regex(@"\{acc(?:[:](\d+))?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex XAccTagRegex = new Regex(@"\{xacc(?:[:](\d+))?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex ProgressTagRegex = new Regex(@"\{progress(?:[:](\d+))?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        private struct OvSnapCandidate
+        {
+            public float Value;
+            public float MinLimit;
+            public float MaxLimit;
+        }
+
+        private struct OvAlignLine
+        {
+            public bool IsVertical;
+            public float Coord;
+            public float MinLimit;
+            public float MaxLimit;
+        }
+
+        private static readonly System.Collections.Generic.List<OvAlignLine> _activeOvAlignLines = new System.Collections.Generic.List<OvAlignLine>();
 
         private int _lastHitCount = 0;
         private int _currentPureCombo = 0;
         private int _currentPerfectCombo = 0;
+
+        private static bool IsPointInRect(System.Numerics.Vector2 point, System.Numerics.Vector2 min, System.Numerics.Vector2 max)
+        {
+            return point.X >= min.X && point.X <= max.X && point.Y >= min.Y && point.Y <= max.Y;
+        }
+
+        private static bool TryGetCustomFont(string path, bool large, out ImFontPtr font)
+        {
+            font = default(ImFontPtr);
+            if (string.IsNullOrEmpty(path))
+            {
+                return false;
+            }
+
+            var fonts = large ? ImGuiController.CustomLargeFonts : ImGuiController.CustomFonts;
+            if (fonts.TryGetValue(path, out font))
+            {
+                return true;
+            }
+
+            string resolvedPath = CheryToolsAssets.ResolveAssetPath(path);
+            return !string.IsNullOrEmpty(resolvedPath) && fonts.TryGetValue(resolvedPath, out font);
+        }
+
+        private static string FormatDuration(double seconds)
+        {
+            if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0.0)
+                seconds = 0.0;
+
+            int totalSeconds = (int)Math.Floor(seconds);
+            int hours = totalSeconds / 3600;
+            int minutes = (totalSeconds / 60) % 60;
+            int secs = totalSeconds % 60;
+
+            if (hours > 0)
+                return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}:{2:00}", hours, minutes, secs);
+
+            return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}", minutes, secs);
+        }
+
+        private static string GetMusicText()
+        {
+            string musicText = "Author - SongName";
+            if (scrUIController.instance != null && scrUIController.instance.txtLevelName != null)
+            {
+                musicText = scrUIController.instance.txtLevelName.text;
+            }
+
+            return RichTextTagRegex.Replace(musicText, string.Empty);
+        }
+
+        private static string GetLevelAuthorText()
+        {
+            try
+            {
+                if (ADOBase.customLevel != null && ADOBase.customLevel.levelData != null)
+                {
+                    string author = ADOBase.customLevel.levelData.author;
+                    if (!string.IsNullOrEmpty(author))
+                        return RichTextTagRegex.Replace(author, string.Empty);
+                }
+            }
+            catch
+            {
+            }
+
+            return "";
+        }
+
+        private static string GetSpeedMultiplierText()
+        {
+            float speed = 1f;
+            if (scrConductor.instance != null && scrConductor.instance.song != null)
+            {
+                speed = scrConductor.instance.song.pitch;
+            }
+            else if (GCS.speedTrialMode)
+            {
+                speed = GCS.currentSpeedTrial;
+            }
+
+            return speed.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatNumberTrimZeros(double value, int decimals)
+        {
+            decimals = Math.Max(0, Math.Min(6, decimals));
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                value = 0.0;
+            }
+
+            double rounded = Math.Round(value, decimals, MidpointRounding.AwayFromZero);
+            if (Math.Abs(rounded) < Math.Pow(10.0, -decimals) * 0.5)
+            {
+                rounded = 0.0;
+            }
+
+            if (decimals == 0)
+            {
+                return rounded.ToString("0", CultureInfo.InvariantCulture);
+            }
+
+            return rounded.ToString("0." + new string('#', decimals), CultureInfo.InvariantCulture);
+        }
+
+        private static int GetTagDecimals(Match match, int defaultDecimals)
+        {
+            int decimals = defaultDecimals;
+            if (match.Groups[1].Success && !int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out decimals))
+            {
+                decimals = defaultDecimals;
+            }
+
+            return Math.Max(0, Math.Min(6, decimals));
+        }
+
+        private static string BuildOvTextLayoutKey(OverlayerText ovText, string renderedText)
+        {
+            string text = renderedText ?? string.Empty;
+            string fontPath = ovText.FontPath ?? string.Empty;
+            return string.Concat(
+                fontPath,
+                "|", text,
+                "|", ovText.FontSize.ToString("R", CultureInfo.InvariantCulture),
+                "|", ovText.LetterSpacing.ToString("R", CultureInfo.InvariantCulture),
+                "|", ovText.LineHeightOffset.ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        private static bool TryGetCurrentFloor(out scrFloor currentFloor)
+        {
+            currentFloor = null;
+            if (scrController.instance == null || scrLevelMaker.instance == null || scrLevelMaker.instance.listFloors == null)
+                return false;
+
+            int seqID = scrController.instance.currentSeqID;
+            if (seqID < 0 || seqID >= scrLevelMaker.instance.listFloors.Count)
+                return false;
+
+            currentFloor = scrLevelMaker.instance.listFloors[seqID];
+            return currentFloor != null;
+        }
+
+        private static int GetTotalTileCount()
+        {
+            if (scrLevelMaker.instance == null || scrLevelMaker.instance.listFloors == null)
+                return 0;
+
+            return Math.Max(0, scrLevelMaker.instance.listFloors.Count);
+        }
+
+        private static int GetPassedTileCount()
+        {
+            if (scrController.instance == null)
+                return 0;
+
+            int total = GetTotalTileCount();
+            int currentSeqId = scrController.instance.currentSeqID + 1;
+            if (total <= 0)
+                return Math.Max(0, currentSeqId);
+
+            return Math.Max(0, Math.Min(total, currentSeqId));
+        }
+
+        private static bool TryGetMapTotalSeconds(out double seconds)
+        {
+            seconds = 0.0;
+            if (scrLevelMaker.instance == null || scrLevelMaker.instance.listFloors == null || scrLevelMaker.instance.listFloors.Count == 0)
+                return false;
+
+            scrFloor lastFloor = scrLevelMaker.instance.listFloors[scrLevelMaker.instance.listFloors.Count - 1];
+            if (lastFloor == null)
+                return false;
+
+            seconds = Math.Max(0.0, lastFloor.entryTime);
+            return true;
+        }
+
+        private static bool TryGetMapPlayedSeconds(out double seconds)
+        {
+            seconds = 0.0;
+            if (scrConductor.instance == null)
+                return false;
+
+            seconds = Math.Max(0.0, scrConductor.instance.songposition_minusi);
+            if (TryGetMapTotalSeconds(out double total))
+                seconds = Math.Min(seconds, total);
+
+            return true;
+        }
+
+        private static bool TryGetMusicTotalSeconds(out double seconds)
+        {
+            seconds = 0.0;
+            if (scrConductor.instance == null || scrConductor.instance.song == null || scrConductor.instance.song.clip == null)
+                return false;
+
+            seconds = Math.Max(0.0, scrConductor.instance.song.clip.length);
+            return true;
+        }
+
+        private static bool TryGetMusicPlayedSeconds(out double seconds)
+        {
+            seconds = 0.0;
+            if (scrConductor.instance == null || scrConductor.instance.song == null)
+                return false;
+
+            seconds = Math.Max(0.0, scrConductor.instance.song.time);
+            if (TryGetMusicTotalSeconds(out double total))
+                seconds = Math.Min(seconds, total);
+
+            return true;
+        }
+
+        private static bool TryGetCurrentClicksPerSecond(out double cps)
+        {
+            cps = 0.0;
+            if (scrConductor.instance == null || scrConductor.instance.song == null)
+                return false;
+            if (!TryGetCurrentFloor(out scrFloor currentFloor) || currentFloor.nextfloor == null)
+                return false;
+
+            double delta = currentFloor.nextfloor.entryTime - currentFloor.entryTime;
+            if (delta <= 0.000001)
+                return false;
+
+            cps = scrConductor.instance.song.pitch / delta;
+            return true;
+        }
+
+        private static string GetJudgeText()
+        {
+            switch (GCS.difficulty)
+            {
+                case Difficulty.Lenient:
+                    return "\u5BBD\u677E";
+                case Difficulty.Strict:
+                    return "\u4E25\u683C";
+                case Difficulty.Normal:
+                default:
+                    return "\u666E\u901A";
+            }
+        }
+
+        private static string FormatPercent(double percent)
+        {
+            double rounded = Math.Round(percent);
+            if (Math.Abs(percent - rounded) < 0.001)
+                return rounded.ToString("0", CultureInfo.InvariantCulture) + "%";
+
+            return percent.ToString("0.##", CultureInfo.InvariantCulture) + "%";
+        }
+
+        private static string GetCurrentTimingWindowScaleText()
+        {
+            double scale = 1.0;
+            if (TryGetCurrentFloor(out scrFloor currentFloor))
+            {
+                if (currentFloor.nextfloor != null)
+                    scale = currentFloor.nextfloor.marginScale;
+                else
+                    scale = currentFloor.marginScale;
+            }
+
+            return FormatPercent(scale * 100.0);
+        }
 
         public class AnimPlaybackState
         {
@@ -31,6 +328,71 @@ namespace CheryTools
         }
         
         private System.Collections.Generic.Dictionary<OverlayerAnimation, AnimPlaybackState> _animStates = new System.Collections.Generic.Dictionary<OverlayerAnimation, AnimPlaybackState>();
+        private readonly System.Collections.Generic.Dictionary<OverlayerText, string> _ovTextLayoutKeys = new System.Collections.Generic.Dictionary<OverlayerText, string>();
+        private readonly System.Collections.Generic.Dictionary<OverlayerText, UnityEngine.Vector2> _ovTextStableSizes = new System.Collections.Generic.Dictionary<OverlayerText, UnityEngine.Vector2>();
+        private readonly System.Collections.Generic.List<string> _ovTextRenderIds = new System.Collections.Generic.List<string>();
+        private readonly System.Collections.Generic.List<string> _ovTextSelectIds = new System.Collections.Generic.List<string>();
+        private readonly System.Collections.Generic.List<OvImageRenderIds> _ovImageRenderIds = new System.Collections.Generic.List<OvImageRenderIds>();
+        private readonly System.Collections.Generic.List<OvProgressBarRenderIds> _ovProgressBarRenderIds = new System.Collections.Generic.List<OvProgressBarRenderIds>();
+
+        private sealed class OvImageRenderIds
+        {
+            public string Image;
+            public string Missing;
+            public string MissingOutline;
+            public string Select;
+        }
+
+        private sealed class OvProgressBarRenderIds
+        {
+            public string Background;
+            public string Fill;
+            public string Border;
+            public string Select;
+        }
+
+        private static string GetIndexedRenderId(System.Collections.Generic.List<string> ids, string prefix, int index)
+        {
+            while (ids.Count <= index)
+            {
+                ids.Add(prefix + ids.Count.ToString());
+            }
+            return ids[index];
+        }
+
+        private OvImageRenderIds GetOvImageRenderIds(int index)
+        {
+            while (_ovImageRenderIds.Count <= index)
+            {
+                int id = _ovImageRenderIds.Count;
+                string prefix = "ov_img_" + id.ToString();
+                _ovImageRenderIds.Add(new OvImageRenderIds
+                {
+                    Image = prefix,
+                    Missing = prefix + "_missing",
+                    MissingOutline = prefix + "_missing_outline",
+                    Select = prefix + "_select"
+                });
+            }
+            return _ovImageRenderIds[index];
+        }
+
+        private OvProgressBarRenderIds GetOvProgressBarRenderIds(int index)
+        {
+            while (_ovProgressBarRenderIds.Count <= index)
+            {
+                int id = _ovProgressBarRenderIds.Count;
+                string prefix = "ov_bar_" + id.ToString();
+                _ovProgressBarRenderIds.Add(new OvProgressBarRenderIds
+                {
+                    Background = prefix + "_bg",
+                    Fill = prefix + "_fill",
+                    Border = prefix + "_border",
+                    Select = prefix + "_select"
+                });
+            }
+            return _ovProgressBarRenderIds[index];
+        }
 
         public AnimPlaybackState GetAnimState(OverlayerAnimation anim)
         {
@@ -45,16 +407,16 @@ namespace CheryTools
         private bool _anyKeyPressedThisFrame = false;
         private bool _comboIncreasedThisFrame = false;
 
-        private (float x, float y, float sx, float sy, float opacity) EvaluateAnimState(OverlayerAnimation anim, float currentTime)
+        private (float x, float y, float sx, float sy, float opacity, float rotation) EvaluateAnimState(OverlayerAnimation anim, float currentTime)
         {
-            if (anim.ParsedFrames == null || anim.ParsedFrames.Count == 0) return (0f, 0f, 1f, 1f, 1f);
+            if (anim.ParsedFrames == null || anim.ParsedFrames.Count == 0) return (0f, 0f, 1f, 1f, 1f, 0f);
             
             var frames = anim.ParsedFrames;
             JsonAnimFrame prev = frames[0];
             JsonAnimFrame next = frames[frames.Count - 1];
             
-            if (currentTime <= prev.time) return (prev.x ?? 0f, prev.y ?? 0f, prev.zoomx ?? 1f, prev.zoomy ?? 1f, prev.opacity ?? 1f);
-            if (currentTime >= next.time) return (next.x ?? 0f, next.y ?? 0f, next.zoomx ?? 1f, next.zoomy ?? 1f, next.opacity ?? 1f);
+            if (currentTime <= prev.time) return (prev.x ?? 0f, prev.y ?? 0f, prev.zoomx ?? 1f, prev.zoomy ?? 1f, prev.opacity ?? 1f, prev.rotation ?? 0f);
+            if (currentTime >= next.time) return (next.x ?? 0f, next.y ?? 0f, next.zoomx ?? 1f, next.zoomy ?? 1f, next.opacity ?? 1f, next.rotation ?? 0f);
             
             for (int k = 0; k < frames.Count - 1; k++)
             {
@@ -74,8 +436,9 @@ namespace CheryTools
             float sx = (prev.zoomx ?? 1f) + ((next.zoomx ?? 1f) - (prev.zoomx ?? 1f)) * easedT;
             float sy = (prev.zoomy ?? 1f) + ((next.zoomy ?? 1f) - (prev.zoomy ?? 1f)) * easedT;
             float opacity = (prev.opacity ?? 1f) + ((next.opacity ?? 1f) - (prev.opacity ?? 1f)) * easedT;
+            float rotation = (prev.rotation ?? 0f) + ((next.rotation ?? 0f) - (prev.rotation ?? 0f)) * easedT;
             
-            return (x, y, sx, sy, opacity);
+            return (x, y, sx, sy, opacity, rotation);
         }
 
         private void Update()
@@ -163,15 +526,61 @@ namespace CheryTools
                     }
                 }
             }
+
+            if (Main.Settings.OverlayerImages != null)
+            {
+                foreach (var ovImg in Main.Settings.OverlayerImages)
+                {
+                    if (ovImg.Animations == null) continue;
+                    foreach (var anim in ovImg.Animations)
+                    {
+                        if (!anim.IsEnabled) continue;
+                        
+                        var state = GetAnimState(anim);
+                        if (anim.Trigger == AnimationTrigger.OnClick && _anyKeyPressedThisFrame)
+                        {
+                            state.IsPlaying = true;
+                            state.CurrentTime = 0f;
+                        }
+                        else if (anim.Trigger == AnimationTrigger.OnComboIncrease && _comboIncreasedThisFrame)
+                        {
+                            state.IsPlaying = true;
+                            state.CurrentTime = 0f;
+                        }
+
+                        if (state.IsPlaying && anim.ParsedFrames != null && anim.ParsedFrames.Count > 0)
+                        {
+                            float maxTime = anim.ParsedFrames[anim.ParsedFrames.Count - 1].time;
+                            state.CurrentTime += UnityEngine.Time.unscaledDeltaTime;
+                            if (state.CurrentTime > maxTime)
+                            {
+                                state.IsPlaying = false;
+                                state.CurrentTime = maxTime;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         public void RenderUI()
         {
-            if (!Main.Settings.OverlayerSystemEnabled) return;
+            if (!Main.Settings.OverlayerSystemEnabled)
+            {
+                OverlayerUnityRenderer.HideAll();
+                return;
+            }
 
             bool editMode = Main.Settings.OverlayerEditMode;
-            if (Main.Settings.OverlayerOnlyShowPlaying && !Main.IsGamePlaying() && !editMode) return;
+            if (!editMode) _activeOvAlignLines.Clear();
+            if (CheryToolsMenu.IsMenuOpen) _activeOvAlignLines.Clear();
+            if (Main.Settings.OverlayerOnlyShowPlaying && !Main.IsGamePlaying() && !editMode)
+            {
+                OverlayerUnityRenderer.HideAll();
+                return;
+            }
 
+            OverlayerUnityRenderer.BeginFrame();
             var texts = Main.Settings.OverlayerTexts;
 
             _fpsTimer += UnityEngine.Time.unscaledDeltaTime;
@@ -180,7 +589,6 @@ namespace CheryTools
                 _cachedFps = 1.0f / UnityEngine.Time.unscaledDeltaTime;
                 _fpsTimer = 0f;
             }
-            
             for (int i = 0; i < texts.Count; i++)
             {
                 var ovText = texts[i];
@@ -190,7 +598,6 @@ namespace CheryTools
                 float animOffsetY = 0f;
                 float animScaleXMult = 1f;
                 float animScaleYMult = 1f;
-                float animOpacityMult = 1f;
 
                 if (ovText.Animations != null)
                 {
@@ -208,12 +615,10 @@ namespace CheryTools
                         
                         animScaleXMult *= evaluated.sx;
                         animScaleYMult *= evaluated.sy;
-                        
-                        animOpacityMult *= evaluated.opacity;
                     }
                 }
 
-                string rawText = ovText.TextFormat;
+                string rawText = ovText.TextFormat ?? string.Empty;
                 
                 // Process placeholders
                 if (rawText.Contains("{"))
@@ -229,14 +634,74 @@ namespace CheryTools
                         int tot = Main.Settings.TotalHits;
                         rawText = rawText.Replace("{tot}", tot.ToString());
                     }
+                    if (rawText.Contains("{ttile}"))
+                    {
+                        rawText = rawText.Replace("{ttile}", GetTotalTileCount().ToString(CultureInfo.InvariantCulture));
+                    }
+                    if (rawText.Contains("{atile}"))
+                    {
+                        rawText = rawText.Replace("{atile}", GetPassedTileCount().ToString(CultureInfo.InvariantCulture));
+                    }
+                    if (rawText.Contains("{level}"))
+                    {
+                        rawText = rawText.Replace("{level}", GetLevelAuthorText());
+                    }
+                    if (rawText.Contains("{x}"))
+                    {
+                        rawText = rawText.Replace("{x}", GetSpeedMultiplierText());
+                    }
                     if (rawText.Contains("{fps"))
                     {
-                        rawText = System.Text.RegularExpressions.Regex.Replace(rawText, @"\{fps(?:[:](\d+))?\}", match => {
-                            if (match.Groups[1].Success) {
-                                return _cachedFps.ToString("F" + match.Groups[1].Value);
-                            }
-                            return ((int)_cachedFps).ToString();
+                        rawText = FpsTagRegex.Replace(rawText, match => {
+                            int decimals = GetTagDecimals(match, 0);
+                            return FormatNumberTrimZeros(_cachedFps, decimals);
                         });
+                    }
+                    if (rawText.Contains("{maptime}"))
+                    {
+                        rawText = rawText.Replace("{maptime}", TryGetMapTotalSeconds(out double mapTotalSeconds) ? FormatDuration(mapTotalSeconds) : "0:00");
+                    }
+                    if (rawText.Contains("{maptime:p}"))
+                    {
+                        rawText = rawText.Replace("{maptime:p}", TryGetMapPlayedSeconds(out double mapPlayedSeconds) ? FormatDuration(mapPlayedSeconds) : "0:00");
+                    }
+                    if (rawText.Contains("{musictime}"))
+                    {
+                        rawText = rawText.Replace("{musictime}", TryGetMusicTotalSeconds(out double musicTotalSeconds) ? FormatDuration(musicTotalSeconds) : "0:00");
+                    }
+                    if (rawText.Contains("{musictime:p}"))
+                    {
+                        rawText = rawText.Replace("{musictime:p}", TryGetMusicPlayedSeconds(out double musicPlayedSeconds) ? FormatDuration(musicPlayedSeconds) : "0:00");
+                    }
+                    if (rawText.Contains("{cur}"))
+                    {
+                        rawText = rawText.Replace("{cur}", TryGetCurrentClicksPerSecond(out double cps) ? FormatNumberTrimZeros(cps, 2) : "0");
+                    }
+                    if (rawText.Contains("{judge}"))
+                    {
+                        rawText = rawText.Replace("{judge}", GetJudgeText());
+                    }
+                    if (rawText.Contains("{interval}"))
+                    {
+                        rawText = rawText.Replace("{interval}", GetCurrentTimingWindowScaleText());
+                    }
+                    if (rawText.Contains("{date"))
+                    {
+                        DateTime now = DateTime.Now;
+                        if (rawText.Contains("{datey}"))
+                            rawText = rawText.Replace("{datey}", now.ToString("yyyy", CultureInfo.InvariantCulture));
+                        if (rawText.Contains("{datem}"))
+                            rawText = rawText.Replace("{datem}", now.ToString("MM", CultureInfo.InvariantCulture));
+                        if (rawText.Contains("{dated}"))
+                            rawText = rawText.Replace("{dated}", now.ToString("dd", CultureInfo.InvariantCulture));
+                    }
+                    if (rawText.Contains("{wtime"))
+                    {
+                        DateTime now = DateTime.Now;
+                        if (rawText.Contains("{wtime12}"))
+                            rawText = rawText.Replace("{wtime12}", now.ToString("hh:mm:ss tt", CultureInfo.InvariantCulture));
+                        if (rawText.Contains("{wtime}"))
+                            rawText = rawText.Replace("{wtime}", now.ToString("HH:mm:ss", CultureInfo.InvariantCulture));
                     }
                     if (scrConductor.instance != null)
                     {
@@ -281,39 +746,35 @@ namespace CheryTools
                     if (rawText.Contains("{vl}")) rawText = rawText.Replace("{vl}", tracker != null ? tracker.GetHits(HitMargin.VeryLate).ToString() : "0");
                     if (rawText.Contains("{tl}")) rawText = rawText.Replace("{tl}", tracker != null ? tracker.GetHits(HitMargin.TooLate).ToString() : "0");
                     if (rawText.Contains("{miss}")) rawText = rawText.Replace("{miss}", tracker != null ? tracker.GetDeaths().ToString() : "0");
+                    if (rawText.Contains("{fm}")) rawText = rawText.Replace("{fm}", tracker != null ? tracker.GetHits(HitMargin.FailMiss).ToString() : "0");
+                    if (rawText.Contains("{fo}")) rawText = rawText.Replace("{fo}", tracker != null ? tracker.GetHits(HitMargin.FailOverload).ToString() : "0");
                     
                     if (rawText.Contains("{acc"))
                     {
-                        rawText = System.Text.RegularExpressions.Regex.Replace(rawText, @"\{acc(?:[:](\d+))?\}", match => {
+                        rawText = AccTagRegex.Replace(rawText, match => {
                             float acc = tracker != null ? (tracker.percentAcc * 100f) : 0f;
-                            if (match.Groups[1].Success) {
-                                return acc.ToString("F" + match.Groups[1].Value);
-                            }
-                            return acc.ToString("F2");
+                            int decimals = GetTagDecimals(match, 2);
+                            return FormatNumberTrimZeros(acc, decimals);
                         });
                     }
                     if (rawText.Contains("{xacc"))
                     {
-                        rawText = System.Text.RegularExpressions.Regex.Replace(rawText, @"\{xacc(?:[:](\d+))?\}", match => {
+                        rawText = XAccTagRegex.Replace(rawText, match => {
                             float acc = tracker != null ? (tracker.percentXAcc * 100f) : 0f;
-                            if (match.Groups[1].Success) {
-                                return acc.ToString("F" + match.Groups[1].Value);
-                            }
-                            return acc.ToString("F2");
+                            int decimals = GetTagDecimals(match, 2);
+                            return FormatNumberTrimZeros(acc, decimals);
                         });
                     }
-                    if (rawText.Contains("{progress}"))
+                    if (rawText.Contains("{progress"))
                     {
-                        rawText = System.Text.RegularExpressions.Regex.Replace(rawText, @"\{progress(?:[:](\d+))?\}", match => {
-                            int decimals = 2;
-                            if (match.Groups[1].Success) int.TryParse(match.Groups[1].Value, out decimals);
-                            string formatStr = "F" + decimals;
+                        rawText = ProgressTagRegex.Replace(rawText, match => {
+                            int decimals = GetTagDecimals(match, 2);
                             double p = 0;
                             if (tracker != null && scrController.instance != null && scrController.instance.gameworld)
                             {
                                 p = scrController.instance.percentComplete * 100.0;
                             }
-                            return p.ToString(formatStr);
+                            return FormatNumberTrimZeros(p, decimals);
                         });
                     }
 
@@ -328,217 +789,108 @@ namespace CheryTools
 
                     if (rawText.Contains("{music}"))
                     {
-                        string musicText = "Author - SongName";
-                        if (scrUIController.instance != null && scrUIController.instance.txtLevelName != null)
+                        rawText = rawText.Replace("{music}", GetMusicText());
+                    }
+                }
+
+                string layoutKey = BuildOvTextLayoutKey(ovText, rawText);
+                UnityEngine.Vector2 cachedLayoutSize = UnityEngine.Vector2.zero;
+                bool useCachedLayoutSize = _ovTextLayoutKeys.TryGetValue(ovText, out string previousLayoutKey)
+                    && string.Equals(previousLayoutKey, layoutKey, StringComparison.Ordinal)
+                    && _ovTextStableSizes.TryGetValue(ovText, out cachedLayoutSize);
+
+                string textRenderId = GetIndexedRenderId(_ovTextRenderIds, "ov_text_", i);
+                SdfTextRenderer.TextBounds textBounds = SdfTextRenderer.DrawOverlayerText(
+                    textRenderId,
+                    ovText,
+                    rawText,
+                    animOffsetX,
+                    animOffsetY,
+                    animScaleXMult,
+                    animScaleYMult,
+                    useCachedLayoutSize ? cachedLayoutSize.x : 0f,
+                    useCachedLayoutSize ? cachedLayoutSize.y : 0f,
+                    useCachedLayoutSize,
+                    RenderDepth.ToSortingOrder(ovText.Depth, RenderDepth.SublayerText));
+
+                float contentWindowWidth = Mathf.Max(1f, textBounds.Width);
+                float contentWindowHeight = Mathf.Max(1f, textBounds.Height);
+                if (!useCachedLayoutSize)
+                {
+                    float safeScaleX = Mathf.Max(0.001f, animScaleXMult);
+                    float safeScaleY = Mathf.Max(0.001f, animScaleYMult);
+                    _ovTextLayoutKeys[ovText] = layoutKey;
+                    _ovTextStableSizes[ovText] = new UnityEngine.Vector2(contentWindowWidth / safeScaleX, contentWindowHeight / safeScaleY);
+                }
+                float visualLeft = textBounds.Left;
+                float visualTop = textBounds.Top;
+                float visualWidth = contentWindowWidth;
+                float visualHeight = contentWindowHeight;
+
+                if (editMode && !CheryToolsMenu.IsMenuOpen)
+                {
+                    System.Numerics.Vector2 screenMousePos = ImGuiController.ScreenMousePos;
+                    System.Numerics.Vector2 screenMouseDelta = ImGuiController.ScreenMouseDelta;
+                    System.Numerics.Vector2 screenDisplaySize = ImGuiController.ScreenDisplaySize;
+                    var hitMin = new System.Numerics.Vector2(visualLeft, visualTop);
+                    var hitMax = new System.Numerics.Vector2(visualLeft + visualWidth, visualTop + visualHeight);
+                    bool isTextHit = IsPointInRect(screenMousePos, hitMin, hitMax);
+                    bool mouseDown = Input.GetMouseButton(0);
+                    bool mouseClicked = Input.GetMouseButtonDown(0);
+
+                    if (!mouseDown)
+                    {
+                        if (_draggingIndex == i)
                         {
-                            musicText = scrUIController.instance.txtLevelName.text;
-                        }
-                        // 去除可能包含的富文本标签，如 <size=0> 或 </color>
-                        musicText = System.Text.RegularExpressions.Regex.Replace(musicText, "<.*?>", string.Empty);
-                        rawText = rawText.Replace("{music}", musicText);
-                    }
-                }
-
-                ImGuiWindowFlags flags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
-                
-                flags |= ImGuiWindowFlags.NoMove;
-
-                if (!editMode)
-                {
-                    flags |= ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav | ImGuiWindowFlags.NoInputs;
-                }
-
-                // Calculate max effective size for this block (checks FontSize and formula size tags)
-                float maxEffectiveSize = ovText.FontSize;
-                if (!string.IsNullOrEmpty(rawText))
-                {
-                    try {
-                        var tempSegs = RichTextParser.Parse(rawText, new System.Numerics.Vector4(1, 1, 1, 1));
-                        foreach (var seg in tempSegs)
-                        {
-                            if (seg.HasSizeTag)
-                            {
-                                if (seg.SizeValue > 0)
-                                {
-                                    maxEffectiveSize = Mathf.Max(maxEffectiveSize, seg.SizeValue);
-                                }
-                                else if (seg.SizeValue < 0)
-                                {
-                                    maxEffectiveSize = Mathf.Max(maxEffectiveSize, -seg.SizeValue * ovText.FontSize);
-                                }
-                            }
-                        }
-                    } catch (Exception) {
-                        // fallback to base FontSize
-                    }
-                }
-
-                // Two-tier font selection: use 128px font for large text, 48px for small/medium
-                bool hasCustomFont = !string.IsNullOrEmpty(ovText.FontPath) && ImGuiController.CustomFonts.ContainsKey(ovText.FontPath);
-                bool hasCustomLargeFont = hasCustomFont && ImGuiController.CustomLargeFonts.ContainsKey(ovText.FontPath);
-                ImFontPtr targetFont;
-                float fontBaseSize;
-
-                if (maxEffectiveSize > 72f)
-                {
-                    if (hasCustomLargeFont)
-                    {
-                        targetFont = ImGuiController.CustomLargeFonts[ovText.FontPath];
-                        fontBaseSize = 128.0f;
-                    }
-                    else if (hasCustomFont)
-                    {
-                        targetFont = ImGuiController.CustomFonts[ovText.FontPath];
-                        fontBaseSize = 48.0f;
-                    }
-                    else
-                    {
-                        targetFont = ImGuiController.DefaultLargeFont;
-                        fontBaseSize = 128.0f;
-                    }
-                }
-                else
-                {
-                    if (hasCustomFont)
-                    {
-                        targetFont = ImGuiController.CustomFonts[ovText.FontPath];
-                        fontBaseSize = 48.0f;
-                    }
-                    else
-                    {
-                        targetFont = ImGuiController.DefaultHighResFont;
-                        fontBaseSize = 48.0f;
-                    }
-                }
-
-                float scale = (ovText.FontSize / fontBaseSize) * animScaleXMult;
-
-                ImGui.PushFont(targetFont);
-                try
-                {
-                    // Calculate widths BEFORE Begin.
-                    // CalculateRichTextWidth returns absolute width in pixels, so no need to multiply by scale.
-                    string[] lines = rawText.Split('\n');
-                    float[] lineRenderWidths = new float[lines.Length];
-                    float maxLineWidth = 0;
-                    for (int j = 0; j < lines.Length; j++)
-                    {
-                        float lw = CalculateRichTextWidth(lines[j], ovText.LetterSpacing, ovText.FontSize, ovText, animScaleXMult);
-                        lineRenderWidths[j] = lw;
-                        maxLineWidth = Mathf.Max(maxLineWidth, lw);
-                    }
-
-                    float baseFontHeight = ImGui.GetFontSize();
-                    float totalHeight = 0f;
-                    for (int j = 0; j < lines.Length; j++)
-                    {
-                        totalHeight += baseFontHeight * scale;
-                        if (j < lines.Length - 1) totalHeight += ovText.LineHeightOffset * scale;
-                    }
-
-                    float windowPadX = ImGui.GetStyle().WindowPadding.X;
-                    float windowPadY = ImGui.GetStyle().WindowPadding.Y;
-                    float shadowExtraX = ovText.EnableShadow ? Mathf.Abs(ovText.ShadowOffset[0]) * scale : 0f;
-                    float shadowExtraY = ovText.EnableShadow ? Mathf.Abs(ovText.ShadowOffset[1]) * scale : 0f;
-
-                    // Safety margin: 3% of text width + 8px to cover glyph overhang and rounding errors
-                    float safetyMargin = maxLineWidth * 0.03f + 8f;
-                    float windowWidth = maxLineWidth + windowPadX * 2.0f + shadowExtraX + safetyMargin;
-                    float windowHeight = totalHeight + windowPadY * 2.0f + shadowExtraY + 4f;
-
-                    float topLeftX = (ovText.PositionX + animOffsetX) - ovText.PivotX * windowWidth;
-                    float topLeftY = (ovText.PositionY + animOffsetY) - ovText.PivotY * windowHeight;
-
-                    ImGui.SetNextWindowPos(new System.Numerics.Vector2(topLeftX, topLeftY), ImGuiCond.Always);
-                    ImGui.SetNextWindowSize(new System.Numerics.Vector2(windowWidth, windowHeight), ImGuiCond.Always);
-
-                    if (editMode)
-                    {
-                        ImGui.PushStyleColor(ImGuiCol.WindowBg, new System.Numerics.Vector4(0f, 0f, 0f, 0f));
-                        ImGui.PushStyleColor(ImGuiCol.Border, new System.Numerics.Vector4(0f, 0f, 0f, 0f));
-                        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
-                    }
-                    try
-                    {
-                        bool isVisible = ImGui.Begin($"CheryTools_OV_Block_{i}", flags);
-                        try
-                        {
-                            if (isVisible)
-                            {
-                                ImGui.SetWindowFontScale(scale);
-
-                                if (editMode)
-                                {
-                                    ImGuiIOPtr io = ImGui.GetIO();
-                                    if (!ImGui.IsMouseDown(ImGuiMouseButton.Left))
-                                    {
-                                        if (_draggingIndex == i)
-                                        {
-                                            _draggingIndex = -1;
-                                        }
-                                    }
-                                    else if (_draggingIndex == -1 && ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
-                                    {
-                                        _draggingIndex = i;
-                                    }
-
-                                    if (_draggingIndex == i)
-                                    {
-                                        var delta = io.MouseDelta;
-                                        if (delta.X != 0f || delta.Y != 0f)
-                                        {
-                                            ovText.PositionX += delta.X;
-                                            ovText.PositionY += delta.Y;
-                                            Main.RequestSave();
-                                        }
-                                    }
-                                }
-
-                                var colorVec = new System.Numerics.Vector4(ovText.TextColor[0], ovText.TextColor[1], ovText.TextColor[2], ovText.TextColor[3] * animOpacityMult);
-                                
-                                if (editMode)
-                                {
-                                    var min = ImGui.GetWindowPos();
-                                    var max = min + ImGui.GetWindowSize();
-                                    ImGui.GetWindowDrawList().AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new System.Numerics.Vector4(0.2f, 0.6f, 1.0f, 1.0f)), 0f, ImDrawFlags.None, 2.0f);
-                                }
-
-                                if (ovText.EnableShadow)
-                                {
-                                    var shadowColVec = new System.Numerics.Vector4(ovText.ShadowColor[0], ovText.ShadowColor[1], ovText.ShadowColor[2], ovText.ShadowColor[3] * animOpacityMult);
-                                    float shadowOffX = ovText.ShadowOffset[0] * scale;
-                                    float shadowOffY = ovText.ShadowOffset[1] * scale;
-                                    var startPos = ImGui.GetCursorPos();
-                                    ImGui.SetCursorPosY(startPos.Y + shadowOffY);
-                                    RenderRichTextLine(lines, shadowColVec, ovText.Alignment, maxLineWidth, lineRenderWidths, ovText.LetterSpacing, ovText.LineHeightOffset * scale, true, scale, ovText.FontSize, shadowOffX, windowWidth, ovText, animScaleXMult);
-                                    ImGui.SetCursorPos(startPos);
-                                }
-
-                                RenderRichTextLine(lines, colorVec, ovText.Alignment, maxLineWidth, lineRenderWidths, ovText.LetterSpacing, ovText.LineHeightOffset * scale, false, scale, ovText.FontSize, 0f, windowWidth, ovText, animScaleXMult);
-                                
-                                ImGui.SetWindowFontScale(1.0f);
-                                ovText.LastWidth = windowWidth;
-                                ovText.LastHeight = windowHeight;
-                            }
-                        }
-                        finally
-                        {
-                            ImGui.End();
+                            _draggingIndex = -1;
+                            _ovDragTotalDeltaX = 0f;
+                            _ovDragTotalDeltaY = 0f;
+                            _activeOvAlignLines.Clear();
                         }
                     }
-                    finally
+                    else if (_draggingIndex == -1 && _draggingIndexImg == -1 && _draggingIndexBar == -1 && isTextHit && mouseClicked)
                     {
-                        if (editMode)
+                        _draggingIndex = i;
+                        _ovDragStartX = ovText.PositionX;
+                        _ovDragStartY = ovText.PositionY;
+                        _ovDragTotalDeltaX = 0f;
+                        _ovDragTotalDeltaY = 0f;
+                        _activeOvAlignLines.Clear();
+                    }
+
+                    if (_draggingIndex == i)
+                    {
+                        var delta = screenMouseDelta;
+                        if (delta.X != 0f || delta.Y != 0f)
                         {
-                            ImGui.PopStyleVar(1);
-                            ImGui.PopStyleColor(2);
+                            _ovDragTotalDeltaX += delta.X;
+                            _ovDragTotalDeltaY += delta.Y;
+                            MoveOvTextWithSnapping(ovText, contentWindowWidth, contentWindowHeight, _ovDragStartX + _ovDragTotalDeltaX, _ovDragStartY + _ovDragTotalDeltaY, screenDisplaySize);
+                            Main.RequestSave();
                         }
                     }
                 }
-                finally
+                else if (_draggingIndex == i)
                 {
-                    ImGui.PopFont();
+                    _draggingIndex = -1;
+                    _ovDragTotalDeltaX = 0f;
+                    _ovDragTotalDeltaY = 0f;
                 }
+
+                if (editMode && !CheryToolsMenu.IsMenuOpen)
+                {
+                    OverlayerUnityRenderer.DrawOutlineRect(
+                        GetIndexedRenderId(_ovTextSelectIds, "ov_text_select_", i),
+                        new UnityEngine.Vector2(visualLeft, visualTop),
+                        new UnityEngine.Vector2(visualWidth, visualHeight),
+                        0xFF00FF00u,
+                        2f);
+                }
+
+                ovText.LastWidth = contentWindowWidth;
+                ovText.LastHeight = contentWindowHeight;
+                continue;
+
             }
 
             var images = Main.Settings.OverlayerImages;
@@ -546,116 +898,720 @@ namespace CheryTools
             {
                 var ovImg = images[i];
                 if (!ovImg.IsEnabled && !editMode) continue;
-                
-                ImGuiWindowFlags imgFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.AlwaysAutoResize;
-                if (!editMode) imgFlags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav | ImGuiWindowFlags.NoInputs;
-                
-                if (editMode)
+
+                RenderOvImageUnity(i, ovImg, editMode);
+                continue;
+            }
+
+            var progressBars = Main.Settings.OverlayerProgressBars;
+            if (progressBars != null)
+            {
+                for (int i = 0; i < progressBars.Count; i++)
                 {
-                    ImGui.PushStyleColor(ImGuiCol.WindowBg, new System.Numerics.Vector4(0f, 0f, 0f, 0f));
-                    ImGui.PushStyleColor(ImGuiCol.Border, new System.Numerics.Vector4(0f, 0f, 0f, 0f));
-                    ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+                    var bar = progressBars[i];
+                    if (bar == null) continue;
+                    if (!bar.IsEnabled && !editMode) continue;
+
+                    RenderOvProgressBarUnity(i, bar, editMode);
                 }
-                try
+            }
+
+            if (editMode && !CheryToolsMenu.IsMenuOpen)
+            {
+                DrawActiveOvAlignLines();
+            }
+
+            OverlayerUnityRenderer.EndFrame();
+        }
+
+        private void RenderOvImageUnity(int index, OverlayerImage ovImg, bool editMode)
+        {
+            OvImageRenderIds renderIds = GetOvImageRenderIds(index);
+            int sortingOrder = RenderDepth.ToSortingOrder(ovImg.Depth, RenderDepth.SublayerGraphic);
+            float animOffsetX = 0f;
+            float animOffsetY = 0f;
+            float animScaleXMult = 1f;
+            float animScaleYMult = 1f;
+            float animOpacityMult = 1f;
+            float animRotationOffset = 0f;
+
+            if (ovImg.Animations != null)
+            {
+                foreach (var anim in ovImg.Animations)
                 {
-                    float topLeftX = ovImg.PositionX - ovImg.PivotX * ovImg.LastWidth;
-                    float topLeftY = ovImg.PositionY - ovImg.PivotY * ovImg.LastHeight;
-                    ImGui.SetNextWindowPos(new System.Numerics.Vector2(topLeftX, topLeftY), ImGuiCond.Always);
-                    
-                    bool isVisibleImg = ImGui.Begin($"CheryTools_OV_Img_{i}", imgFlags);
-                    try
-                    {
-                        if (isVisibleImg)
-                        {
+                    if (!anim.IsEnabled) continue;
 
-                            IntPtr texPtr = TextureManager.GetOrCreateTexture(ovImg.ImagePath);
-                            if (texPtr != IntPtr.Zero)
-                            {
-                                Texture2D tex = TextureManager.GetTextureByPtr(texPtr);
-                                if (tex != null)
-                                {
-                                    float w = tex.width * ovImg.Scale;
-                                    float h = tex.height * ovImg.Scale;
-                                    
-                                    var p = ImGui.GetCursorScreenPos();
-                                    var drawList = ImGui.GetWindowDrawList();
-                                    
-                                    float rad = ovImg.Rotation * Mathf.Deg2Rad;
-                                    float cos = Mathf.Cos(rad);
-                                    float sin = Mathf.Sin(rad);
-                                    
-                                    float hw = w / 2f;
-                                    float hh = h / 2f;
-                                    
-                                    float l1x = (-hw) * cos - (-hh) * sin; float l1y = (-hw) * sin + (-hh) * cos;
-                                    float l2x = (hw) * cos - (-hh) * sin; float l2y = (hw) * sin + (-hh) * cos;
-                                    float l3x = (hw) * cos - (hh) * sin; float l3y = (hw) * sin + (hh) * cos;
-                                    float l4x = (-hw) * cos - (hh) * sin; float l4y = (-hw) * sin + (hh) * cos;
+                    var state = GetAnimState(anim);
+                    if (!state.IsPlaying && state.CurrentTime <= 0f) continue;
 
-                                    float minXLocal = Mathf.Min(l1x, Mathf.Min(l2x, Mathf.Min(l3x, l4x)));
-                                    float maxXLocal = Mathf.Max(l1x, Mathf.Max(l2x, Mathf.Max(l3x, l4x)));
-                                    float minYLocal = Mathf.Min(l1y, Mathf.Min(l2y, Mathf.Min(l3y, l4y)));
-                                    float maxYLocal = Mathf.Max(l1y, Mathf.Max(l2y, Mathf.Max(l3y, l4y)));
-
-                                    float cx = p.X - minXLocal;
-                                    float cy = p.Y - minYLocal;
-                                    
-                                    System.Numerics.Vector2 p1 = new System.Numerics.Vector2(cx + l1x, cy + l1y);
-                                    System.Numerics.Vector2 p2 = new System.Numerics.Vector2(cx + l2x, cy + l2y);
-                                    System.Numerics.Vector2 p3 = new System.Numerics.Vector2(cx + l3x, cy + l3y);
-                                    System.Numerics.Vector2 p4 = new System.Numerics.Vector2(cx + l4x, cy + l4y);
-                                    
-                                    uint tint = ImGui.ColorConvertFloat4ToU32(new System.Numerics.Vector4(1, 1, 1, ovImg.Opacity));
-                                    
-                                    drawList.AddImageQuad(texPtr, p1, p2, p3, p4, new System.Numerics.Vector2(0, 1), new System.Numerics.Vector2(1, 1), new System.Numerics.Vector2(1, 0), new System.Numerics.Vector2(0, 0), tint);
-                                    
-                                    float boundW = maxXLocal - minXLocal;
-                                    float boundH = maxYLocal - minYLocal;
-                                    ImGui.Dummy(new System.Numerics.Vector2(boundW, boundH));
-
-                                    float currentTotalWidth = boundW + ImGui.GetStyle().WindowPadding.X * 2.0f;
-                                    float currentTotalHeight = boundH + ImGui.GetStyle().WindowPadding.Y * 2.0f;
-
-                                    ovImg.LastWidth = currentTotalWidth;
-                                    ovImg.LastHeight = currentTotalHeight;
-
-                                    if (editMode)
-                                    {
-                                        var newPos = ImGui.GetWindowPos();
-                                        float calculatedPosX = newPos.X + ovImg.PivotX * currentTotalWidth;
-                                        float calculatedPosY = newPos.Y + ovImg.PivotY * currentTotalHeight;
-                                        if (Mathf.Abs(calculatedPosX - ovImg.PositionX) > 0.1f || Mathf.Abs(calculatedPosY - ovImg.PositionY) > 0.1f)
-                                        {
-                                            ovImg.PositionX = calculatedPosX;
-                                            ovImg.PositionY = calculatedPosY;
-                                            Main.RequestSave();
-                                        }
-                                        drawList.AddRect(new System.Numerics.Vector2(p.X, p.Y), new System.Numerics.Vector2(p.X + boundW, p.Y + boundH), 0xFF00FF00, 0f, ImDrawFlags.None, 2f);
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                if (editMode)
-                                {
-                                    ImGui.Text("[图片丢失/未设置? 请在设置中配置路径]");
-                                }
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        ImGui.End();
-                    }
+                    var evaluated = EvaluateAnimState(anim, state.CurrentTime);
+                    animOffsetX += evaluated.x;
+                    animOffsetY += evaluated.y;
+                    animScaleXMult *= evaluated.sx;
+                    animScaleYMult *= evaluated.sy;
+                    animOpacityMult *= evaluated.opacity;
+                    animRotationOffset += evaluated.rotation;
                 }
-                finally
+            }
+
+            Texture2D tex = null;
+            int sourceWidth = 0;
+            int sourceHeight = 0;
+            bool hasTexture = TextureManager.TryGetImageSize(ovImg.ImagePath, out sourceWidth, out sourceHeight);
+            if (!hasTexture)
+            {
+                tex = TextureManager.GetOrCreateTexture2D(ovImg.ImagePath);
+                hasTexture = tex != null;
+                if (hasTexture)
                 {
-                    if (editMode)
+                    sourceWidth = tex.width;
+                    sourceHeight = tex.height;
+                }
+            }
+            if (!hasTexture && !editMode)
+            {
+                return;
+            }
+
+            float boundW;
+            float boundH;
+            float minXLocal = 0f;
+            float minYLocal = 0f;
+            float l1x = 0f;
+            float l1y = 0f;
+            float l2x = 0f;
+            float l2y = 0f;
+            float l3x = 0f;
+            float l3y = 0f;
+            float l4x = 0f;
+            float l4y = 0f;
+            float imgWidth = 0f;
+            float imgHeight = 0f;
+
+            if (hasTexture)
+            {
+                imgWidth = sourceWidth * ovImg.Scale * animScaleXMult;
+                imgHeight = sourceHeight * ovImg.Scale * animScaleYMult;
+                float rad = (ovImg.Rotation + animRotationOffset) * Mathf.Deg2Rad;
+                float cos = Mathf.Cos(rad);
+                float sin = Mathf.Sin(rad);
+                float hw = imgWidth * 0.5f;
+                float hh = imgHeight * 0.5f;
+
+                l1x = (-hw) * cos - (-hh) * sin; l1y = (-hw) * sin + (-hh) * cos;
+                l2x = (hw) * cos - (-hh) * sin; l2y = (hw) * sin + (-hh) * cos;
+                l3x = (hw) * cos - (hh) * sin; l3y = (hw) * sin + (hh) * cos;
+                l4x = (-hw) * cos - (hh) * sin; l4y = (-hw) * sin + (hh) * cos;
+
+                float maxXLocal = Mathf.Max(l1x, Mathf.Max(l2x, Mathf.Max(l3x, l4x)));
+                float maxYLocal = Mathf.Max(l1y, Mathf.Max(l2y, Mathf.Max(l3y, l4y)));
+                minXLocal = Mathf.Min(l1x, Mathf.Min(l2x, Mathf.Min(l3x, l4x)));
+                minYLocal = Mathf.Min(l1y, Mathf.Min(l2y, Mathf.Min(l3y, l4y)));
+
+                boundW = maxXLocal - minXLocal;
+                boundH = maxYLocal - minYLocal;
+            }
+            else
+            {
+                boundW = Mathf.Max(120f, ovImg.LastWidth);
+                boundH = Mathf.Max(48f, ovImg.LastHeight);
+            }
+
+            boundW = Mathf.Max(1f, boundW);
+            boundH = Mathf.Max(1f, boundH);
+
+            float topLeftX = (ovImg.PositionX + animOffsetX) - ovImg.PivotX * boundW;
+            float topLeftY = (ovImg.PositionY + animOffsetY) - ovImg.PivotY * boundH;
+            var topLeft = new UnityEngine.Vector2(topLeftX, topLeftY);
+            var size = new UnityEngine.Vector2(boundW, boundH);
+
+            if (hasTexture)
+            {
+                if (tex == null)
+                {
+                    tex = TextureManager.GetOrCreateTexture2D(ovImg.ImagePath, Mathf.Abs(imgWidth), Mathf.Abs(imgHeight));
+                }
+                if (tex == null)
+                {
+                    OverlayerUnityRenderer.DrawFilledRect(renderIds.Missing, topLeft, size, 0x66000000u, 0f, sortingOrder);
+                    OverlayerUnityRenderer.DrawOutlineRect(renderIds.MissingOutline, topLeft, size, 0xFF33CCFFu, 2f, 0f, sortingOrder);
+                    return;
+                }
+
+                float cx = topLeftX - minXLocal;
+                float cy = topLeftY - minYLocal;
+
+                OverlayerUnityRenderer.DrawImageQuad(
+                    renderIds.Image,
+                    tex,
+                    topLeft,
+                    size,
+                    new UnityEngine.Vector2(cx + l1x, cy + l1y),
+                    new UnityEngine.Vector2(cx + l2x, cy + l2y),
+                    new UnityEngine.Vector2(cx + l3x, cy + l3y),
+                    new UnityEngine.Vector2(cx + l4x, cy + l4y),
+                    ovImg.Opacity * animOpacityMult,
+                    sortingOrder);
+            }
+            else
+            {
+                OverlayerUnityRenderer.DrawFilledRect(renderIds.Missing, topLeft, size, 0x66000000u, 0f, sortingOrder);
+                OverlayerUnityRenderer.DrawOutlineRect(renderIds.MissingOutline, topLeft, size, 0xFF33CCFFu, 2f, 0f, sortingOrder);
+            }
+
+            ovImg.LastWidth = boundW;
+            ovImg.LastHeight = boundH;
+
+            bool canEditOverlay = editMode && !CheryToolsMenu.IsMenuOpen;
+            if (canEditOverlay)
+            {
+                System.Numerics.Vector2 screenMousePos = ImGuiController.ScreenMousePos;
+                System.Numerics.Vector2 screenMouseDelta = ImGuiController.ScreenMouseDelta;
+                System.Numerics.Vector2 screenDisplaySize = ImGuiController.ScreenDisplaySize;
+                var hitMin = new System.Numerics.Vector2(topLeftX, topLeftY);
+                var hitMax = new System.Numerics.Vector2(topLeftX + boundW, topLeftY + boundH);
+                bool isImageHit = IsPointInRect(screenMousePos, hitMin, hitMax);
+                bool mouseDown = Input.GetMouseButton(0);
+                bool mouseClicked = Input.GetMouseButtonDown(0);
+
+                if (!mouseDown)
+                {
+                    if (_draggingIndexImg == index)
                     {
-                        ImGui.PopStyleVar(1);
-                        ImGui.PopStyleColor(2);
+                        _draggingIndexImg = -1;
+                        _ovDragTotalDeltaX = 0f;
+                        _ovDragTotalDeltaY = 0f;
+                        _activeOvAlignLines.Clear();
                     }
                 }
+                else if (_draggingIndexImg == -1 && _draggingIndex == -1 && _draggingIndexBar == -1 && isImageHit && mouseClicked)
+                {
+                    _draggingIndexImg = index;
+                    _ovDragStartX = ovImg.PositionX;
+                    _ovDragStartY = ovImg.PositionY;
+                    _ovDragTotalDeltaX = 0f;
+                    _ovDragTotalDeltaY = 0f;
+                    _activeOvAlignLines.Clear();
+                }
+
+                if (_draggingIndexImg == index)
+                {
+                    var delta = screenMouseDelta;
+                    if (delta.X != 0f || delta.Y != 0f)
+                    {
+                        _ovDragTotalDeltaX += delta.X;
+                        _ovDragTotalDeltaY += delta.Y;
+                        MoveOvImageWithSnapping(ovImg, boundW, boundH, _ovDragStartX + _ovDragTotalDeltaX, _ovDragStartY + _ovDragTotalDeltaY, screenDisplaySize);
+                        Main.RequestSave();
+                    }
+                }
+
+                OverlayerUnityRenderer.DrawOutlineRect(renderIds.Select, topLeft, size, 0xFF00FF00u, 2f);
+            }
+            else if (_draggingIndexImg == index)
+            {
+                _draggingIndexImg = -1;
+                _ovDragTotalDeltaX = 0f;
+                _ovDragTotalDeltaY = 0f;
+            }
+        }
+
+        private void RenderOvProgressBarUnity(int index, OverlayerProgressBar bar, bool editMode)
+        {
+            OvProgressBarRenderIds renderIds = GetOvProgressBarRenderIds(index);
+            int sortingOrder = RenderDepth.ToSortingOrder(bar.Depth, RenderDepth.SublayerGraphic);
+
+            float width = Mathf.Max(1f, bar.Width);
+            float height = Mathf.Max(1f, bar.Height);
+            float topLeftX = bar.PositionX - bar.PivotX * width;
+            float topLeftY = bar.PositionY - bar.PivotY * height;
+            var topLeft = new UnityEngine.Vector2(topLeftX, topLeftY);
+            var size = new UnityEngine.Vector2(width, height);
+            float opacity = Mathf.Clamp01(bar.Opacity);
+            float cornerRadius = Mathf.Min(Mathf.Max(0f, bar.CornerRadius), Mathf.Min(width, height) * 0.5f);
+
+            DrawProgressBarShadow(index, bar, topLeft, size, opacity, cornerRadius, sortingOrder);
+
+            if (HasVisibleColor(bar.BackgroundColor, opacity))
+            {
+                OverlayerUnityRenderer.DrawFilledRect(renderIds.Background, topLeft, size, PackColor(bar.BackgroundColor, opacity), cornerRadius, sortingOrder);
+            }
+
+            double min = ResolveProgressValue(bar.MinSource);
+            double max = ResolveProgressValue(bar.MaxSource);
+            double value = ResolveProgressValue(bar.ValueSource);
+            double normalized;
+            double range = max - min;
+            if (Math.Abs(range) <= 0.000001)
+            {
+                normalized = value >= max ? 1.0 : 0.0;
+            }
+            else
+            {
+                normalized = (value - min) / range;
+            }
+
+            if (bar.ClampValue)
+            {
+                normalized = Math.Max(0.0, Math.Min(1.0, normalized));
+            }
+            if (bar.Reverse)
+            {
+                normalized = 1.0 - normalized;
+            }
+
+            float fillAmount = Mathf.Clamp01((float)normalized);
+            if (fillAmount > 0.0001f && HasVisibleColor(bar.FillColor, opacity))
+            {
+                var fillTopLeft = topLeft;
+                var fillSize = size;
+                switch (bar.FillDirection)
+                {
+                    case OverlayerProgressFillDirection.RightToLeft:
+                        fillSize.x = width * fillAmount;
+                        fillTopLeft.x = topLeftX + width - fillSize.x;
+                        break;
+                    case OverlayerProgressFillDirection.BottomToTop:
+                        fillSize.y = height * fillAmount;
+                        fillTopLeft.y = topLeftY + height - fillSize.y;
+                        break;
+                    case OverlayerProgressFillDirection.TopToBottom:
+                        fillSize.y = height * fillAmount;
+                        break;
+                    case OverlayerProgressFillDirection.LeftToRight:
+                    default:
+                        fillSize.x = width * fillAmount;
+                        break;
+                }
+
+                if (fillSize.x > 0.5f && fillSize.y > 0.5f)
+                {
+                    float fillRadius = Mathf.Min(cornerRadius, Mathf.Min(fillSize.x, fillSize.y) * 0.5f);
+                    OverlayerUnityRenderer.DrawFilledRect(renderIds.Fill, fillTopLeft, fillSize, PackColor(bar.FillColor, opacity), fillRadius, sortingOrder);
+                }
+            }
+
+            if (bar.BorderThickness > 0f && HasVisibleColor(bar.BorderColor, opacity))
+            {
+                OverlayerUnityRenderer.DrawOutlineRect(renderIds.Border, topLeft, size, PackColor(bar.BorderColor, opacity), bar.BorderThickness, cornerRadius, sortingOrder);
+            }
+
+            bar.LastWidth = width;
+            bar.LastHeight = height;
+
+            bool canEditOverlay = editMode && !CheryToolsMenu.IsMenuOpen;
+            if (canEditOverlay)
+            {
+                System.Numerics.Vector2 screenMousePos = ImGuiController.ScreenMousePos;
+                System.Numerics.Vector2 screenMouseDelta = ImGuiController.ScreenMouseDelta;
+                System.Numerics.Vector2 screenDisplaySize = ImGuiController.ScreenDisplaySize;
+                var hitMin = new System.Numerics.Vector2(topLeftX, topLeftY);
+                var hitMax = new System.Numerics.Vector2(topLeftX + width, topLeftY + height);
+                bool isBarHit = IsPointInRect(screenMousePos, hitMin, hitMax);
+                bool mouseDown = Input.GetMouseButton(0);
+                bool mouseClicked = Input.GetMouseButtonDown(0);
+
+                if (!mouseDown)
+                {
+                    if (_draggingIndexBar == index)
+                    {
+                        _draggingIndexBar = -1;
+                        _ovDragTotalDeltaX = 0f;
+                        _ovDragTotalDeltaY = 0f;
+                        _activeOvAlignLines.Clear();
+                    }
+                }
+                else if (_draggingIndexBar == -1 && _draggingIndex == -1 && _draggingIndexImg == -1 && isBarHit && mouseClicked)
+                {
+                    _draggingIndexBar = index;
+                    _ovDragStartX = bar.PositionX;
+                    _ovDragStartY = bar.PositionY;
+                    _ovDragTotalDeltaX = 0f;
+                    _ovDragTotalDeltaY = 0f;
+                    _activeOvAlignLines.Clear();
+                }
+
+                if (_draggingIndexBar == index)
+                {
+                    var delta = screenMouseDelta;
+                    if (delta.X != 0f || delta.Y != 0f)
+                    {
+                        _ovDragTotalDeltaX += delta.X;
+                        _ovDragTotalDeltaY += delta.Y;
+                        MoveOvProgressBarWithSnapping(bar, width, height, _ovDragStartX + _ovDragTotalDeltaX, _ovDragStartY + _ovDragTotalDeltaY, screenDisplaySize);
+                        Main.RequestSave();
+                    }
+                }
+
+                OverlayerUnityRenderer.DrawOutlineRect(renderIds.Select, topLeft, size, 0xFF00FF00u, 2f);
+            }
+            else if (_draggingIndexBar == index)
+            {
+                _draggingIndexBar = -1;
+                _ovDragTotalDeltaX = 0f;
+                _ovDragTotalDeltaY = 0f;
+            }
+        }
+
+        private void DrawProgressBarShadow(int index, OverlayerProgressBar bar, UnityEngine.Vector2 topLeft, UnityEngine.Vector2 size, float opacity, float cornerRadius, int sortingOrder)
+        {
+            if (bar == null || !bar.EnableShadow || !HasVisibleColor(bar.ShadowColor, opacity))
+            {
+                return;
+            }
+
+            float shadowX = bar.ShadowOffset != null && bar.ShadowOffset.Length > 0 ? bar.ShadowOffset[0] : 0f;
+            float shadowY = bar.ShadowOffset != null && bar.ShadowOffset.Length > 1 ? bar.ShadowOffset[1] : 0f;
+            float softness = Mathf.Max(0f, bar.ShadowSoftness);
+            var shadowTopLeft = new UnityEngine.Vector2(topLeft.x + shadowX, topLeft.y + shadowY);
+
+            if (softness <= 0.01f)
+            {
+                OverlayerUnityRenderer.DrawFilledRect("ov_bar_shadow_" + index.ToString(), shadowTopLeft, size, PackColor(bar.ShadowColor, opacity), cornerRadius, sortingOrder);
+                return;
+            }
+
+            int steps = Mathf.Clamp(Mathf.CeilToInt(softness / 1.5f), 3, 16);
+            for (int i = steps; i >= 1; i--)
+            {
+                float t = (i - 0.5f) / steps;
+                float expand = softness * t;
+                float alphaScale = 0.42f * Mathf.Pow(1f - t, 1.7f) / Mathf.Max(1f, steps * 0.45f);
+                var layerTopLeft = new UnityEngine.Vector2(shadowTopLeft.x - expand, shadowTopLeft.y - expand);
+                var layerSize = new UnityEngine.Vector2(size.x + expand * 2f, size.y + expand * 2f);
+                OverlayerUnityRenderer.DrawFilledRect(
+                    "ov_bar_shadow_" + index.ToString() + "_" + i.ToString(),
+                    layerTopLeft,
+                    layerSize,
+                    PackColor(bar.ShadowColor, opacity * Mathf.Clamp01(alphaScale)),
+                    cornerRadius + expand,
+                    sortingOrder);
+            }
+
+            OverlayerUnityRenderer.DrawFilledRect(
+                "ov_bar_shadow_core_" + index.ToString(),
+                shadowTopLeft,
+                size,
+                PackColor(bar.ShadowColor, opacity * 0.48f),
+                cornerRadius,
+                sortingOrder);
+        }
+
+        private double ResolveProgressValue(OverlayerProgressValueSource source)
+        {
+            if (source == null)
+            {
+                return 0.0;
+            }
+
+            scrMarginTracker tracker = null;
+            if (scrController.instance != null && scrController.instance.playerOne != null)
+                tracker = scrController.instance.playerOne.marginTracker;
+
+            switch (source.Kind)
+            {
+                case OverlayerProgressValueKind.Progress:
+                    if (tracker != null && scrController.instance != null && scrController.instance.gameworld)
+                        return scrController.instance.percentComplete * 100.0;
+                    return 0.0;
+                case OverlayerProgressValueKind.Accuracy:
+                    return tracker != null ? tracker.percentAcc * 100.0 : 0.0;
+                case OverlayerProgressValueKind.XAccuracy:
+                    return tracker != null ? tracker.percentXAcc * 100.0 : 0.0;
+                case OverlayerProgressValueKind.Kps:
+                    return KeyViewerManager.Instance != null ? KeyViewerManager.Instance.CurrentKPS : 0.0;
+                case OverlayerProgressValueKind.CurrentClicksPerSecond:
+                    return TryGetCurrentClicksPerSecond(out double cps) ? cps : 0.0;
+                case OverlayerProgressValueKind.MapPlayedTime:
+                    return TryGetMapPlayedSeconds(out double mapPlayedSeconds) ? mapPlayedSeconds : 0.0;
+                case OverlayerProgressValueKind.MapTotalTime:
+                    return TryGetMapTotalSeconds(out double mapTotalSeconds) ? mapTotalSeconds : 0.0;
+                case OverlayerProgressValueKind.MusicPlayedTime:
+                    return TryGetMusicPlayedSeconds(out double musicPlayedSeconds) ? musicPlayedSeconds : 0.0;
+                case OverlayerProgressValueKind.MusicTotalTime:
+                    return TryGetMusicTotalSeconds(out double musicTotalSeconds) ? musicTotalSeconds : 0.0;
+                case OverlayerProgressValueKind.PureCombo:
+                    return _currentPureCombo;
+                case OverlayerProgressValueKind.PerfectCombo:
+                    return _currentPerfectCombo;
+                case OverlayerProgressValueKind.Miss:
+                    return tracker != null ? tracker.GetDeaths() : 0.0;
+                case OverlayerProgressValueKind.FailMiss:
+                    return tracker != null ? tracker.GetHits(HitMargin.FailMiss) : 0.0;
+                case OverlayerProgressValueKind.FailOverload:
+                    return tracker != null ? tracker.GetHits(HitMargin.FailOverload) : 0.0;
+                case OverlayerProgressValueKind.Constant:
+                default:
+                    return source.Constant;
+            }
+        }
+
+        private static bool HasVisibleColor(float[] color, float opacity)
+        {
+            return color != null && color.Length >= 4 && color[3] * opacity > 0.001f;
+        }
+
+        private static uint PackColor(float[] color, float opacity)
+        {
+            if (color == null || color.Length < 4)
+            {
+                return 0u;
+            }
+
+            int r = Mathf.Clamp(Mathf.RoundToInt(color[0] * 255f), 0, 255);
+            int g = Mathf.Clamp(Mathf.RoundToInt(color[1] * 255f), 0, 255);
+            int b = Mathf.Clamp(Mathf.RoundToInt(color[2] * 255f), 0, 255);
+            int a = Mathf.Clamp(Mathf.RoundToInt(color[3] * Mathf.Clamp01(opacity) * 255f), 0, 255);
+            return (uint)(r | (g << 8) | (b << 16) | (a << 24));
+        }
+
+        private void MoveOvTextWithSnapping(OverlayerText ovText, float width, float height, float targetX, float targetY, System.Numerics.Vector2 displaySize)
+        {
+            var snapped = CalculateOvSnappedPosition(
+                targetX,
+                targetY,
+                ovText.PivotX,
+                ovText.PivotY,
+                width,
+                height,
+                displaySize,
+                ovText,
+                null,
+                null);
+
+            ovText.PositionX = snapped.X;
+            ovText.PositionY = snapped.Y;
+        }
+
+        private void MoveOvImageWithSnapping(OverlayerImage ovImg, float width, float height, float targetX, float targetY, System.Numerics.Vector2 displaySize)
+        {
+            var snapped = CalculateOvSnappedPosition(
+                targetX,
+                targetY,
+                ovImg.PivotX,
+                ovImg.PivotY,
+                width,
+                height,
+                displaySize,
+                null,
+                ovImg,
+                null);
+
+            ovImg.PositionX = snapped.X;
+            ovImg.PositionY = snapped.Y;
+        }
+
+        private void MoveOvProgressBarWithSnapping(OverlayerProgressBar bar, float width, float height, float targetX, float targetY, System.Numerics.Vector2 displaySize)
+        {
+            var snapped = CalculateOvSnappedPosition(
+                targetX,
+                targetY,
+                bar.PivotX,
+                bar.PivotY,
+                width,
+                height,
+                displaySize,
+                null,
+                null,
+                bar);
+
+            bar.PositionX = snapped.X;
+            bar.PositionY = snapped.Y;
+        }
+
+        private System.Numerics.Vector2 CalculateOvSnappedPosition(float targetX, float targetY, float pivotX, float pivotY, float width, float height, System.Numerics.Vector2 displaySize, OverlayerText ignoreText, OverlayerImage ignoreImage, OverlayerProgressBar ignoreProgressBar)
+        {
+            _activeOvAlignLines.Clear();
+            if (IsOvSnapDisabled())
+            {
+                return new System.Numerics.Vector2(targetX, targetY);
+            }
+
+            var xRefs = new System.Collections.Generic.List<OvSnapCandidate>();
+            var yRefs = new System.Collections.Generic.List<OvSnapCandidate>();
+
+            AddOvSnapCandidate(xRefs, 0f, 0f, displaySize.Y);
+            AddOvSnapCandidate(xRefs, displaySize.X * 0.5f, 0f, displaySize.Y);
+            AddOvSnapCandidate(xRefs, displaySize.X, 0f, displaySize.Y);
+            AddOvSnapCandidate(yRefs, 0f, 0f, displaySize.X);
+            AddOvSnapCandidate(yRefs, displaySize.Y * 0.5f, 0f, displaySize.X);
+            AddOvSnapCandidate(yRefs, displaySize.Y, 0f, displaySize.X);
+
+            AddOvComponentSnapCandidates(xRefs, yRefs, ignoreText, ignoreImage, ignoreProgressBar);
+
+            float left = targetX - pivotX * width;
+            float top = targetY - pivotY * height;
+            float[] itemX = new float[] { left, left + width * 0.5f, left + width };
+            float[] itemY = new float[] { top, top + height * 0.5f, top + height };
+
+            bool hasCorrX = false;
+            bool hasCorrY = false;
+            float bestCorrX = 0f;
+            float bestCorrY = 0f;
+            float bestAbsX = OvSnapThreshold;
+            float bestAbsY = OvSnapThreshold;
+            OvSnapCandidate bestXRef = default(OvSnapCandidate);
+            OvSnapCandidate bestYRef = default(OvSnapCandidate);
+
+            foreach (var candidate in xRefs)
+            {
+                for (int i = 0; i < itemX.Length; i++)
+                {
+                    float correction = candidate.Value - itemX[i];
+                    float abs = Mathf.Abs(correction);
+                    if (abs <= bestAbsX)
+                    {
+                        hasCorrX = true;
+                        bestAbsX = abs;
+                        bestCorrX = correction;
+                        bestXRef = candidate;
+                    }
+                }
+            }
+
+            foreach (var candidate in yRefs)
+            {
+                for (int i = 0; i < itemY.Length; i++)
+                {
+                    float correction = candidate.Value - itemY[i];
+                    float abs = Mathf.Abs(correction);
+                    if (abs <= bestAbsY)
+                    {
+                        hasCorrY = true;
+                        bestAbsY = abs;
+                        bestCorrY = correction;
+                        bestYRef = candidate;
+                    }
+                }
+            }
+
+            if (hasCorrX) targetX += bestCorrX;
+            if (hasCorrY) targetY += bestCorrY;
+
+            float snappedLeft = targetX - pivotX * width;
+            float snappedTop = targetY - pivotY * height;
+            if (hasCorrX)
+            {
+                bool fullHeightRef = bestXRef.MinLimit <= 0.001f && bestXRef.MaxLimit >= displaySize.Y - 0.001f;
+                float minLimit = fullHeightRef ? snappedTop - 48f : Mathf.Min(snappedTop, bestXRef.MinLimit);
+                float maxLimit = fullHeightRef ? snappedTop + height + 48f : Mathf.Max(snappedTop + height, bestXRef.MaxLimit);
+                _activeOvAlignLines.Add(new OvAlignLine
+                {
+                    IsVertical = true,
+                    Coord = bestXRef.Value,
+                    MinLimit = minLimit,
+                    MaxLimit = maxLimit
+                });
+            }
+            if (hasCorrY)
+            {
+                bool fullWidthRef = bestYRef.MinLimit <= 0.001f && bestYRef.MaxLimit >= displaySize.X - 0.001f;
+                float minLimit = fullWidthRef ? snappedLeft - 48f : Mathf.Min(snappedLeft, bestYRef.MinLimit);
+                float maxLimit = fullWidthRef ? snappedLeft + width + 48f : Mathf.Max(snappedLeft + width, bestYRef.MaxLimit);
+                _activeOvAlignLines.Add(new OvAlignLine
+                {
+                    IsVertical = false,
+                    Coord = bestYRef.Value,
+                    MinLimit = minLimit,
+                    MaxLimit = maxLimit
+                });
+            }
+
+            return new System.Numerics.Vector2(targetX, targetY);
+        }
+
+        private bool IsOvSnapDisabled()
+        {
+            return Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+        }
+
+        private void AddOvComponentSnapCandidates(System.Collections.Generic.List<OvSnapCandidate> xRefs, System.Collections.Generic.List<OvSnapCandidate> yRefs, OverlayerText ignoreText, OverlayerImage ignoreImage, OverlayerProgressBar ignoreProgressBar)
+        {
+            if (Main.Settings == null) return;
+
+            if (Main.Settings.OverlayerTexts != null)
+            {
+                foreach (var text in Main.Settings.OverlayerTexts)
+                {
+                    if (object.ReferenceEquals(text, ignoreText)) continue;
+                    AddOvRectSnapCandidates(xRefs, yRefs, text.PositionX, text.PositionY, text.PivotX, text.PivotY, text.LastWidth, text.LastHeight);
+                }
+            }
+
+            if (Main.Settings.OverlayerImages != null)
+            {
+                foreach (var image in Main.Settings.OverlayerImages)
+                {
+                    if (object.ReferenceEquals(image, ignoreImage)) continue;
+                    AddOvRectSnapCandidates(xRefs, yRefs, image.PositionX, image.PositionY, image.PivotX, image.PivotY, image.LastWidth, image.LastHeight);
+                }
+            }
+
+            if (Main.Settings.OverlayerProgressBars != null)
+            {
+                foreach (var bar in Main.Settings.OverlayerProgressBars)
+                {
+                    if (bar == null || object.ReferenceEquals(bar, ignoreProgressBar)) continue;
+                    AddOvRectSnapCandidates(xRefs, yRefs, bar.PositionX, bar.PositionY, bar.PivotX, bar.PivotY, bar.LastWidth, bar.LastHeight);
+                }
+            }
+        }
+
+        private void AddOvRectSnapCandidates(System.Collections.Generic.List<OvSnapCandidate> xRefs, System.Collections.Generic.List<OvSnapCandidate> yRefs, float positionX, float positionY, float pivotX, float pivotY, float width, float height)
+        {
+            width = Mathf.Max(1f, width);
+            height = Mathf.Max(1f, height);
+
+            float left = positionX - pivotX * width;
+            float top = positionY - pivotY * height;
+            float right = left + width;
+            float bottom = top + height;
+
+            AddOvSnapCandidate(xRefs, left, top, bottom);
+            AddOvSnapCandidate(xRefs, left + width * 0.5f, top, bottom);
+            AddOvSnapCandidate(xRefs, right, top, bottom);
+
+            AddOvSnapCandidate(yRefs, top, left, right);
+            AddOvSnapCandidate(yRefs, top + height * 0.5f, left, right);
+            AddOvSnapCandidate(yRefs, bottom, left, right);
+        }
+
+        private void AddOvSnapCandidate(System.Collections.Generic.List<OvSnapCandidate> refs, float value, float minLimit, float maxLimit)
+        {
+            refs.Add(new OvSnapCandidate
+            {
+                Value = value,
+                MinLimit = minLimit,
+                MaxLimit = maxLimit
+            });
+        }
+
+        private void DrawActiveOvAlignLines()
+        {
+            if (_activeOvAlignLines.Count == 0) return;
+
+            const uint color = 0xF52DC7FFu;
+            const float thickness = 1.5f;
+            int lineIndex = 0;
+            foreach (var line in _activeOvAlignLines)
+            {
+                if (line.IsVertical)
+                {
+                    OverlayerUnityRenderer.DrawFilledRect(
+                        $"ov_snap_v_{lineIndex}",
+                        new UnityEngine.Vector2(line.Coord - thickness * 0.5f, line.MinLimit),
+                        new UnityEngine.Vector2(thickness, Mathf.Max(1f, line.MaxLimit - line.MinLimit)),
+                        color);
+                }
+                else
+                {
+                    OverlayerUnityRenderer.DrawFilledRect(
+                        $"ov_snap_h_{lineIndex}",
+                        new UnityEngine.Vector2(line.MinLimit, line.Coord - thickness * 0.5f),
+                        new UnityEngine.Vector2(Mathf.Max(1f, line.MaxLimit - line.MinLimit), thickness),
+                        color);
+                }
+                lineIndex++;
             }
         }
 
@@ -682,8 +1638,8 @@ namespace CheryTools
                 }
                 
                 // Select font and base size for this segment
-                bool hasCustomFont = !string.IsNullOrEmpty(ovText.FontPath) && ImGuiController.CustomFonts.ContainsKey(ovText.FontPath);
-                bool hasCustomLargeFont = hasCustomFont && ImGuiController.CustomLargeFonts.ContainsKey(ovText.FontPath);
+                bool hasCustomFont = TryGetCustomFont(ovText.FontPath, false, out ImFontPtr customFont);
+                bool hasCustomLargeFont = TryGetCustomFont(ovText.FontPath, true, out ImFontPtr customLargeFont);
                 
                 ImFontPtr segFont;
                 float segFontBaseSize;
@@ -692,12 +1648,12 @@ namespace CheryTools
                 {
                     if (hasCustomLargeFont)
                     {
-                        segFont = ImGuiController.CustomLargeFonts[ovText.FontPath];
+                        segFont = customLargeFont;
                         segFontBaseSize = 128.0f;
                     }
                     else if (hasCustomFont)
                     {
-                        segFont = ImGuiController.CustomFonts[ovText.FontPath];
+                        segFont = customFont;
                         segFontBaseSize = 48.0f;
                     }
                     else
@@ -710,7 +1666,7 @@ namespace CheryTools
                 {
                     if (hasCustomFont)
                     {
-                        segFont = ImGuiController.CustomFonts[ovText.FontPath];
+                        segFont = customFont;
                         segFontBaseSize = 48.0f;
                     }
                     else
@@ -758,31 +1714,33 @@ namespace CheryTools
             return w;
         }
 
-        private void RenderRawText(string text, float letterSpacing, System.Numerics.Vector4 color)
+        private void RenderRawText(string text, float letterSpacing, System.Numerics.Vector4 color, bool outlineEnabled, System.Numerics.Vector4 outlineColor, float outlineThickness)
         {
-            ImGui.PushStyleColor(ImGuiCol.Text, color);
-            try
+            var drawList = ImGui.GetWindowDrawList();
+            var font = ImGui.GetFont();
+            float fontSize = ImGui.GetFontSize();
+            uint textColor = ImGui.ColorConvertFloat4ToU32(color);
+            uint outlineColorU32 = ImGui.ColorConvertFloat4ToU32(outlineColor);
+
+            if (letterSpacing == 0f)
             {
-                if (letterSpacing == 0f)
-                {
-                    ImGui.TextUnformatted(text);
-                    ImGui.SameLine(0, 0);
-                    return;
-                }
-                for (int i = 0; i < text.Length; i++)
-                {
-                    ImGui.TextUnformatted(text[i].ToString());
-                    if (i < text.Length - 1)
-                    {
-                        ImGui.SameLine(0, letterSpacing);
-                    }
-                }
+                TextStyleRenderer.AddText(drawList, font, fontSize, ImGui.GetCursorScreenPos(), textColor, text, outlineEnabled, outlineColorU32, outlineThickness);
+                ImGui.Dummy(font.CalcTextSizeA(fontSize, float.MaxValue, 0f, text));
                 ImGui.SameLine(0, 0);
+                return;
             }
-            finally
+
+            for (int i = 0; i < text.Length; i++)
             {
-                ImGui.PopStyleColor();
+                string character = text[i].ToString();
+                TextStyleRenderer.AddText(drawList, font, fontSize, ImGui.GetCursorScreenPos(), textColor, character, outlineEnabled, outlineColorU32, outlineThickness);
+                ImGui.Dummy(font.CalcTextSizeA(fontSize, float.MaxValue, 0f, character));
+                if (i < text.Length - 1)
+                {
+                    ImGui.SameLine(0, letterSpacing);
+                }
             }
+            ImGui.SameLine(0, 0);
         }
 
         private void RenderRichTextLine(string[] lines, System.Numerics.Vector4 defaultColor, int alignment, float maxLineWidth, float[] lineRenderWidths, float letterSpacing, float lineHeightOffset, bool isShadow, float scale, float baseFontSize, float xOffset, float windowWidth, OverlayerText ovText, float animScaleXMult)
@@ -829,8 +1787,8 @@ namespace CheryTools
                     }
 
                     // Select font and base size for this segment
-                    bool hasCustomFont = !string.IsNullOrEmpty(ovText.FontPath) && ImGuiController.CustomFonts.ContainsKey(ovText.FontPath);
-                    bool hasCustomLargeFont = hasCustomFont && ImGuiController.CustomLargeFonts.ContainsKey(ovText.FontPath);
+                    bool hasCustomFont = TryGetCustomFont(ovText.FontPath, false, out ImFontPtr customFont);
+                    bool hasCustomLargeFont = TryGetCustomFont(ovText.FontPath, true, out ImFontPtr customLargeFont);
                     
                     ImFontPtr segFont;
                     float segFontBaseSize;
@@ -839,12 +1797,12 @@ namespace CheryTools
                     {
                         if (hasCustomLargeFont)
                         {
-                            segFont = ImGuiController.CustomLargeFonts[ovText.FontPath];
+                            segFont = customLargeFont;
                             segFontBaseSize = 128.0f;
                         }
                         else if (hasCustomFont)
                         {
-                            segFont = ImGuiController.CustomFonts[ovText.FontPath];
+                            segFont = customFont;
                             segFontBaseSize = 48.0f;
                         }
                         else
@@ -857,7 +1815,7 @@ namespace CheryTools
                     {
                         if (hasCustomFont)
                         {
-                            segFont = ImGuiController.CustomFonts[ovText.FontPath];
+                            segFont = customFont;
                             segFontBaseSize = 48.0f;
                         }
                         else
@@ -873,8 +1831,14 @@ namespace CheryTools
                     try
                     {
                         ImGui.SetWindowFontScale(segScale);
-                        System.Numerics.Vector4 c = isShadow ? defaultColor : seg.Color;
-                        RenderRawText(seg.RenderText, letterSpacing, c);
+                        System.Numerics.Vector4 c = isShadow
+                            ? defaultColor
+                            : (seg.HasColorTag
+                                ? seg.Color
+                                : TextStyleRenderer.ColorArrayToVector4(ovText.TextColor, defaultColor));
+                        bool outlineEnabled = !isShadow && ovText.EnableOutline;
+                        System.Numerics.Vector4 outlineColor = TextStyleRenderer.ColorArrayToVector4(ovText.OutlineColor, new System.Numerics.Vector4(0f, 0f, 0f, 1f));
+                        RenderRawText(seg.RenderText, letterSpacing, c, outlineEnabled, outlineColor, ovText.OutlineThickness);
                         isFirstSegmentOnLine = false;
                     }
                     finally

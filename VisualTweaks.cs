@@ -61,24 +61,6 @@ namespace CheryTools
             if (arr == null || arr.Length < 4) return Color.white;
             return new Color(arr[0], arr[1], arr[2], arr[3]);
         }
-        public static void ApplyLevelNameUI()
-        {
-            if (!Main.IsEnabled) return;
-            if (scrUIController.instance == null || scrUIController.instance.txtLevelName == null) return;
-            
-            // Just hide or show the native level name based on the setting
-            scrUIController.instance.txtLevelName.gameObject.SetActive(!Main.Settings.HideNativeLevelName);
-        }
-
-    }
-
-    [HarmonyPatch(typeof(scrController), "Start")]
-    public static class scrController_Start_Patch
-    {
-        public static void Postfix()
-        {
-            VisualTweaks.ApplyLevelNameUI();
-        }
     }
 
     [HarmonyPatch(typeof(PlanetRenderer), "LoadPlanetColor")]

@@ -9,6 +9,7 @@ namespace CheryTools
         public KVNode Node;
         public float StartTime;
         public float? EndTime;
+        public string RenderId;
     }
 
     public class KeyViewerManager : MonoBehaviour
@@ -21,6 +22,12 @@ namespace CheryTools
 
         private Queue<float> _hitTimestamps = new Queue<float>();
         public List<KeyDrop> ActiveDrops = new List<KeyDrop>();
+        private readonly Dictionary<KVNode, string> _cachedKeyBindValues = new Dictionary<KVNode, string>();
+        private readonly Dictionary<KVNode, KeyCode> _cachedKeyCodes = new Dictionary<KVNode, KeyCode>();
+        private readonly List<KVNode> _activeNodesBuffer = new List<KVNode>();
+        private readonly HashSet<KVNode> _activeNodeSet = new HashSet<KVNode>();
+        private readonly HashSet<KeyCode> _countedKeyDowns = new HashSet<KeyCode>();
+        private int _nextDropRenderId = 1;
 
         private float _saveTimer = 0f;
 
@@ -42,12 +49,18 @@ namespace CheryTools
 
         public void ResetCounts()
         {
-            if (Main.Settings.Layout16K != null) foreach (var n in Main.Settings.Layout16K) n.HitCount = 0;
-            if (Main.Settings.Layout12K != null) foreach (var n in Main.Settings.Layout12K) n.HitCount = 0;
-            if (Main.Settings.Layout10K != null) foreach (var n in Main.Settings.Layout10K) n.HitCount = 0;
-            if (Main.Settings.Layout8K != null) foreach (var n in Main.Settings.Layout8K) n.HitCount = 0;
+            if (Main.Settings != null)
+            {
+                foreach (var n in Main.Settings.GetAllKeyViewerNodes())
+                {
+                    if (n != null) n.HitCount = 0;
+                }
+            }
             
-            Main.Settings.TotalHits = 0;
+            if (Main.Settings != null)
+            {
+                Main.Settings.TotalHits = 0;
+            }
             _hitTimestamps.Clear();
             CurrentKPS = 0;
             ActiveDrops.Clear();
@@ -57,31 +70,79 @@ namespace CheryTools
 
         public List<KVNode> GetActiveNodes()
         {
-            switch (Main.Settings.KeyViewerLayoutTab)
+            _activeNodesBuffer.Clear();
+            if (Main.Settings == null || Main.Settings.KeyViewerConfigurations == null)
             {
-                case 0: return Main.Settings.Layout16K;
-                case 1: return Main.Settings.Layout12K;
-                case 2: return Main.Settings.Layout10K;
-                case 3: return Main.Settings.Layout8K;
-                default: return Main.Settings.Layout16K;
+                return _activeNodesBuffer;
             }
+
+            foreach (var config in Main.Settings.KeyViewerConfigurations)
+            {
+                if (config == null || !config.IsEnabled || config.Nodes == null) continue;
+                _activeNodesBuffer.AddRange(config.Nodes);
+            }
+            return _activeNodesBuffer;
+        }
+
+        public List<KVNode> GetEditingNodes()
+        {
+            return Main.Settings != null ? Main.Settings.GetSelectedKeyViewerNodes() : null;
+        }
+
+        private bool TryGetNodeKeyCode(KVNode node, out KeyCode keyCode)
+        {
+            keyCode = KeyCode.None;
+            if (node == null) return false;
+
+            string keyBind = node.KeyBind ?? string.Empty;
+            if (_cachedKeyBindValues.TryGetValue(node, out string cachedBind)
+                && string.Equals(cachedBind, keyBind, StringComparison.Ordinal)
+                && _cachedKeyCodes.TryGetValue(node, out keyCode))
+            {
+                return keyCode != KeyCode.None;
+            }
+
+            if (!System.Enum.TryParse(keyBind, true, out keyCode))
+            {
+                keyCode = KeyCode.None;
+            }
+
+            _cachedKeyBindValues[node] = keyBind;
+            _cachedKeyCodes[node] = keyCode;
+            return keyCode != KeyCode.None;
         }
 
         void Update()
         {
 
-            if (!Main.IsEnabled || !Main.Settings.EnableKeyViewer) return;
+            if (!Main.IsEnabled || Main.Settings == null || !Main.Settings.EnableKeyViewer) return;
 
             float currentTime = Time.unscaledTime;
 
             var activeNodes = GetActiveNodes();
+            _activeNodeSet.Clear();
             if (activeNodes != null)
             {
                 foreach (var node in activeNodes)
                 {
+                    if (node != null) _activeNodeSet.Add(node);
+                }
+
+                for (int j = ActiveDrops.Count - 1; j >= 0; j--)
+                {
+                    if (ActiveDrops[j].EndTime == null && (ActiveDrops[j].Node == null || !_activeNodeSet.Contains(ActiveDrops[j].Node)))
+                    {
+                        ActiveDrops[j].EndTime = currentTime;
+                    }
+                }
+
+                _countedKeyDowns.Clear();
+                foreach (var node in activeNodes)
+                {
+                    if (node == null) continue;
                     if (node.NodeType != 0) continue;
                     
-                    if (System.Enum.TryParse(node.KeyBind, true, out KeyCode kc) && kc != KeyCode.None)
+                    if (TryGetNodeKeyCode(node, out KeyCode kc))
                     {
                         bool isPressed = Input.GetKey(kc);
                         IsNodePressed[node] = isPressed;
@@ -98,9 +159,12 @@ namespace CheryTools
                             }
                             
                             node.HitCount++;
-                            Main.Settings.TotalHits++;
-                            _hitTimestamps.Enqueue(currentTime);
-                            ActiveDrops.Add(new KeyDrop { Node = node, StartTime = currentTime, EndTime = null });
+                            if (_countedKeyDowns.Add(kc))
+                            {
+                                Main.Settings.TotalHits++;
+                                _hitTimestamps.Enqueue(currentTime);
+                            }
+                            ActiveDrops.Add(new KeyDrop { Node = node, StartTime = currentTime, EndTime = null, RenderId = "rain_" + (_nextDropRenderId++).ToString() });
                         }
 
                         // 使用 !isPressed 替代 GetKeyUp，无视丢帧卡顿，只要按键处于松开状态就强制切断雨滴
@@ -123,10 +187,20 @@ namespace CheryTools
                 }
             }
 
-            if (Main.Settings.EnableKeyRain && Main.Settings.KeyRainSpeed > 0)
+            if (ActiveDrops.Count > 0)
             {
-                float maxLifespan = (Main.Settings.KeyRainMaxHeight + 200) / Main.Settings.KeyRainSpeed;
-                ActiveDrops.RemoveAll(d => d.EndTime.HasValue && (currentTime - d.EndTime.Value) > maxLifespan);
+                for (int i = ActiveDrops.Count - 1; i >= 0; i--)
+                {
+                    KeyDrop drop = ActiveDrops[i];
+                    KVConfiguration config = Main.Settings.FindKeyViewerConfigurationForNode(drop.Node);
+                    float speed = config != null && config.EnableKeyRain ? config.KeyRainSpeed : 800.0f;
+                    float maxHeight = config != null && config.EnableKeyRain ? config.KeyRainMaxHeight : 400.0f;
+                    float maxLifespan = speed > 0f ? (maxHeight + 200f) / speed : 1f;
+                    if (drop.EndTime.HasValue && (currentTime - drop.EndTime.Value) > maxLifespan)
+                    {
+                        ActiveDrops.RemoveAt(i);
+                    }
+                }
             }
 
             while (_hitTimestamps.Count > 0 && currentTime - _hitTimestamps.Peek() > 1f)

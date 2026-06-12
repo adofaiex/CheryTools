@@ -16,13 +16,32 @@ namespace CheryTools
         private Canvas _canvas;
         private List<CanvasRenderer> _renderers = new List<CanvasRenderer>();
         private List<Mesh> _meshes = new List<Mesh>();
+        private bool _imguiCanvasHasContent = false;
+        private float _nextOverlayUpdateTime = 0f;
 
         private Vector3[] _vertices = new Vector3[0];
         private Vector2[] _uvs = new Vector2[0];
         private Color32[] _colors = new Color32[0];
         private int[] _indices = new int[0];
 
-        public Action OnLayout;
+        public static float PanelScale { get; private set; } = 1.0f;
+        private static System.Numerics.Vector2 _screenMousePos = System.Numerics.Vector2.Zero;
+        private static System.Numerics.Vector2 _screenMouseDelta = System.Numerics.Vector2.Zero;
+        public static System.Numerics.Vector2 ScreenDisplaySize
+        {
+            get { return new System.Numerics.Vector2(Screen.width, Screen.height); }
+        }
+        public static System.Numerics.Vector2 ScreenMousePos
+        {
+            get { return _screenMousePos; }
+        }
+        public static System.Numerics.Vector2 ScreenMouseDelta
+        {
+            get { return _screenMouseDelta; }
+        }
+
+        public Action OnImGuiLayout;
+        public Action OnOverlayLayout;
 
         public static Dictionary<string, ImFontPtr> CustomFonts = new Dictionary<string, ImFontPtr>();
         public static Dictionary<string, ImFontPtr> CustomLargeFonts = new Dictionary<string, ImFontPtr>();
@@ -54,11 +73,51 @@ namespace CheryTools
             scaler.scaleFactor = 1.0f;
         }
 
+        private static float NormalizePanelScale(float scale)
+        {
+            if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
+            {
+                scale = 1.0f;
+            }
+            return Mathf.Clamp(scale, 0.6f, 2.0f);
+        }
+
+        private void ApplyPanelScale(float scale)
+        {
+            PanelScale = NormalizePanelScale(scale);
+            var io = ImGui.GetIO();
+            io.FontGlobalScale = 1.0f;
+            ClampPanelStyle();
+        }
+
+        private static void ClampPanelStyle()
+        {
+            var style = ImGui.GetStyle();
+            if (style.WindowMinSize.X < 1.0f || style.WindowMinSize.Y < 1.0f)
+            {
+                style.WindowMinSize = new System.Numerics.Vector2(
+                    Mathf.Max(1.0f, style.WindowMinSize.X),
+                    Mathf.Max(1.0f, style.WindowMinSize.Y));
+            }
+            style.ScrollbarSize = Mathf.Max(1.0f, style.ScrollbarSize);
+            style.GrabMinSize = Mathf.Max(1.0f, style.GrabMinSize);
+        }
+
         public static ImFontPtr GetHighResFontOrDefault(string path)
         {
             if (!string.IsNullOrEmpty(path) && CustomFonts.TryGetValue(path, out var f1)) return f1;
+            string resolvedPath = CheryToolsAssets.ResolveAssetPath(path);
+            if (!string.IsNullOrEmpty(resolvedPath) && CustomFonts.TryGetValue(resolvedPath, out var fResolved)) return fResolved;
             if (Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.KeyViewerFontPath) && CustomFonts.TryGetValue(Main.Settings.KeyViewerFontPath, out var f2)) return f2;
+            string resolvedGlobalPath = Main.Settings != null ? CheryToolsAssets.ResolveAssetPath(Main.Settings.KeyViewerFontPath) : string.Empty;
+            if (!string.IsNullOrEmpty(resolvedGlobalPath) && CustomFonts.TryGetValue(resolvedGlobalPath, out var f3)) return f3;
             return DefaultHighResFont;
+        }
+
+        private static void StoreFont(Dictionary<string, ImFontPtr> fonts, string key, string resolvedPath, ImFontPtr font)
+        {
+            if (!string.IsNullOrEmpty(key)) fonts[key] = font;
+            if (!string.IsNullOrEmpty(resolvedPath)) fonts[resolvedPath] = font;
         }
 
         public void RebuildFontAtlas()
@@ -102,15 +161,17 @@ namespace CheryTools
                 {
                     if (!string.IsNullOrEmpty(txt.FontPath))
                     {
-                        if (System.IO.File.Exists(txt.FontPath))
+                        string fontKey = txt.FontPath;
+                        string resolvedFontPath = CheryToolsAssets.ResolveAssetPath(fontKey);
+                        if (System.IO.File.Exists(resolvedFontPath))
                         {
-                            if (!CustomFonts.ContainsKey(txt.FontPath))
+                            if (!CustomFonts.ContainsKey(fontKey) && !CustomFonts.ContainsKey(resolvedFontPath))
                             {
                                 try {
-                                    var ptr = io.Fonts.AddFontFromFileTTF(txt.FontPath, 48.0f, null, customChineseCommon);
-                                    CustomFonts[txt.FontPath] = ptr;
+                                    var ptr = io.Fonts.AddFontFromFileTTF(resolvedFontPath, 48.0f, null, customChineseCommon);
+                                    StoreFont(CustomFonts, fontKey, resolvedFontPath, ptr);
                                 } catch (Exception e) {
-                                    Main.Logger.Log($"Failed to load font {txt.FontPath}: {e.Message}");
+                                    Main.Logger.Log($"Failed to load font {resolvedFontPath}: {e.Message}");
                                 }
                             }
 
@@ -139,14 +200,14 @@ namespace CheryTools
                                 }
                             }
 
-                            if (maxEffectiveSize > 72f && !CustomLargeFonts.ContainsKey(txt.FontPath))
+                            if (maxEffectiveSize > 72f && !CustomLargeFonts.ContainsKey(fontKey) && !CustomLargeFonts.ContainsKey(resolvedFontPath))
                             {
                                 try {
-                                    var ptr = io.Fonts.AddFontFromFileTTF(txt.FontPath, 128.0f, null, largeFontRanges);
-                                    CustomLargeFonts[txt.FontPath] = ptr;
-                                    Main.Logger.Log($"Loaded large custom font {txt.FontPath} at 128px with optimized glyph ranges");
+                                    var ptr = io.Fonts.AddFontFromFileTTF(resolvedFontPath, 128.0f, null, largeFontRanges);
+                                    StoreFont(CustomLargeFonts, fontKey, resolvedFontPath, ptr);
+                                    Main.Logger.Log($"Loaded large custom font {resolvedFontPath} at 128px with optimized glyph ranges");
                                 } catch (Exception e) {
-                                    Main.Logger.Log($"Failed to load large font {txt.FontPath}: {e.Message}");
+                                    Main.Logger.Log($"Failed to load large font {resolvedFontPath}: {e.Message}");
                                 }
                             }
                         }
@@ -154,45 +215,47 @@ namespace CheryTools
                 }
             }
 
-            if (Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.KeyViewerFontPath) && !CustomFonts.ContainsKey(Main.Settings.KeyViewerFontPath))
+            if (Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.KeyViewerFontPath))
             {
-                if (System.IO.File.Exists(Main.Settings.KeyViewerFontPath))
+                string fontKey = Main.Settings.KeyViewerFontPath;
+                string resolvedFontPath = CheryToolsAssets.ResolveAssetPath(fontKey);
+                if (!CustomFonts.ContainsKey(fontKey) && !CustomFonts.ContainsKey(resolvedFontPath) && System.IO.File.Exists(resolvedFontPath))
                 {
                     try {
-                        var ptr = io.Fonts.AddFontFromFileTTF(Main.Settings.KeyViewerFontPath, 48.0f, null, customChineseCommon);
-                        CustomFonts[Main.Settings.KeyViewerFontPath] = ptr;
+                        var ptr = io.Fonts.AddFontFromFileTTF(resolvedFontPath, 48.0f, null, customChineseCommon);
+                        StoreFont(CustomFonts, fontKey, resolvedFontPath, ptr);
                     } catch (Exception e) {
-                        Main.Logger.Log($"Failed to load font {Main.Settings.KeyViewerFontPath}: {e.Message}");
+                        Main.Logger.Log($"Failed to load font {resolvedFontPath}: {e.Message}");
                     }
                 }
             }
 
             if (Main.Settings != null)
             {
-                var allNodes = new System.Collections.Generic.List<KVNode>();
-                if (Main.Settings.Layout16K != null) allNodes.AddRange(Main.Settings.Layout16K);
-                if (Main.Settings.Layout12K != null) allNodes.AddRange(Main.Settings.Layout12K);
-                if (Main.Settings.Layout10K != null) allNodes.AddRange(Main.Settings.Layout10K);
-                if (Main.Settings.Layout8K != null) allNodes.AddRange(Main.Settings.Layout8K);
+                var allNodes = Main.Settings.GetAllKeyViewerNodes();
 
                 foreach (var node in allNodes)
                 {
-                    if (!string.IsNullOrEmpty(node.KeyFontPath) && !CustomFonts.ContainsKey(node.KeyFontPath) && System.IO.File.Exists(node.KeyFontPath))
+                    string keyFontKey = node.KeyFontPath;
+                    string keyFontPath = CheryToolsAssets.ResolveAssetPath(keyFontKey);
+                    if (!string.IsNullOrEmpty(keyFontKey) && !CustomFonts.ContainsKey(keyFontKey) && !CustomFonts.ContainsKey(keyFontPath) && System.IO.File.Exists(keyFontPath))
                     {
                         try {
-                            var ptr = io.Fonts.AddFontFromFileTTF(node.KeyFontPath, 48.0f, null, customChineseCommon);
-                            CustomFonts[node.KeyFontPath] = ptr;
+                            var ptr = io.Fonts.AddFontFromFileTTF(keyFontPath, 48.0f, null, customChineseCommon);
+                            StoreFont(CustomFonts, keyFontKey, keyFontPath, ptr);
                         } catch (Exception e) {
-                            Main.Logger.Log($"Failed to load font {node.KeyFontPath}: {e.Message}");
+                            Main.Logger.Log($"Failed to load font {keyFontPath}: {e.Message}");
                         }
                     }
-                    if (node.NodeType == 0 && !string.IsNullOrEmpty(node.CountFontPath) && !CustomFonts.ContainsKey(node.CountFontPath) && System.IO.File.Exists(node.CountFontPath))
+                    string countFontKey = node.CountFontPath;
+                    string countFontPath = CheryToolsAssets.ResolveAssetPath(countFontKey);
+                    if (node.NodeType == 0 && !string.IsNullOrEmpty(countFontKey) && !CustomFonts.ContainsKey(countFontKey) && !CustomFonts.ContainsKey(countFontPath) && System.IO.File.Exists(countFontPath))
                     {
                         try {
-                            var ptr = io.Fonts.AddFontFromFileTTF(node.CountFontPath, 48.0f, null, customChineseCommon);
-                            CustomFonts[node.CountFontPath] = ptr;
+                            var ptr = io.Fonts.AddFontFromFileTTF(countFontPath, 48.0f, null, customChineseCommon);
+                            StoreFont(CustomFonts, countFontKey, countFontPath, ptr);
                         } catch (Exception e) {
-                            Main.Logger.Log($"Failed to load font {node.CountFontPath}: {e.Message}");
+                            Main.Logger.Log($"Failed to load font {countFontPath}: {e.Message}");
                         }
                     }
                 }
@@ -341,11 +404,31 @@ namespace CheryTools
                 RebuildFontAtlas();
             }
 
+            var currentMousePos = new System.Numerics.Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+            _screenMouseDelta = currentMousePos - _screenMousePos;
+            _screenMousePos = currentMousePos;
+
+            if (ShouldUpdateOverlay())
+            {
+                SdfTextRenderer.BeginFrame();
+                OnOverlayLayout?.Invoke();
+                SdfTextRenderer.EndFrame();
+            }
+
+            if (!ShouldRenderImGui())
+            {
+                ClearImGuiCanvasOnce();
+                return;
+            }
+
+            ApplyPanelScale(Main.Settings != null ? Main.Settings.ImGuiPanelScale : 1.0f);
             var io = ImGui.GetIO();
-            io.DisplaySize = new System.Numerics.Vector2(Screen.width, Screen.height);
+            float panelScale = Mathf.Max(0.001f, PanelScale);
+            io.DisplaySize = new System.Numerics.Vector2(Screen.width / panelScale, Screen.height / panelScale);
+            io.DisplayFramebufferScale = System.Numerics.Vector2.One;
             io.DeltaTime = Mathf.Max(Time.unscaledDeltaTime, 0.001f); // Fix assert when paused
 
-            io.AddMousePosEvent(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+            io.AddMousePosEvent(Input.mousePosition.x / panelScale, (Screen.height - Input.mousePosition.y) / panelScale);
             io.AddMouseButtonEvent(0, Input.GetMouseButton(0));
             io.AddMouseButtonEvent(1, Input.GetMouseButton(1));
             io.AddMouseButtonEvent(2, Input.GetMouseButton(2));
@@ -385,10 +468,59 @@ namespace CheryTools
 
             ImGui.NewFrame();
 
-            OnLayout?.Invoke();
+            OnImGuiLayout?.Invoke();
 
             ImGui.Render();
             UpdateCanvas();
+        }
+
+        private static bool ShouldRenderImGui()
+        {
+            return CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen;
+        }
+
+        private bool ShouldUpdateOverlay()
+        {
+            if (CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen)
+            {
+                _nextOverlayUpdateTime = Time.unscaledTime;
+                return true;
+            }
+
+            if (Main.Settings != null && Main.Settings.OverlayerEditMode)
+            {
+                _nextOverlayUpdateTime = Time.unscaledTime;
+                return true;
+            }
+
+            float rate = Main.Settings != null ? Main.Settings.OverlayUpdateRate : 240.0f;
+            if (float.IsNaN(rate) || float.IsInfinity(rate) || rate <= 0f)
+            {
+                rate = 120.0f;
+            }
+            rate = Mathf.Clamp(rate, 30.0f, 360.0f);
+            float now = Time.unscaledTime;
+            if (now < _nextOverlayUpdateTime)
+            {
+                return false;
+            }
+
+            _nextOverlayUpdateTime = now + 1.0f / rate;
+            return true;
+        }
+
+        private void ClearImGuiCanvasOnce()
+        {
+            if (!_imguiCanvasHasContent)
+            {
+                return;
+            }
+
+            for (int i = 0; i < _renderers.Count; i++)
+            {
+                _renderers[i].Clear();
+            }
+            _imguiCanvasHasContent = false;
         }
 
         private unsafe void UpdateCanvas()
@@ -397,10 +529,15 @@ namespace CheryTools
             if (drawData.CmdListsCount == 0)
             {
                 for (int i = 0; i < _renderers.Count; i++) _renderers[i].Clear();
+                _imguiCanvasHasContent = false;
                 return;
             }
 
+            _imguiCanvasHasContent = true;
             int cmdCount = 0;
+            float panelScale = Mathf.Max(0.001f, PanelScale);
+            float offsetX = -Screen.width / 2.0f;
+            float offsetY = Screen.height / 2.0f;
             for (int n = 0; n < drawData.CmdListsCount; n++)
             {
                 ImDrawListPtr cmdList = drawData.CmdLists[n];
@@ -421,7 +558,7 @@ namespace CheryTools
                 ImDrawVert* vtxPtr = (ImDrawVert*)cmdList.VtxBuffer.Data;
                 for (int i = 0; i < vtxCount; i++)
                 {
-                    _vertices[i] = new Vector3(vtxPtr[i].pos.X, -vtxPtr[i].pos.Y, 0); // Invert Y for Canvas
+                    _vertices[i] = new Vector3(vtxPtr[i].pos.X * panelScale, -vtxPtr[i].pos.Y * panelScale, 0); // Invert Y for Canvas
                     _uvs[i] = new Vector2(vtxPtr[i].uv.X, vtxPtr[i].uv.Y);
                     uint c = vtxPtr[i].col;
                     _colors[i] = new Color32((byte)(c & 0xFF), (byte)((c >> 8) & 0xFF), (byte)((c >> 16) & 0xFF), (byte)((c >> 24) & 0xFF));
@@ -457,10 +594,6 @@ namespace CheryTools
                     int[] subIndices = new int[elemCount];
                     Array.Copy(_indices, (int)pcmd.IdxOffset, subIndices, 0, elemCount);
 
-                    var io = ImGui.GetIO();
-                    float offsetX = -io.DisplaySize.X / 2.0f;
-                    float offsetY = io.DisplaySize.Y / 2.0f;
-
                     // Apply offset so that ImGui (0,0) ends up at Top-Left of Screen
                     Vector3[] shiftedVertices = new Vector3[vtxCount];
                     for (int i = 0; i < vtxCount; i++)
@@ -475,10 +608,10 @@ namespace CheryTools
                     meshObj.SetIndices(subIndices, 0, elemCount, MeshTopology.Triangles, 0);
 
                     // Transform clipping rect to match the centered RectTransform
-                    float clipX = offsetX + pcmd.ClipRect.X;
-                    float clipY = offsetY - pcmd.ClipRect.W;
-                    float clipW = pcmd.ClipRect.Z - pcmd.ClipRect.X;
-                    float clipH = pcmd.ClipRect.W - pcmd.ClipRect.Y;
+                    float clipX = offsetX + pcmd.ClipRect.X * panelScale;
+                    float clipY = offsetY - pcmd.ClipRect.W * panelScale;
+                    float clipW = (pcmd.ClipRect.Z - pcmd.ClipRect.X) * panelScale;
+                    float clipH = (pcmd.ClipRect.W - pcmd.ClipRect.Y) * panelScale;
                     renderer.EnableRectClipping(new Rect(clipX, clipY, clipW, clipH));
                     
                     Texture2D renderTex = _fontTexture;

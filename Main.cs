@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
+using System.Reflection.Emit;
 using HarmonyLib;
 using UnityEngine;
 using UnityModManagerNet;
@@ -16,14 +18,102 @@ namespace CheryTools
         public float Scale = 1.0f;
         public float Rotation = 0f;
         public float Opacity = 1.0f;
+        public int Depth = 0;
 
         public float PivotX = 0f;
         public float PivotY = 0f;
+
+        public System.Collections.Generic.List<OverlayerAnimation> Animations = new System.Collections.Generic.List<OverlayerAnimation>();
 
         [System.Xml.Serialization.XmlIgnore]
         public float LastWidth = 100f;
         [System.Xml.Serialization.XmlIgnore]
         public float LastHeight = 100f;
+    }
+
+    public enum OverlayerProgressValueKind
+    {
+        Constant = 0,
+        Progress = 1,
+        Accuracy = 2,
+        XAccuracy = 3,
+        Kps = 4,
+        CurrentClicksPerSecond = 5,
+        MapPlayedTime = 6,
+        MapTotalTime = 7,
+        MusicPlayedTime = 8,
+        MusicTotalTime = 9,
+        PureCombo = 10,
+        PerfectCombo = 11,
+        Miss = 12,
+        FailMiss = 13,
+        FailOverload = 14
+    }
+
+    public enum OverlayerProgressFillDirection
+    {
+        LeftToRight = 0,
+        RightToLeft = 1,
+        BottomToTop = 2,
+        TopToBottom = 3
+    }
+
+    [Serializable]
+    public class OverlayerProgressValueSource
+    {
+        public OverlayerProgressValueKind Kind = OverlayerProgressValueKind.Constant;
+        public double Constant = 0.0;
+
+        public OverlayerProgressValueSource()
+        {
+        }
+
+        public OverlayerProgressValueSource(OverlayerProgressValueKind kind, double constant = 0.0)
+        {
+            Kind = kind;
+            Constant = constant;
+        }
+    }
+
+    [Serializable]
+    public class OverlayerProgressBar
+    {
+        public string Name = "新进度条";
+        public bool IsEnabled = true;
+
+        public OverlayerProgressValueSource ValueSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Progress);
+        public OverlayerProgressValueSource MinSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Constant, 0.0);
+        public OverlayerProgressValueSource MaxSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Constant, 100.0);
+
+        public float PositionX = 50f;
+        public float PositionY = 100f;
+        public float Width = 300f;
+        public float Height = 20f;
+        public float Opacity = 1.0f;
+        public int Depth = 0;
+
+        public float PivotX = 0f;
+        public float PivotY = 0f;
+
+        public OverlayerProgressFillDirection FillDirection = OverlayerProgressFillDirection.LeftToRight;
+        public bool Reverse = false;
+        public bool ClampValue = true;
+
+        public float[] BackgroundColor = new float[] { 0f, 0f, 0f, 0.45f };
+        public float[] FillColor = new float[] { 0.2f, 0.75f, 1f, 0.95f };
+        public float[] BorderColor = new float[] { 1f, 1f, 1f, 0.8f };
+        public float BorderThickness = 1f;
+        public float CornerRadius = 0f;
+
+        public bool EnableShadow = false;
+        public float[] ShadowColor = new float[] { 0f, 0f, 0f, 0.45f };
+        public float[] ShadowOffset = new float[] { 2f, 2f };
+        public float ShadowSoftness = 0f;
+
+        [System.Xml.Serialization.XmlIgnore]
+        public float LastWidth = 300f;
+        [System.Xml.Serialization.XmlIgnore]
+        public float LastHeight = 20f;
     }
 
     [Serializable]
@@ -35,6 +125,7 @@ namespace CheryTools
         public string ImagePath = "";
         public bool IsUnselectable = false;
         public float Opacity = 1.0f;
+        public int Depth = 0;
         
         public float PositionX = 0f;
         public float PositionY = 0f;
@@ -42,6 +133,7 @@ namespace CheryTools
         public float Width = 50f;
         public float Height = 50f;
         public float BorderThickness = -1f;
+        public float CornerRadius = -1f;
         
         public float Scale = 1f;
         public float TextOffsetY = 0f;
@@ -52,6 +144,15 @@ namespace CheryTools
         public float CountScale = 1f;
         public string KeyFontPath = "";
         public string CountFontPath = "";
+        public bool HideCountText = false;
+
+        public bool UseCustomOutline = false;
+        public bool KeyTextOutlineEnabled = false;
+        public float[] KeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float KeyTextOutlineThickness = 1f;
+        public bool CountTextOutlineEnabled = false;
+        public float[] CountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float CountTextOutlineThickness = 1f;
         
         public bool UseCustomColor = false;
         public float[] ColorBgNormal = new float[] { 0.2f, 0.2f, 0.2f, 0.8f };
@@ -85,6 +186,53 @@ namespace CheryTools
     }
 
     [Serializable]
+    public class KVConfiguration
+    {
+        public string Name = "新配置";
+        public bool IsEnabled = true;
+        public System.Collections.Generic.List<KVNode> Nodes = new System.Collections.Generic.List<KVNode>();
+
+        public bool AppearanceMigrated = false;
+        public string FontPath = "";
+        public float Scale = 1.0f;
+        public float BorderThickness = 2.0f;
+        public bool HideCountText = false;
+        public float GlobalTextOffsetX = 0f;
+        public float GlobalTextOffsetY = 0f;
+        public float GlobalCountOffsetX = 0f;
+        public float GlobalCountOffsetY = 0f;
+        public float DefaultWidth = 50f;
+        public float DefaultHeight = 50f;
+
+        public float[] ColorBgNormal = new float[] { 0.2f, 0.1f, 0.3f, 0.8f };
+        public float[] ColorBgPressed = new float[] { 0.5f, 0.2f, 0.8f, 1.0f };
+        public float[] ColorBorderNormal = new float[] { 0.6f, 0.3f, 0.9f, 0.8f };
+        public float[] ColorBorderPressed = new float[] { 0.8f, 0.4f, 1.0f, 1.0f };
+        public float[] ColorTextNormal = new float[] { 0.8f, 0.8f, 0.8f, 1.0f };
+        public float[] ColorTextPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
+        public float[] ColorKps = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
+        public float[] ColorTotal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
+
+        public bool KeyTextOutlineEnabled = false;
+        public float[] KeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float KeyTextOutlineThickness = 1f;
+        public bool CountTextOutlineEnabled = false;
+        public float[] CountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float CountTextOutlineThickness = 1f;
+
+        public bool EnableKeyRain = false;
+        public float KeyRainSpeed = 800.0f;
+        public float KeyRainMaxHeight = 400.0f;
+        public int KeyRainFadeMode = 1;
+        public float KeyRainWidthRatio1 = 0.8f;
+        public float KeyRainWidthRatio2 = 0.4f;
+        public float KeyRainYOffsetRow1 = 0.0f;
+        public float KeyRainYOffsetRow2 = 0.0f;
+        public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
+        public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
+    }
+
+    [Serializable]
     public class OverlayerText
     {
         public string Name = "新模块";
@@ -97,9 +245,15 @@ namespace CheryTools
         public int Alignment = 0; // 0: Left, 1: Center, 2: Right
         public string FontPath = ""; // 字体文件绝对路径
 
+        public int Depth = 0;
+
         public bool EnableShadow = false;
         public float[] ShadowColor = new float[] { 0f, 0f, 0f, 1f };
         public float[] ShadowOffset = new float[] { 2f, 2f };
+        public float ShadowSoftness = 0f;
+        public bool EnableOutline = false;
+        public float[] OutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float OutlineThickness = 1f;
         public float LineHeightOffset = 0f;
         public float LetterSpacing = 0f;
         
@@ -114,6 +268,27 @@ namespace CheryTools
         public float LastHeight = 40f;
     }
 
+    [Serializable]
+    public class GameUIElementSetting
+    {
+        public string Id = "";
+        public bool Enabled = false;
+        public bool Visible = true;
+        public float OffsetX = 0f;
+        public float OffsetY = 0f;
+        public float Scale = 1f;
+        public float Alpha = 1f;
+
+        public GameUIElementSetting()
+        {
+        }
+
+        public GameUIElementSetting(string id)
+        {
+            Id = id;
+        }
+    }
+
     public class Settings : UnityModManager.ModSettings
     {
         public bool OverlayerSystemEnabled = false;
@@ -121,6 +296,7 @@ namespace CheryTools
         public bool OverlayerOnlyShowPlaying = false;
         public System.Collections.Generic.List<OverlayerText> OverlayerTexts = new System.Collections.Generic.List<OverlayerText>();
         public System.Collections.Generic.List<OverlayerImage> OverlayerImages = new System.Collections.Generic.List<OverlayerImage>();
+        public System.Collections.Generic.List<OverlayerProgressBar> OverlayerProgressBars = new System.Collections.Generic.List<OverlayerProgressBar>();
         
         public bool EnableLegacyPauseFix = true;
 
@@ -136,21 +312,45 @@ namespace CheryTools
         public float[] GreenPlanetColor = new float[] { 0f, 1f, 0f, 1f };
         public float[] GreenTailColor = new float[] { 0f, 1f, 0f, 1f };
 
-        public bool HideNativeLevelName = false;
-
         public float[] ComboColor = new float[4] { 1f, 1f, 1f, 1f };
         public float[] AccuracyColor = new float[4] { 1f, 1f, 1f, 1f };
         
         public string LevelNameFont = "";
-        
+
+        public bool HideHitTextEnabled = false;
+        public bool HideHitTextTooEarly = false;
+        public bool HideHitTextVeryEarly = false;
+        public bool HideHitTextEarlyPerfect = false;
+        public bool HideHitTextPerfect = false;
+        public bool HideHitTextLatePerfect = false;
+        public bool HideHitTextVeryLate = false;
+        public bool HideHitTextTooLate = false;
+        public bool HideHitTextMultipress = false;
+        public bool HideHitTextFailMiss = false;
+        public bool HideHitTextFailOverload = false;
+        public bool HideHitTextOverPress = false;
+
         public KeyCode ToggleMenuKey = KeyCode.Insert;
+        public float ImGuiPanelScale = 1.0f;
+        public float OverlayUpdateRate = 240.0f;
+        public float ImageRenderScale = 1.0f;
+
+        // Gameplay UI Settings
+        public bool GameUIControlEnabled = false;
+        public bool GameUIDeveloperUnlocked = false;
+        public System.Collections.Generic.List<GameUIElementSetting> GameUIElements = new System.Collections.Generic.List<GameUIElementSetting>();
+
+        // Optimization Settings
+        public bool DisableAutoplaySpacePause = false;
+        public bool DisablePlayModeScrollZoom = false;
 
         // KeyViewer Settings
         public bool EnableKeyViewer = true;
         public bool LimitInput = false;
         public bool KeyViewerOnlyShowPlaying = false;
+        public bool KeyViewerHideCountText = false;
         
-        public int KeyViewerLayoutTab = 0; // 0=16Key, 1=12Key, 2=8Key, 3=4Key
+        public int KeyViewerSelectedConfigIndex = 0;
         public float KeyViewerScale = 1.0f;
         public float KeyViewerBorderThickness = 2.0f;
 
@@ -167,6 +367,13 @@ namespace CheryTools
         public float[] KeyViewerColorKps = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
         public float[] KeyViewerColorTotal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
 
+        public bool KeyViewerKeyTextOutlineEnabled = false;
+        public float[] KeyViewerKeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float KeyViewerKeyTextOutlineThickness = 1f;
+        public bool KeyViewerCountTextOutlineEnabled = false;
+        public float[] KeyViewerCountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float KeyViewerCountTextOutlineThickness = 1f;
+
         // KeyRain Settings
         public bool EnableKeyRain = false;
         public float KeyRainSpeed = 800.0f;
@@ -179,14 +386,13 @@ namespace CheryTools
         public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
         public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
 
-        public string[] KeyBindings = new string[16] { 
+        private static readonly string[] DefaultKeyBindings = new string[16] {
             "Tab", "Alpha1", "Alpha2", "E", "P", "Equals", "Backspace", "Backslash",
-            "UpArrow", "LeftShift", "C", "Space", "Comma", "Period", "Return", "H" 
+            "UpArrow", "LeftShift", "C", "Space", "Comma", "Period", "Return", "H"
         };
 
         
 
-        public int[] HitCounts = new int[16];
         public int TotalHits = 0;
 
         public string KeyViewerFontPath = "";
@@ -199,10 +405,7 @@ namespace CheryTools
         public float KeyViewerDefaultWidth = 50f;
         public float KeyViewerDefaultHeight = 50f;
         
-        public System.Collections.Generic.List<KVNode> Layout16K;
-        public System.Collections.Generic.List<KVNode> Layout12K;
-        public System.Collections.Generic.List<KVNode> Layout10K;
-        public System.Collections.Generic.List<KVNode> Layout8K;
+        public System.Collections.Generic.List<KVConfiguration> KeyViewerConfigurations = new System.Collections.Generic.List<KVConfiguration>();
 
         public override void Save(UnityModManager.ModEntry modEntry)
         {
@@ -223,10 +426,16 @@ namespace CheryTools
 
         public void InitNulls()
         {
-            if (KeyBindings == null || KeyBindings.Length != 16)
-                KeyBindings = new string[16] { "Tab", "Alpha1", "Alpha2", "E", "P", "Equals", "Backspace", "Backslash", "UpArrow", "LeftShift", "C", "Space", "Comma", "Period", "Return", "H" };
-            if (HitCounts == null || HitCounts.Length != 16)
-                HitCounts = new int[16];
+            if (ImGuiPanelScale <= 0f || float.IsNaN(ImGuiPanelScale) || float.IsInfinity(ImGuiPanelScale))
+                ImGuiPanelScale = 1.0f;
+            ImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, ImGuiPanelScale));
+            if (OverlayUpdateRate <= 0f || float.IsNaN(OverlayUpdateRate) || float.IsInfinity(OverlayUpdateRate))
+                OverlayUpdateRate = 240.0f;
+            OverlayUpdateRate = Math.Max(30.0f, Math.Min(360.0f, OverlayUpdateRate));
+            if (ImageRenderScale <= 0f || float.IsNaN(ImageRenderScale) || float.IsInfinity(ImageRenderScale))
+                ImageRenderScale = 1.0f;
+            ImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, ImageRenderScale));
+            EnsureGameUIElementSettings();
             
             if (GreenTailColor == null || GreenTailColor.Length != 4) GreenTailColor = new float[] { 0f, 1f, 0f, 1f };
             if (RedTailColor == null || RedTailColor.Length != 4) RedTailColor = new float[] { 1f, 0f, 0f, 1f };
@@ -235,12 +444,23 @@ namespace CheryTools
             if (KeyViewerColorBorderNormal == null || KeyViewerColorBorderNormal.Length != 4) KeyViewerColorBorderNormal = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
             if (KeyViewerColorBorderPressed == null || KeyViewerColorBorderPressed.Length != 4) KeyViewerColorBorderPressed = new float[] { 0.8f, 0.9f, 1.0f, 0.8f };
             if (KeyViewerColorTextNormal == null || KeyViewerColorTextNormal.Length != 4) KeyViewerColorTextNormal = new float[] { 1.0f, 1.0f, 1.0f, 0.8f };
+            if (KeyViewerKeyTextOutlineColor == null || KeyViewerKeyTextOutlineColor.Length != 4) KeyViewerKeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+            if (KeyViewerCountTextOutlineColor == null || KeyViewerCountTextOutlineColor.Length != 4) KeyViewerCountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+            if (KeyViewerKeyTextOutlineThickness < 0f) KeyViewerKeyTextOutlineThickness = 1f;
+            if (KeyViewerCountTextOutlineThickness < 0f) KeyViewerCountTextOutlineThickness = 1f;
             
             if (OverlayerTexts != null)
             {
                 foreach (var t in OverlayerTexts)
                 {
+                    if (t == null) continue;
+                    t.Depth = RenderDepth.ClampDepth(t.Depth);
                     if (t.TextColor == null || t.TextColor.Length != 4) t.TextColor = new float[] { 1f, 1f, 1f, 1f };
+                    if (t.ShadowColor == null || t.ShadowColor.Length != 4) t.ShadowColor = new float[] { 0f, 0f, 0f, 1f };
+                    if (t.ShadowOffset == null || t.ShadowOffset.Length != 2) t.ShadowOffset = new float[] { 2f, 2f };
+                    if (float.IsNaN(t.ShadowSoftness) || float.IsInfinity(t.ShadowSoftness) || t.ShadowSoftness < 0f) t.ShadowSoftness = 0f;
+                    if (t.OutlineColor == null || t.OutlineColor.Length != 4) t.OutlineColor = new float[] { 0f, 0f, 0f, 1f };
+                    if (t.OutlineThickness < 0f) t.OutlineThickness = 1f;
                     if (t.Animations != null)
                     {
                         foreach (var anim in t.Animations)
@@ -250,14 +470,34 @@ namespace CheryTools
                     }
                 }
             }
+            if (OverlayerImages != null)
+            {
+                foreach (var img in OverlayerImages)
+                {
+                    if (img == null) continue;
+                    img.Depth = RenderDepth.ClampDepth(img.Depth);
+                    if (img.Animations != null)
+                    {
+                        foreach (var anim in img.Animations)
+                        {
+                            anim.ParseJson();
+                        }
+                    }
+                }
+            }
+            if (OverlayerProgressBars == null)
+                OverlayerProgressBars = new System.Collections.Generic.List<OverlayerProgressBar>();
+            for (int i = 0; i < OverlayerProgressBars.Count; i++)
+            {
+                if (OverlayerProgressBars[i] == null)
+                    OverlayerProgressBars[i] = new OverlayerProgressBar();
+                EnsureOverlayerProgressBarDefaults(OverlayerProgressBars[i]);
+            }
             if (KeyViewerColorTextPressed == null || KeyViewerColorTextPressed.Length != 4) KeyViewerColorTextPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
             if (KeyRainColorRow1 == null || KeyRainColorRow1.Length != 4) KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
             if (KeyRainColorRow2 == null || KeyRainColorRow2.Length != 4) KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
 
-            if (Layout16K == null || Layout16K.Count == 0) Layout16K = GenerateDefaultKVLayout(16);
-            if (Layout12K == null || Layout12K.Count == 0) Layout12K = GenerateDefaultKVLayout(12);
-            if (Layout10K == null || Layout10K.Count == 0) Layout10K = GenerateDefaultKVLayout(10);
-            if (Layout8K == null || Layout8K.Count == 0) Layout8K = GenerateDefaultKVLayout(8);
+            EnsureKeyViewerConfigurations();
 
             if (OverlayerTexts == null) OverlayerTexts = new System.Collections.Generic.List<OverlayerText>();
             if (OverlayerTexts.Count == 0)
@@ -267,20 +507,30 @@ namespace CheryTools
 
             foreach (var txt in OverlayerTexts)
             {
+                if (txt == null) continue;
+                txt.Depth = RenderDepth.ClampDepth(txt.Depth);
                 if (string.IsNullOrEmpty(txt.Name))
                     txt.Name = "新模块";
                 if (txt.TextColor == null || txt.TextColor.Length != 4)
                     txt.TextColor = new float[] { 1f, 1f, 1f, 1f };
+                if (txt.ShadowColor == null || txt.ShadowColor.Length != 4)
+                    txt.ShadowColor = new float[] { 0f, 0f, 0f, 1f };
+                if (txt.ShadowOffset == null || txt.ShadowOffset.Length != 2)
+                    txt.ShadowOffset = new float[] { 2f, 2f };
+                if (float.IsNaN(txt.ShadowSoftness) || float.IsInfinity(txt.ShadowSoftness) || txt.ShadowSoftness < 0f)
+                    txt.ShadowSoftness = 0f;
+                if (txt.OutlineColor == null || txt.OutlineColor.Length != 4)
+                    txt.OutlineColor = new float[] { 0f, 0f, 0f, 1f };
+                if (txt.OutlineThickness < 0f)
+                    txt.OutlineThickness = 1f;
             }
 
-            var allNodes = new System.Collections.Generic.List<KVNode>();
-            if (Layout16K != null) allNodes.AddRange(Layout16K);
-            if (Layout12K != null) allNodes.AddRange(Layout12K);
-            if (Layout10K != null) allNodes.AddRange(Layout10K);
-            if (Layout8K != null) allNodes.AddRange(Layout8K);
+            var allNodes = GetAllKeyViewerNodes();
 
             foreach (var node in allNodes)
             {
+                if (node == null) continue;
+                node.Depth = RenderDepth.ClampDepth(node.Depth);
                 if (node.RainRow == 0)
                 {
                     node.RainRow = (node.PositionY < 80f) ? 1 : 2;
@@ -293,16 +543,433 @@ namespace CheryTools
                 {
                     node.RainWidthRatio = 0.8f;
                 }
+                if (node.KeyTextOutlineColor == null || node.KeyTextOutlineColor.Length != 4)
+                {
+                    node.KeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+                }
+                if (node.CountTextOutlineColor == null || node.CountTextOutlineColor.Length != 4)
+                {
+                    node.CountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+                }
+                if (node.KeyTextOutlineThickness < 0f)
+                {
+                    node.KeyTextOutlineThickness = 1f;
+                }
+                if (node.CountTextOutlineThickness < 0f)
+                {
+                    node.CountTextOutlineThickness = 1f;
+                }
             }
+        }
+
+        private static float[] CloneColor(float[] source, float[] fallback)
+        {
+            float[] result = new float[4];
+            float[] src = source != null && source.Length == 4 ? source : fallback;
+            if (src == null || src.Length != 4)
+            {
+                src = new float[] { 1f, 1f, 1f, 1f };
+            }
+            Array.Copy(src, result, 4);
+            return result;
+        }
+
+        private static KVNode CloneKeyViewerNode(KVNode source)
+        {
+            if (source == null) return new KVNode();
+
+            return new KVNode
+            {
+                NodeType = source.NodeType,
+                KeyBind = source.KeyBind,
+                CustomText = source.CustomText,
+                ImagePath = source.ImagePath,
+                IsUnselectable = source.IsUnselectable,
+                Opacity = source.Opacity,
+                Depth = source.Depth,
+                PositionX = source.PositionX,
+                PositionY = source.PositionY,
+                Width = source.Width,
+                Height = source.Height,
+                BorderThickness = source.BorderThickness,
+                CornerRadius = source.CornerRadius,
+                Scale = source.Scale,
+                TextOffsetY = source.TextOffsetY,
+                TextOffsetX = source.TextOffsetX,
+                TextScale = source.TextScale,
+                CountOffsetY = source.CountOffsetY,
+                CountOffsetX = source.CountOffsetX,
+                CountScale = source.CountScale,
+                KeyFontPath = source.KeyFontPath,
+                CountFontPath = source.CountFontPath,
+                HideCountText = source.HideCountText,
+                UseCustomOutline = source.UseCustomOutline,
+                KeyTextOutlineEnabled = source.KeyTextOutlineEnabled,
+                KeyTextOutlineColor = CloneColor(source.KeyTextOutlineColor, new float[] { 0f, 0f, 0f, 1f }),
+                KeyTextOutlineThickness = source.KeyTextOutlineThickness,
+                CountTextOutlineEnabled = source.CountTextOutlineEnabled,
+                CountTextOutlineColor = CloneColor(source.CountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f }),
+                CountTextOutlineThickness = source.CountTextOutlineThickness,
+                UseCustomColor = source.UseCustomColor,
+                ColorBgNormal = CloneColor(source.ColorBgNormal, new float[] { 0.2f, 0.2f, 0.2f, 0.8f }),
+                ColorBgPressed = CloneColor(source.ColorBgPressed, new float[] { 0.8f, 0.8f, 0.8f, 0.8f }),
+                ColorBorderNormal = CloneColor(source.ColorBorderNormal, new float[] { 0.4f, 0.4f, 0.4f, 1.0f }),
+                ColorBorderPressed = CloneColor(source.ColorBorderPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
+                ColorTextNormal = CloneColor(source.ColorTextNormal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
+                ColorTextPressed = CloneColor(source.ColorTextPressed, new float[] { 0.0f, 0.0f, 0.0f, 1.0f }),
+                RainRow = source.RainRow,
+                UseCustomRain = source.UseCustomRain,
+                RainColor = CloneColor(source.RainColor, new float[] { 0.8f, 0.5f, 1.0f, 0.8f }),
+                RainWidthRatio = source.RainWidthRatio,
+                RainYOffset = source.RainYOffset,
+                HitCount = source.HitCount
+            };
+        }
+
+        private static System.Collections.Generic.List<KVNode> CloneKeyViewerNodes(System.Collections.Generic.List<KVNode> nodes)
+        {
+            var result = new System.Collections.Generic.List<KVNode>();
+            if (nodes == null) return result;
+
+            foreach (KVNode node in nodes)
+            {
+                result.Add(CloneKeyViewerNode(node));
+            }
+            return result;
+        }
+
+        private void CopyGlobalKeyViewerAppearanceTo(KVConfiguration config)
+        {
+            if (config == null) return;
+
+            config.FontPath = KeyViewerFontPath ?? "";
+            config.Scale = KeyViewerScale;
+            config.BorderThickness = KeyViewerBorderThickness;
+            config.HideCountText = KeyViewerHideCountText;
+            config.GlobalTextOffsetX = GlobalTextOffsetX;
+            config.GlobalTextOffsetY = GlobalTextOffsetY;
+            config.GlobalCountOffsetX = GlobalCountOffsetX;
+            config.GlobalCountOffsetY = GlobalCountOffsetY;
+            config.DefaultWidth = KeyViewerDefaultWidth;
+            config.DefaultHeight = KeyViewerDefaultHeight;
+            config.ColorBgNormal = CloneColor(KeyViewerColorBgNormal, new float[] { 0.2f, 0.1f, 0.3f, 0.8f });
+            config.ColorBgPressed = CloneColor(KeyViewerColorBgPressed, new float[] { 0.5f, 0.2f, 0.8f, 1.0f });
+            config.ColorBorderNormal = CloneColor(KeyViewerColorBorderNormal, new float[] { 0.6f, 0.3f, 0.9f, 0.8f });
+            config.ColorBorderPressed = CloneColor(KeyViewerColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f });
+            config.ColorTextNormal = CloneColor(KeyViewerColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f });
+            config.ColorTextPressed = CloneColor(KeyViewerColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.ColorKps = CloneColor(KeyViewerColorKps, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.ColorTotal = CloneColor(KeyViewerColorTotal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.KeyTextOutlineEnabled = KeyViewerKeyTextOutlineEnabled;
+            config.KeyTextOutlineColor = CloneColor(KeyViewerKeyTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
+            config.KeyTextOutlineThickness = KeyViewerKeyTextOutlineThickness;
+            config.CountTextOutlineEnabled = KeyViewerCountTextOutlineEnabled;
+            config.CountTextOutlineColor = CloneColor(KeyViewerCountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
+            config.CountTextOutlineThickness = KeyViewerCountTextOutlineThickness;
+            config.EnableKeyRain = EnableKeyRain;
+            config.KeyRainSpeed = KeyRainSpeed;
+            config.KeyRainMaxHeight = KeyRainMaxHeight;
+            config.KeyRainFadeMode = KeyRainFadeMode;
+            config.KeyRainWidthRatio1 = KeyRainWidthRatio1;
+            config.KeyRainWidthRatio2 = KeyRainWidthRatio2;
+            config.KeyRainYOffsetRow1 = KeyRainYOffsetRow1;
+            config.KeyRainYOffsetRow2 = KeyRainYOffsetRow2;
+            config.KeyRainColorRow1 = CloneColor(KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
+            config.KeyRainColorRow2 = CloneColor(KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
+            config.AppearanceMigrated = true;
+        }
+
+        private void EnsureKeyViewerConfigurationAppearance(KVConfiguration config)
+        {
+            if (config == null) return;
+
+            if (!config.AppearanceMigrated)
+            {
+                CopyGlobalKeyViewerAppearanceTo(config);
+            }
+
+            if (config.FontPath == null) config.FontPath = "";
+            if (float.IsNaN(config.Scale) || float.IsInfinity(config.Scale) || config.Scale <= 0f)
+                config.Scale = 1.0f;
+            config.Scale = Math.Max(0.5f, Math.Min(3f, config.Scale));
+            if (float.IsNaN(config.BorderThickness) || float.IsInfinity(config.BorderThickness) || config.BorderThickness < 0f)
+                config.BorderThickness = 2.0f;
+            config.BorderThickness = Math.Max(0f, Math.Min(10f, config.BorderThickness));
+            if (float.IsNaN(config.DefaultWidth) || float.IsInfinity(config.DefaultWidth) || config.DefaultWidth <= 0f)
+                config.DefaultWidth = 50f;
+            if (float.IsNaN(config.DefaultHeight) || float.IsInfinity(config.DefaultHeight) || config.DefaultHeight <= 0f)
+                config.DefaultHeight = 50f;
+            config.DefaultWidth = Math.Max(10f, Math.Min(500f, config.DefaultWidth));
+            config.DefaultHeight = Math.Max(10f, Math.Min(500f, config.DefaultHeight));
+
+            config.ColorBgNormal = CloneColor(config.ColorBgNormal, new float[] { 0.2f, 0.1f, 0.3f, 0.8f });
+            config.ColorBgPressed = CloneColor(config.ColorBgPressed, new float[] { 0.5f, 0.2f, 0.8f, 1.0f });
+            config.ColorBorderNormal = CloneColor(config.ColorBorderNormal, new float[] { 0.6f, 0.3f, 0.9f, 0.8f });
+            config.ColorBorderPressed = CloneColor(config.ColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f });
+            config.ColorTextNormal = CloneColor(config.ColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f });
+            config.ColorTextPressed = CloneColor(config.ColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.ColorKps = CloneColor(config.ColorKps, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.ColorTotal = CloneColor(config.ColorTotal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.KeyTextOutlineColor = CloneColor(config.KeyTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
+            config.CountTextOutlineColor = CloneColor(config.CountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
+            if (config.KeyTextOutlineThickness < 0f) config.KeyTextOutlineThickness = 1f;
+            if (config.CountTextOutlineThickness < 0f) config.CountTextOutlineThickness = 1f;
+
+            if (float.IsNaN(config.KeyRainSpeed) || float.IsInfinity(config.KeyRainSpeed) || config.KeyRainSpeed <= 0f)
+                config.KeyRainSpeed = 800.0f;
+            if (float.IsNaN(config.KeyRainMaxHeight) || float.IsInfinity(config.KeyRainMaxHeight) || config.KeyRainMaxHeight <= 0f)
+                config.KeyRainMaxHeight = 400.0f;
+            config.KeyRainSpeed = Math.Max(100f, Math.Min(2000f, config.KeyRainSpeed));
+            config.KeyRainMaxHeight = Math.Max(100f, Math.Min(1500f, config.KeyRainMaxHeight));
+            config.KeyRainFadeMode = Math.Max(0, Math.Min(1, config.KeyRainFadeMode));
+            config.KeyRainWidthRatio1 = Math.Max(0.05f, Math.Min(2.0f, config.KeyRainWidthRatio1));
+            config.KeyRainWidthRatio2 = Math.Max(0.05f, Math.Min(2.0f, config.KeyRainWidthRatio2));
+            config.KeyRainColorRow1 = CloneColor(config.KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
+            config.KeyRainColorRow2 = CloneColor(config.KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
+        }
+
+        private static void EnsureKeyViewerNodeDefaults(KVNode node)
+        {
+            if (node == null) return;
+            if (float.IsNaN(node.CornerRadius) || float.IsInfinity(node.CornerRadius))
+                node.CornerRadius = -1f;
+            node.CornerRadius = Math.Max(-1f, Math.Min(256f, node.CornerRadius));
+        }
+
+        public void EnsureKeyViewerConfigurations()
+        {
+            if (KeyViewerConfigurations == null)
+                KeyViewerConfigurations = new System.Collections.Generic.List<KVConfiguration>();
+
+            var seenNodeLists = new System.Collections.Generic.HashSet<System.Collections.Generic.List<KVNode>>();
+            var seenNodes = new System.Collections.Generic.HashSet<KVNode>();
+
+            for (int i = 0; i < KeyViewerConfigurations.Count; i++)
+            {
+                if (KeyViewerConfigurations[i] == null)
+                    KeyViewerConfigurations[i] = new KVConfiguration();
+
+                KVConfiguration config = KeyViewerConfigurations[i];
+                if (string.IsNullOrEmpty(config.Name))
+                    config.Name = "KV 配置 " + (i + 1).ToString();
+                if (config.Nodes == null)
+                    config.Nodes = new System.Collections.Generic.List<KVNode>();
+                else if (!seenNodeLists.Add(config.Nodes))
+                    config.Nodes = CloneKeyViewerNodes(config.Nodes);
+
+                for (int j = 0; j < config.Nodes.Count; j++)
+                {
+                    if (config.Nodes[j] == null)
+                    {
+                        config.Nodes[j] = new KVNode();
+                    }
+                    else if (!seenNodes.Add(config.Nodes[j]))
+                    {
+                        config.Nodes[j] = CloneKeyViewerNode(config.Nodes[j]);
+                        seenNodes.Add(config.Nodes[j]);
+                    }
+                    EnsureKeyViewerNodeDefaults(config.Nodes[j]);
+                }
+                EnsureKeyViewerConfigurationAppearance(config);
+            }
+
+            if (KeyViewerSelectedConfigIndex >= KeyViewerConfigurations.Count)
+                KeyViewerSelectedConfigIndex = KeyViewerConfigurations.Count - 1;
+            if (KeyViewerSelectedConfigIndex < 0)
+                KeyViewerSelectedConfigIndex = KeyViewerConfigurations.Count > 0 ? 0 : -1;
+        }
+
+        public KVConfiguration GetSelectedKeyViewerConfiguration()
+        {
+            EnsureKeyViewerConfigurations();
+            if (KeyViewerConfigurations.Count == 0)
+                return null;
+
+            if (KeyViewerSelectedConfigIndex < 0 || KeyViewerSelectedConfigIndex >= KeyViewerConfigurations.Count)
+                KeyViewerSelectedConfigIndex = 0;
+            return KeyViewerConfigurations[KeyViewerSelectedConfigIndex];
+        }
+
+        public System.Collections.Generic.List<KVNode> GetSelectedKeyViewerNodes()
+        {
+            KVConfiguration config = GetSelectedKeyViewerConfiguration();
+            return config != null ? config.Nodes : null;
+        }
+
+        public System.Collections.Generic.List<KVNode> GetAllKeyViewerNodes()
+        {
+            var nodes = new System.Collections.Generic.List<KVNode>();
+            if (KeyViewerConfigurations == null)
+                return nodes;
+
+            foreach (var config in KeyViewerConfigurations)
+            {
+                if (config == null || config.Nodes == null) continue;
+                nodes.AddRange(config.Nodes);
+            }
+            return nodes;
+        }
+
+        public KVConfiguration FindKeyViewerConfigurationForNode(KVNode node)
+        {
+            if (node == null || KeyViewerConfigurations == null)
+                return null;
+
+            foreach (var config in KeyViewerConfigurations)
+            {
+                if (config == null || config.Nodes == null) continue;
+                if (config.Nodes.Contains(node)) return config;
+            }
+            return null;
+        }
+
+        public KVConfiguration CreateKeyViewerConfiguration(string name, int presetKeyCount)
+        {
+            var config = new KVConfiguration();
+            config.Name = string.IsNullOrEmpty(name) ? "新配置" : name;
+            config.IsEnabled = true;
+            CopyGlobalKeyViewerAppearanceTo(config);
+            config.Nodes = presetKeyCount > 0
+                ? GenerateDefaultKVLayout(presetKeyCount, config.DefaultWidth, config.DefaultHeight)
+                : new System.Collections.Generic.List<KVNode>();
+            return config;
+        }
+
+        private static void EnsureOverlayerProgressBarDefaults(OverlayerProgressBar bar)
+        {
+            if (bar == null) return;
+            if (string.IsNullOrEmpty(bar.Name))
+                bar.Name = "新进度条";
+            if (bar.ValueSource == null)
+                bar.ValueSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Progress);
+            if (bar.MinSource == null)
+                bar.MinSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Constant, 0.0);
+            if (bar.MaxSource == null)
+                bar.MaxSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Constant, 100.0);
+            if (bar.BackgroundColor == null || bar.BackgroundColor.Length != 4)
+                bar.BackgroundColor = new float[] { 0f, 0f, 0f, 0.45f };
+            if (bar.FillColor == null || bar.FillColor.Length != 4)
+                bar.FillColor = new float[] { 0.2f, 0.75f, 1f, 0.95f };
+            if (bar.BorderColor == null || bar.BorderColor.Length != 4)
+                bar.BorderColor = new float[] { 1f, 1f, 1f, 0.8f };
+            if (bar.ShadowColor == null || bar.ShadowColor.Length != 4)
+                bar.ShadowColor = new float[] { 0f, 0f, 0f, 0.45f };
+            if (bar.ShadowOffset == null || bar.ShadowOffset.Length != 2)
+                bar.ShadowOffset = new float[] { 2f, 2f };
+
+            if (float.IsNaN(bar.Width) || float.IsInfinity(bar.Width) || bar.Width <= 0f)
+                bar.Width = 300f;
+            if (float.IsNaN(bar.Height) || float.IsInfinity(bar.Height) || bar.Height <= 0f)
+                bar.Height = 20f;
+            if (float.IsNaN(bar.Opacity) || float.IsInfinity(bar.Opacity))
+                bar.Opacity = 1f;
+            bar.Opacity = Math.Max(0f, Math.Min(1f, bar.Opacity));
+            bar.Depth = RenderDepth.ClampDepth(bar.Depth);
+            if (float.IsNaN(bar.PivotX) || float.IsInfinity(bar.PivotX))
+                bar.PivotX = 0f;
+            if (float.IsNaN(bar.PivotY) || float.IsInfinity(bar.PivotY))
+                bar.PivotY = 0f;
+            bar.PivotX = Math.Max(0f, Math.Min(1f, bar.PivotX));
+            bar.PivotY = Math.Max(0f, Math.Min(1f, bar.PivotY));
+            if (float.IsNaN(bar.BorderThickness) || float.IsInfinity(bar.BorderThickness) || bar.BorderThickness < 0f)
+                bar.BorderThickness = 0f;
+            if (float.IsNaN(bar.CornerRadius) || float.IsInfinity(bar.CornerRadius) || bar.CornerRadius < 0f)
+                bar.CornerRadius = 0f;
+            if (float.IsNaN(bar.ShadowSoftness) || float.IsInfinity(bar.ShadowSoftness) || bar.ShadowSoftness < 0f)
+                bar.ShadowSoftness = 0f;
+
+            if (!Enum.IsDefined(typeof(OverlayerProgressValueKind), bar.ValueSource.Kind))
+                bar.ValueSource.Kind = OverlayerProgressValueKind.Progress;
+            if (!Enum.IsDefined(typeof(OverlayerProgressValueKind), bar.MinSource.Kind))
+                bar.MinSource.Kind = OverlayerProgressValueKind.Constant;
+            if (!Enum.IsDefined(typeof(OverlayerProgressValueKind), bar.MaxSource.Kind))
+                bar.MaxSource.Kind = OverlayerProgressValueKind.Constant;
+            if (!Enum.IsDefined(typeof(OverlayerProgressFillDirection), bar.FillDirection))
+                bar.FillDirection = OverlayerProgressFillDirection.LeftToRight;
+        }
+
+        public void EnsureGameUIElementSettings()
+        {
+            if (GameUIElements == null)
+                GameUIElements = new System.Collections.Generic.List<GameUIElementSetting>();
+
+            foreach (var target in GameUIManager.Targets)
+            {
+                if (FindGameUIElement(target.Id) == null)
+                {
+                    GameUIElements.Add(new GameUIElementSetting(target.Id));
+                }
+            }
+
+            foreach (var element in GameUIElements)
+            {
+                if (element == null)
+                    continue;
+
+                if (string.IsNullOrEmpty(element.Id))
+                    element.Id = "";
+
+                if (float.IsNaN(element.Scale) || float.IsInfinity(element.Scale) || element.Scale <= 0f)
+                    element.Scale = 1f;
+                element.Scale = Math.Max(0.05f, Math.Min(5f, element.Scale));
+
+                if (float.IsNaN(element.Alpha) || float.IsInfinity(element.Alpha))
+                    element.Alpha = 1f;
+                element.Alpha = Math.Max(0f, Math.Min(1f, element.Alpha));
+
+                if (float.IsNaN(element.OffsetX) || float.IsInfinity(element.OffsetX))
+                    element.OffsetX = 0f;
+                if (float.IsNaN(element.OffsetY) || float.IsInfinity(element.OffsetY))
+                    element.OffsetY = 0f;
+            }
+        }
+
+        public GameUIElementSetting GetGameUIElement(string id)
+        {
+            if (GameUIElements == null)
+                GameUIElements = new System.Collections.Generic.List<GameUIElementSetting>();
+
+            var existing = FindGameUIElement(id);
+            if (existing != null)
+                return existing;
+
+            var created = new GameUIElementSetting(id);
+            GameUIElements.Add(created);
+            return created;
+        }
+
+        public void ResetGameUIElementSettings()
+        {
+            GameUIElements = new System.Collections.Generic.List<GameUIElementSetting>();
+            EnsureGameUIElementSettings();
+        }
+
+        private GameUIElementSetting FindGameUIElement(string id)
+        {
+            if (GameUIElements == null)
+                return null;
+
+            foreach (var element in GameUIElements)
+            {
+                if (element != null && string.Equals(element.Id, id, StringComparison.Ordinal))
+                    return element;
+            }
+
+            return null;
         }
 
         public System.Collections.Generic.List<KVNode> GenerateDefaultKVLayout(int count)
         {
+            return GenerateDefaultKVLayout(count, KeyViewerDefaultWidth, KeyViewerDefaultHeight);
+        }
+
+        public System.Collections.Generic.List<KVNode> GenerateDefaultKVLayout(int count, float defaultWidth, float defaultHeight)
+        {
             var list = new System.Collections.Generic.List<KVNode>();
             int rows = count > 8 ? 2 : 1;
             float padding = 4f;
-            float boxWidth = KeyViewerDefaultWidth;
-            float boxHeight = KeyViewerDefaultHeight;
+            float boxWidth = defaultWidth;
+            float boxHeight = defaultHeight;
             float startX = 20f;
             float startY = 50f;
 
@@ -312,7 +979,7 @@ namespace CheryTools
                 for (int c = 0; c < cols; c++)
                 {
                     int index = r * 8 + c;
-                    string bind = (KeyBindings != null && index < KeyBindings.Length) ? KeyBindings[index] : "None";
+                    string bind = index < DefaultKeyBindings.Length ? DefaultKeyBindings[index] : "None";
                     string customText = "";
                     
                     if (bind == "Tab") customText = "Tab";
@@ -397,6 +1064,10 @@ namespace CheryTools
             ModEntry = modEntry;
             Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
             Settings.InitNulls();
+            if (CheryToolsAssets.ImportSettingsAssets(Settings))
+            {
+                Settings.Save(modEntry);
+            }
             
             // Allow native DllImport to find cimgui.dll in the mod folder
             SetDllDirectory(modEntry.Path);
@@ -459,9 +1130,12 @@ namespace CheryTools
                     if (_imguiGameObject.GetComponent<OverlayerManager>() == null)
                         _imguiGameObject.AddComponent<OverlayerManager>();
 
-                    controller.OnLayout += _imguiGameObject.GetComponent<CheryToolsMenu>().RenderUI;
-                    controller.OnLayout += _imguiGameObject.GetComponent<KeyViewerOverlay>().RenderUI;
-                    controller.OnLayout += _imguiGameObject.GetComponent<OverlayerManager>().RenderUI;
+                    if (_imguiGameObject.GetComponent<GameUIManager>() == null)
+                        _imguiGameObject.AddComponent<GameUIManager>();
+
+                    controller.OnImGuiLayout += _imguiGameObject.GetComponent<CheryToolsMenu>().RenderUI;
+                    controller.OnOverlayLayout += _imguiGameObject.GetComponent<KeyViewerOverlay>().RenderUI;
+                    controller.OnOverlayLayout += _imguiGameObject.GetComponent<OverlayerManager>().RenderUI;
                     Logger.Log("ImGuiController, CheryToolsMenu, KeyViewer, Overlayer components added to GameObject.");
                 }
                 
@@ -476,6 +1150,9 @@ namespace CheryTools
                     UnityEngine.GameObject.Destroy(_imguiGameObject);
                     _imguiGameObject = null;
                 }
+                SdfTextRenderer.Shutdown();
+                KeyViewerUnityRenderer.Shutdown();
+                OverlayerUnityRenderer.Shutdown();
                 TextureManager.Clear();
             }
             return true;
@@ -494,6 +1171,170 @@ namespace CheryTools
                 }
                 return true;
             }
+        }
+
+        internal static bool ShouldHideHitText(HitMargin hitMargin)
+        {
+            if (!IsEnabled || Settings == null || !Settings.HideHitTextEnabled)
+                return false;
+
+            switch (hitMargin)
+            {
+                case HitMargin.TooEarly: return Settings.HideHitTextTooEarly;
+                case HitMargin.VeryEarly: return Settings.HideHitTextVeryEarly;
+                case HitMargin.EarlyPerfect: return Settings.HideHitTextEarlyPerfect;
+                case HitMargin.Perfect: return Settings.HideHitTextPerfect;
+                case HitMargin.LatePerfect: return Settings.HideHitTextLatePerfect;
+                case HitMargin.VeryLate: return Settings.HideHitTextVeryLate;
+                case HitMargin.TooLate: return Settings.HideHitTextTooLate;
+                case HitMargin.Multipress: return Settings.HideHitTextMultipress;
+                case HitMargin.FailMiss: return Settings.HideHitTextFailMiss;
+                case HitMargin.FailOverload: return Settings.HideHitTextFailOverload;
+                case HitMargin.OverPress: return Settings.HideHitTextOverPress;
+                default: return false;
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(scrHitTextManager), "ShowHitText")]
+    public static class scrHitTextManager_ShowHitText_Patch
+    {
+        public static bool Prefix(HitMargin hitMargin)
+        {
+            return !Main.ShouldHideHitText(hitMargin);
+        }
+    }
+
+    [HarmonyPatch(typeof(scrShowIfDebug), "Awake")]
+    public static class scrShowIfDebug_Awake_Patch
+    {
+        public static void Postfix(scrShowIfDebug __instance)
+        {
+            GameUIManager.RegisterAutoplayStatusText(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(scrEnableIfBeta), "Awake")]
+    public static class scrEnableIfBeta_Awake_Patch
+    {
+        public static void Postfix(scrEnableIfBeta __instance)
+        {
+            GameUIManager.RegisterBuildWatermark(__instance);
+        }
+    }
+
+    public static class EditorInputOptimizationPatches
+    {
+        private static readonly FieldInfo ScnEditorPlayModeField = AccessTools.Field(typeof(scnEditor), "playMode");
+        private static readonly PropertyInfo ScnEditorPlayModeProperty = AccessTools.Property(typeof(scnEditor), "playMode");
+
+        internal static bool GetKeyDownForAutoplayPause(KeyCode key)
+        {
+            if (key == KeyCode.Space
+                && Main.IsEnabled
+                && Main.Settings != null
+                && Main.Settings.DisableAutoplaySpacePause
+                && ADOBase.isLevelEditor
+                && RDC.auto)
+            {
+                return false;
+            }
+
+            return Input.GetKeyDown(key);
+        }
+
+        internal static bool ShouldBlockPlayModeScrollZoom(scnEditor editor)
+        {
+            if (!Main.IsEnabled || Main.Settings == null || !Main.Settings.DisablePlayModeScrollZoom)
+                return false;
+            if (!ADOBase.isLevelEditor || editor == null)
+                return false;
+
+            if (ScnEditorPlayModeField != null && ScnEditorPlayModeField.FieldType == typeof(bool))
+            {
+                return (bool)ScnEditorPlayModeField.GetValue(editor);
+            }
+
+            if (ScnEditorPlayModeProperty != null && ScnEditorPlayModeProperty.PropertyType == typeof(bool))
+            {
+                return (bool)ScnEditorPlayModeProperty.GetValue(editor, null);
+            }
+
+            return scrController.instance != null && scrController.instance.gameworld && !scrController.instance.paused;
+        }
+
+        internal static void ZoomCameraFromMouseWheel(scnEditor editor, float delta, bool anchorAtPointer, bool instant)
+        {
+            if (ShouldBlockPlayModeScrollZoom(editor))
+                return;
+
+            editor.ZoomCamera(delta, anchorAtPointer, instant);
+        }
+
+        internal static bool LoadsKeyCode(CodeInstruction instruction, KeyCode key)
+        {
+            if (instruction == null)
+                return false;
+
+            int expected = (int)key;
+            if (instruction.opcode == OpCodes.Ldc_I4_M1) return expected == -1;
+            if (instruction.opcode == OpCodes.Ldc_I4_0) return expected == 0;
+            if (instruction.opcode == OpCodes.Ldc_I4_1) return expected == 1;
+            if (instruction.opcode == OpCodes.Ldc_I4_2) return expected == 2;
+            if (instruction.opcode == OpCodes.Ldc_I4_3) return expected == 3;
+            if (instruction.opcode == OpCodes.Ldc_I4_4) return expected == 4;
+            if (instruction.opcode == OpCodes.Ldc_I4_5) return expected == 5;
+            if (instruction.opcode == OpCodes.Ldc_I4_6) return expected == 6;
+            if (instruction.opcode == OpCodes.Ldc_I4_7) return expected == 7;
+            if (instruction.opcode == OpCodes.Ldc_I4_8) return expected == 8;
+
+            if ((instruction.opcode == OpCodes.Ldc_I4 || instruction.opcode == OpCodes.Ldc_I4_S) && instruction.operand != null)
+            {
+                try
+                {
+                    return Convert.ToInt32(instruction.operand) == expected;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(scnEditor), "Update")]
+    public static class scnEditor_Update_AutoplayPause_Patch
+    {
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo getKeyDown = AccessTools.Method(typeof(Input), nameof(Input.GetKeyDown), new[] { typeof(KeyCode) });
+            MethodInfo guardedGetKeyDown = AccessTools.Method(typeof(EditorInputOptimizationPatches), nameof(EditorInputOptimizationPatches.GetKeyDownForAutoplayPause));
+            MethodInfo zoomCamera = AccessTools.Method(typeof(scnEditor), nameof(scnEditor.ZoomCamera), new[] { typeof(float), typeof(bool), typeof(bool) });
+            MethodInfo guardedZoomCamera = AccessTools.Method(typeof(EditorInputOptimizationPatches), nameof(EditorInputOptimizationPatches.ZoomCameraFromMouseWheel));
+            var list = new List<CodeInstruction>(instructions);
+            bool replacedSpacePause = false;
+            bool replacedMouseWheelZoom = false;
+
+            for (int i = 1; i < list.Count; i++)
+            {
+                if (!replacedSpacePause && list[i].Calls(getKeyDown) && EditorInputOptimizationPatches.LoadsKeyCode(list[i - 1], KeyCode.Space))
+                {
+                    list[i].operand = guardedGetKeyDown;
+                    replacedSpacePause = true;
+                    continue;
+                }
+
+                if (!replacedMouseWheelZoom && list[i].Calls(zoomCamera))
+                {
+                    list[i].opcode = OpCodes.Call;
+                    list[i].operand = guardedZoomCamera;
+                    replacedMouseWheelZoom = true;
+                }
+            }
+
+            return list;
         }
     }
 

@@ -104,25 +104,23 @@ namespace CheryTools
             if (Main.Settings != null)
             {
                 addKeyWithAliases(Main.Settings.ToggleMenuKey.ToString());
+                if (Main.Settings.KeyViewerConfigurations != null)
+                {
+                    foreach (KVConfiguration config in Main.Settings.KeyViewerConfigurations)
+                    {
+                        if (config == null || !config.IsEnabled || config.Nodes == null) continue;
+                        foreach (KVNode node in config.Nodes)
+                        {
+                            if (node == null || node.NodeType != 0) continue;
+                            addKeyWithAliases(node.KeyBind);
+                        }
+                    }
+                }
             }
             else
             {
                 _allowedKeys.Add("Insert");
             }
-
-            // Add KeyViewer bindings
-            if (Main.Settings.KeyBindings != null)
-                foreach(var k in Main.Settings.KeyBindings) addKeyWithAliases(k);
-            
-            // Also read from the new KVNode layouts if they exist
-            if (Main.Settings.Layout16K != null)
-                foreach(var node in Main.Settings.Layout16K) addKeyWithAliases(node.KeyBind);
-            if (Main.Settings.Layout12K != null)
-                foreach(var node in Main.Settings.Layout12K) addKeyWithAliases(node.KeyBind);
-            if (Main.Settings.Layout10K != null)
-                foreach(var node in Main.Settings.Layout10K) addKeyWithAliases(node.KeyBind);
-            if (Main.Settings.Layout8K != null)
-                foreach(var node in Main.Settings.Layout8K) addKeyWithAliases(node.KeyBind);
         }
 
         public static bool IsKeyAllowed(AnyKeyCode anyKey)
@@ -143,7 +141,10 @@ namespace CheryTools
 
         public static void FilterInputState(RDInputType instance, ButtonState state, ref int result)
         {
-            if (!Main.IsEnabled || !Main.Settings.EnableKeyViewer || !Main.Settings.LimitInput) return;
+            if (!Main.IsEnabled || Main.Settings == null) return;
+
+            bool shouldLimitInput = Main.Settings.EnableKeyViewer && Main.Settings.LimitInput;
+            if (!shouldLimitInput) return;
 
             RDInputType.MainStateCount stateCount = null;
             switch (state)
