@@ -1,4 +1,4 @@
-# CheryTools ADOFAITools 功能介绍
+# CheryTools 功能介绍
 
 欢迎使用CheryTools！下面是MOD介绍！
 
