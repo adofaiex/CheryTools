@@ -34,6 +34,7 @@ public static class FreeMakeEditor
 	private static Dictionary<KVNode, Vector2> _dragStartPositions = new Dictionary<KVNode, Vector2>();
 	private static readonly List<KVNode> _drawNodesBuffer = new List<KVNode>();
 	private static readonly List<KVNode> _hitNodesBuffer = new List<KVNode>();
+	private static readonly string[] NodeTypeItems = new string[5] { "普通按键", "KPS面板", "Total面板", "背景贴图", "循环视频" };
 	private static float _lastCanvasClickTime = -10f;
 	private static Vector2 _lastCanvasClickPos = new Vector2(float.MinValue, float.MinValue);
 	private static bool _dragMoved = false;
@@ -46,8 +47,11 @@ public static class FreeMakeEditor
 	private static string _keyBindCaptureId = string.Empty;
 	private static int _keyBindCaptureStartFrame = -1;
 
+	private static readonly UnityEngine.KeyCode[] KeyboardKeys = BuildKeyboardKeys();
+
 	private static Vector2 _lastWindowPos = new Vector2(100f, 100f);
 	private static Vector2 _lastWindowSize = new Vector2(900f, 600f);
+	private static bool _centerWindowNextFrame = false;
 
 	private struct AlignLine
 	{
@@ -73,6 +77,46 @@ public static class FreeMakeEditor
 			return true;
 		}
 		return false;
+	}
+
+	public static void RequestCenterOnScreen()
+	{
+		_centerWindowNextFrame = true;
+	}
+
+	private static Vector2 GetDisplaySize()
+	{
+		Vector2 displaySize = ImGui.GetIO().DisplaySize;
+		if (displaySize.X <= 0f || displaySize.Y <= 0f)
+		{
+			displaySize = new Vector2(UnityEngine.Screen.width, UnityEngine.Screen.height);
+		}
+		if (displaySize.X <= 0f) displaySize.X = 1920f;
+		if (displaySize.Y <= 0f) displaySize.Y = 1080f;
+		return displaySize;
+	}
+
+	private static Vector2 ClampWindowPosToDisplay(Vector2 pos, Vector2 size)
+	{
+		Vector2 displaySize = GetDisplaySize();
+		float maxX = Math.Max(0f, displaySize.X - Math.Max(1f, size.X));
+		float maxY = Math.Max(0f, displaySize.Y - Math.Max(1f, size.Y));
+		return new Vector2(
+			Math.Max(0f, Math.Min(maxX, pos.X)),
+			Math.Max(0f, Math.Min(maxY, pos.Y)));
+	}
+
+	private static void ApplyFreeMakeWindowBounds()
+	{
+		_lastWindowSize = ImGui.GetWindowSize();
+		Vector2 pos = ImGui.GetWindowPos();
+		Vector2 clampedPos = ClampWindowPosToDisplay(pos, _lastWindowSize);
+		if (Math.Abs(clampedPos.X - pos.X) > 0.5f || Math.Abs(clampedPos.Y - pos.Y) > 0.5f)
+		{
+			ImGui.SetWindowPos(clampedPos);
+			pos = clampedPos;
+		}
+		_lastWindowPos = pos;
 	}
 
 	private static void CopyColor(float[] source, ref float[] target)
@@ -105,6 +149,43 @@ public static class FreeMakeEditor
 		return true;
 	}
 
+	private static bool IsGraphicNode(KVNode node)
+	{
+		return node != null && (node.NodeType == 3 || node.NodeType == 4);
+	}
+
+	private static bool HasOtherVideoNode(List<KVNode> nodes, KVNode current)
+	{
+		if (nodes == null)
+		{
+			return false;
+		}
+
+		foreach (KVNode node in nodes)
+		{
+			if (node != null && node != current && node.NodeType == 4)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static string GetPropertyPanelScopeId()
+	{
+		unchecked
+		{
+			int hash = 17;
+			hash = hash * 31 + _editMode;
+			hash = hash * 31 + _selectedNodes.Count;
+			foreach (KVNode node in _selectedNodes)
+			{
+				hash = hash * 31 + (node != null ? node.GetHashCode() : 0);
+			}
+			return "fm_props_" + hash.ToString();
+		}
+	}
+
 	private static void StopKeyBindCapture()
 	{
 		_keyBindCaptureNode = null;
@@ -123,6 +204,21 @@ public static class FreeMakeEditor
 		return !name.StartsWith("Mouse", StringComparison.Ordinal) && !name.StartsWith("Joystick", StringComparison.Ordinal);
 	}
 
+	private static UnityEngine.KeyCode[] BuildKeyboardKeys()
+	{
+		Array values = Enum.GetValues(typeof(UnityEngine.KeyCode));
+		var keys = new List<UnityEngine.KeyCode>();
+		for (int i = 0; i < values.Length; i++)
+		{
+			UnityEngine.KeyCode key = (UnityEngine.KeyCode)values.GetValue(i);
+			if (IsKeyboardKey(key))
+			{
+				keys.Add(key);
+			}
+		}
+		return keys.ToArray();
+	}
+
 	private static bool TryGetPressedKeyboardKey(out UnityEngine.KeyCode pressedKey)
 	{
 		pressedKey = UnityEngine.KeyCode.None;
@@ -131,14 +227,9 @@ public static class FreeMakeEditor
 			return false;
 		}
 
-		Array values = Enum.GetValues(typeof(UnityEngine.KeyCode));
-		for (int i = 0; i < values.Length; i++)
+		for (int i = 0; i < KeyboardKeys.Length; i++)
 		{
-			UnityEngine.KeyCode key = (UnityEngine.KeyCode)values.GetValue(i);
-			if (!IsKeyboardKey(key))
-			{
-				continue;
-			}
+			UnityEngine.KeyCode key = KeyboardKeys[i];
 
 			if (UnityEngine.Input.GetKeyDown(key))
 			{
@@ -223,7 +314,7 @@ public static class FreeMakeEditor
 		for (int i = 0; i < source.Count; i++)
 		{
 			KVNode node = source[i];
-			if (node != null && node.NodeType == 3)
+			if (IsGraphicNode(node))
 			{
 				_drawNodesBuffer.Add(node);
 			}
@@ -231,7 +322,7 @@ public static class FreeMakeEditor
 		for (int i = 0; i < source.Count; i++)
 		{
 			KVNode node = source[i];
-			if (node != null && node.NodeType != 3)
+			if (node != null && !IsGraphicNode(node))
 			{
 				_drawNodesBuffer.Add(node);
 			}
@@ -247,10 +338,10 @@ public static class FreeMakeEditor
 
 		if (_editMode == 2)
 		{
-			return node.NodeType == 3;
+			return IsGraphicNode(node);
 		}
 
-		return node.NodeType != 3 && (!node.IsUnselectable || io.KeyShift);
+		return !IsGraphicNode(node) && (!node.IsUnselectable || io.KeyShift);
 	}
 
 	private static bool IsMouseInsideNode(Vector2 mousePos, Vector2 min, Vector2 max)
@@ -410,10 +501,16 @@ public static class FreeMakeEditor
 		}
 
 		ImGui.SetNextWindowSize(_lastWindowSize, ImGuiCond.FirstUseEver);
+		if (_centerWindowNextFrame)
+		{
+			Vector2 displaySize = GetDisplaySize();
+			Vector2 centerPos = new Vector2((displaySize.X - _lastWindowSize.X) * 0.5f, (displaySize.Y - _lastWindowSize.Y) * 0.5f);
+			ImGui.SetNextWindowPos(ClampWindowPosToDisplay(centerPos, _lastWindowSize), ImGuiCond.Always);
+			_centerWindowNextFrame = false;
+		}
 		if (ImGui.Begin("FreeMake Editor", ref IsOpen, flags))
 		{
-			_lastWindowPos = ImGui.GetWindowPos();
-			_lastWindowSize = ImGui.GetWindowSize();
+			ApplyFreeMakeWindowBounds();
 
 			List<KVNode> list = KeyViewerManager.Instance?.GetEditingNodes();
 			if (list == null)
@@ -437,7 +534,7 @@ public static class FreeMakeEditor
 			{
 				_editMode = 1;
 			}
-			if (ImGui.Selectable("图片模式", _editMode == 2))
+			if (ImGui.Selectable("图片/视频模式", _editMode == 2))
 			{
 				_editMode = 2;
 			}
@@ -532,13 +629,13 @@ public static class FreeMakeEditor
 				windowDrawList.AddLine(new Vector2(cursorScreenPos.X, cursorScreenPos.Y + num2), new Vector2(cursorScreenPos.X + contentRegionAvail.X, cursorScreenPos.Y + num2), 4281545523u);
 			}
 
-			Vector2 displaySize = ImGui.GetIO().DisplaySize;
+			Vector2 displaySize = ImGuiController.ScreenDisplaySize;
 			float halfW = displaySize.X * 0.5f * _canvasZoom;
 			float halfH = displaySize.Y * 0.5f * _canvasZoom;
 			Vector2 screenBoundsMin = new Vector2(canvasCenter.X - halfW, canvasCenter.Y - halfH);
 			Vector2 screenBoundsMax = new Vector2(canvasCenter.X + halfW, canvasCenter.Y + halfH);
 			windowDrawList.AddRect(screenBoundsMin, screenBoundsMax, 1728053247u, 0f, ImDrawFlags.None, 2f);
-			string boundsLabel = $"屏幕边界 ({displaySize.X:F0} x {displaySize.Y:F0})";
+			string boundsLabel = $"游戏屏幕范围 ({displaySize.X:F0} x {displaySize.Y:F0})";
 			windowDrawList.AddText(ImGui.GetFont(), 14f * _canvasZoom, new Vector2(screenBoundsMin.X + 8f * _canvasZoom, screenBoundsMin.Y + 8f * _canvasZoom), 1728053247u, boundsLabel);
 			float keyViewerScale = editingConfig != null ? editingConfig.Scale : Main.Settings.KeyViewerScale;
 			float configBorderThickness = editingConfig != null ? editingConfig.BorderThickness : Main.Settings.KeyViewerBorderThickness;
@@ -554,7 +651,7 @@ public static class FreeMakeEditor
 				float num7 = canvasCenter.Y + item.PositionY * keyViewerScale * _canvasZoom;
 				Vector2 p_min = new Vector2(num6, num7);
 				Vector2 p_max = new Vector2(num6 + num4, num7 + num5);
-				float previewCornerRadius = ResolveNodeCornerRadiusForCanvas(item, item.NodeType == 3, keyViewerScale, _canvasZoom, num4, num5);
+				float previewCornerRadius = ResolveNodeCornerRadiusForCanvas(item, IsGraphicNode(item), keyViewerScale, _canvasZoom, num4, num5);
 				bool flag3 = _selectedNodes.Contains(item);
 				uint col = (flag3 ? 4287120418u : 4282664004u);
 				uint col2 = (flag3 ? 4294945331u : 4287137928u);
@@ -589,6 +686,16 @@ public static class FreeMakeEditor
 						windowDrawList.AddRectFilled(p_min, p_max, 1149798536u, previewCornerRadius);
 						windowDrawList.AddText(ImGui.GetFont(), ImGui.GetFontSize() * _canvasZoom, new Vector2(num6 + 5f * _canvasZoom, num7 + 5f * _canvasZoom), uint.MaxValue, "Image");
 					}
+					if (flag3)
+					{
+						windowDrawList.AddRect(p_min, p_max, col2, previewCornerRadius, ImDrawFlags.None, 2f * _canvasZoom);
+					}
+				}
+				else if (item.NodeType == 4)
+				{
+					windowDrawList.AddRectFilled(p_min, p_max, 1149798536u, previewCornerRadius);
+					windowDrawList.AddRect(p_min, p_max, col2, previewCornerRadius, ImDrawFlags.None, flag3 ? 2f * _canvasZoom : 1f * _canvasZoom);
+					windowDrawList.AddText(ImGui.GetFont(), ImGui.GetFontSize() * _canvasZoom, new Vector2(num6 + 5f * _canvasZoom, num7 + 5f * _canvasZoom), uint.MaxValue, "MP4");
 					if (flag3)
 					{
 						windowDrawList.AddRect(p_min, p_max, col2, previewCornerRadius, ImDrawFlags.None, 2f * _canvasZoom);
@@ -689,9 +796,9 @@ public static class FreeMakeEditor
 						float num20 = canvasCenter.Y + item2.PositionY * keyViewerScale * _canvasZoom;
 						bool flag5_m = false;
 						if (_editMode == 2) {
-							flag5_m = (item2.NodeType == 3);
+							flag5_m = IsGraphicNode(item2);
 						} else {
-							flag5_m = (item2.NodeType != 3) && (!item2.IsUnselectable || iO.KeyShift);
+							flag5_m = !IsGraphicNode(item2) && (!item2.IsUnselectable || iO.KeyShift);
 						}
 						if (num19 + num17 > num12 && num19 < num14 && num20 + num18 > num13 && num20 < num15 && flag5_m && !_selectedNodes.Contains(item2))
 						{
@@ -742,6 +849,9 @@ public static class FreeMakeEditor
 				bool flag6 = _selectedNodes.Count == 1;
 				ImGui.Text($"已选择: {_selectedNodes.Count} 个节点");
 				ImGui.Spacing();
+				ImGui.PushID(GetPropertyPanelScopeId());
+				try
+				{
 				int selectedDepth = RenderDepth.ClampDepth(_selectedNodes[0].Depth);
 				if (ImGui.SliderInt("\u6DF1\u5EA6##fm_depth", ref selectedDepth, RenderDepth.MinDepth, RenderDepth.MaxDepth))
 				{
@@ -757,10 +867,14 @@ public static class FreeMakeEditor
 					{
 						KVNode kVNode = _selectedNodes[0];
 						int current_item = kVNode.NodeType;
-						string[] items = new string[4] { "普通按键", "KPS面板", "Total面板", "背景贴图" };
-						if (ImGui.Combo("节点类型", ref current_item, items, 4))
+						if (ImGui.Combo("节点类型", ref current_item, NodeTypeItems, NodeTypeItems.Length))
 						{
+							if (current_item == 4 && HasOtherVideoNode(list, kVNode))
+							{
+								current_item = kVNode.NodeType;
+							}
 							kVNode.NodeType = current_item;
+							if (kVNode.NodeType == 4) kVNode.VideoLoop = true;
 							InputInterceptor.UpdateAllowedKeys();
 							Main.RequestSave();
 						}
@@ -908,6 +1022,19 @@ public static class FreeMakeEditor
 					ImGui.Spacing();
 					ImGui.Separator();
 					ImGui.Text("键雨设置");
+
+					bool nodeKeyRainEnabled = _selectedNodes[0].EnableKeyRain;
+					if (ImGui.Checkbox("启用键雨##node_key_rain_enabled", ref nodeKeyRainEnabled))
+					{
+						foreach (KVNode selectedNode in _selectedNodes)
+						{
+							if (selectedNode.NodeType == 0)
+							{
+								selectedNode.EnableKeyRain = nodeKeyRainEnabled;
+							}
+						}
+						Main.RequestSave();
+					}
 					
 					int currentRainRow = _selectedNodes[0].RainRow;
 					string[] rainRowItems = new string[] { "未设置", "顶层按键 (Row 1)", "底层按键 (Row 2)" };
@@ -952,6 +1079,17 @@ public static class FreeMakeEditor
 							Main.RequestSave();
 						}
 
+						float rainCornerRadius = _selectedNodes[0].RainCornerRadius;
+						if (ImGui.DragFloat("键雨圆角##rain_corner_radius", ref rainCornerRadius, 0.5f, 0f, 128f, "%.1f"))
+						{
+							foreach (KVNode selectedNode in _selectedNodes)
+							{
+								if (selectedNode.NodeType == 0)
+									selectedNode.RainCornerRadius = Math.Max(0f, Math.Min(128f, rainCornerRadius));
+							}
+							Main.RequestSave();
+						}
+
 						if (DrawColorPicker("键雨颜色##rain_color", _selectedNodes[0].RainColor))
 						{
 							foreach (KVNode selectedNode in _selectedNodes)
@@ -963,6 +1101,96 @@ public static class FreeMakeEditor
 								Array.Copy(_selectedNodes[0].RainColor, selectedNode.RainColor, 4);
 							}
 							Main.RequestSave();
+						}
+					}
+
+					KVNode rainShadowSource = _selectedNodes.FirstOrDefault(n => n.NodeType == 0);
+					if (rainShadowSource != null)
+					{
+						ImGui.Spacing();
+						ImGui.Text("键雨阴影");
+
+						bool useCustomRainShadow = rainShadowSource.UseCustomRainShadow;
+						if (ImGui.Checkbox("独立键雨阴影##use_custom_rain_shadow", ref useCustomRainShadow))
+						{
+							foreach (KVNode selectedNode in _selectedNodes)
+							{
+								if (selectedNode.NodeType != 0) continue;
+								selectedNode.UseCustomRainShadow = useCustomRainShadow;
+								if (useCustomRainShadow && selectedNode.RainShadowSoftness <= 0.01f)
+									selectedNode.RainShadowSoftness = 12f;
+							}
+							Main.RequestSave();
+						}
+
+						if (useCustomRainShadow)
+						{
+							if (rainShadowSource.RainShadowColor == null || rainShadowSource.RainShadowColor.Length != 4)
+								rainShadowSource.RainShadowColor = new float[] { 0f, 0f, 0f, 0.35f };
+							if (rainShadowSource.RainShadowOffset == null || rainShadowSource.RainShadowOffset.Length != 2)
+								rainShadowSource.RainShadowOffset = new float[] { 0f, 0f };
+
+							bool rainShadowEnabled = rainShadowSource.RainShadowEnabled;
+							if (ImGui.Checkbox("开启键雨阴影##node_rain_shadow_enabled", ref rainShadowEnabled))
+							{
+								foreach (KVNode selectedNode in _selectedNodes)
+								{
+									if (selectedNode.NodeType != 0) continue;
+									selectedNode.RainShadowEnabled = rainShadowEnabled;
+									if (rainShadowEnabled && selectedNode.RainShadowSoftness <= 0.01f)
+										selectedNode.RainShadowSoftness = 12f;
+								}
+								Main.RequestSave();
+							}
+
+							if (rainShadowEnabled)
+							{
+								if (DrawColorPicker("键雨阴影颜色##node_rain_shadow_color", rainShadowSource.RainShadowColor))
+								{
+									foreach (KVNode selectedNode in _selectedNodes)
+									{
+										if (selectedNode.NodeType != 0) continue;
+										CopyColor(rainShadowSource.RainShadowColor, ref selectedNode.RainShadowColor);
+									}
+									Main.RequestSave();
+								}
+
+								Vector2 rainShadowOffset = new Vector2(rainShadowSource.RainShadowOffset[0], rainShadowSource.RainShadowOffset[1]);
+								if (ImGui.DragFloat2("键雨阴影偏移##node_rain_shadow_offset", ref rainShadowOffset, 0.25f, -64f, 64f, "%.1f"))
+								{
+									foreach (KVNode selectedNode in _selectedNodes)
+									{
+										if (selectedNode.NodeType != 0) continue;
+										if (selectedNode.RainShadowOffset == null || selectedNode.RainShadowOffset.Length != 2)
+											selectedNode.RainShadowOffset = new float[] { 0f, 0f };
+										selectedNode.RainShadowOffset[0] = rainShadowOffset.X;
+										selectedNode.RainShadowOffset[1] = rainShadowOffset.Y;
+									}
+									Main.RequestSave();
+								}
+
+								float rainShadowSoftness = rainShadowSource.RainShadowSoftness;
+								if (ImGui.DragFloat("键雨阴影柔度##node_rain_shadow_softness", ref rainShadowSoftness, 0.5f, 0f, 64f, "%.1f"))
+								{
+									foreach (KVNode selectedNode in _selectedNodes)
+									{
+										if (selectedNode.NodeType != 0) continue;
+										selectedNode.RainShadowSoftness = Math.Max(0f, Math.Min(64f, rainShadowSoftness));
+									}
+									Main.RequestSave();
+								}
+
+								float rainShadowStrength = rainShadowSource.RainShadowStrength;
+								if (ImGui.SliderFloat("键雨阴影强度##node_rain_shadow_strength", ref rainShadowStrength, 0f, 1f, "%.2f"))
+								{
+									foreach (KVNode selectedNode in _selectedNodes)
+									{
+										if (selectedNode.NodeType != 0) continue;
+										selectedNode.RainShadowStrength = Math.Max(0f, Math.Min(1f, rainShadowStrength));
+									}
+									Main.RequestSave();
+								}
+							}
 						}
 					}
 				}
@@ -1151,6 +1379,116 @@ public static class FreeMakeEditor
 					{
 						ImGui.Text("当前使用此配置的描边设置");
 					}
+					ImGui.Spacing();
+					ImGui.Separator();
+					ImGui.Text("文字阴影");
+					bool useCustomShadow = _selectedNodes[0].UseCustomShadow;
+					if (ImGui.Checkbox("使用独立阴影设置##fm_use_custom_shadow", ref useCustomShadow))
+					{
+						foreach (KVNode selectedNode in _selectedNodes)
+						{
+							selectedNode.UseCustomShadow = useCustomShadow;
+						}
+						Main.RequestSave();
+					}
+					if (useCustomShadow)
+					{
+						bool keyShadowEnabled = _selectedNodes[0].KeyTextShadowEnabled;
+						if (ImGui.Checkbox("开启按键文字阴影##fm_key_text_shadow", ref keyShadowEnabled))
+						{
+							foreach (KVNode selectedNode in _selectedNodes)
+							{
+								selectedNode.KeyTextShadowEnabled = keyShadowEnabled;
+							}
+							Main.RequestSave();
+						}
+						if (keyShadowEnabled)
+						{
+							ImGui.Indent();
+							if (DrawColorPicker("按键文字阴影颜色##fm_key_text_shadow_color", _selectedNodes[0].KeyTextShadowColor))
+							{
+								foreach (KVNode selectedNode in _selectedNodes)
+								{
+									CopyColor(_selectedNodes[0].KeyTextShadowColor, ref selectedNode.KeyTextShadowColor);
+								}
+								Main.RequestSave();
+							}
+							Vector2 keyShadowOffset = new Vector2(_selectedNodes[0].KeyTextShadowOffset[0], _selectedNodes[0].KeyTextShadowOffset[1]);
+							if (ImGui.DragFloat2("按键文字阴影偏移##fm_key_text_shadow_offset", ref keyShadowOffset, 0.1f))
+							{
+								foreach (KVNode selectedNode in _selectedNodes)
+								{
+									if (selectedNode.KeyTextShadowOffset == null || selectedNode.KeyTextShadowOffset.Length != 2)
+									{
+										selectedNode.KeyTextShadowOffset = new float[] { 2f, 2f };
+									}
+									selectedNode.KeyTextShadowOffset[0] = keyShadowOffset.X;
+									selectedNode.KeyTextShadowOffset[1] = keyShadowOffset.Y;
+								}
+								Main.RequestSave();
+							}
+							float keyShadowSoftness = _selectedNodes[0].KeyTextShadowSoftness;
+							if (ImGui.DragFloat("按键文字阴影柔度##fm_key_text_shadow_softness", ref keyShadowSoftness, 0.5f, 0f, 64f, "%.1f"))
+							{
+								foreach (KVNode selectedNode in _selectedNodes)
+								{
+									selectedNode.KeyTextShadowSoftness = Math.Max(0f, keyShadowSoftness);
+								}
+								Main.RequestSave();
+							}
+							ImGui.Unindent();
+						}
+
+						bool countShadowEnabled = _selectedNodes[0].CountTextShadowEnabled;
+						if (ImGui.Checkbox("开启计数文字阴影##fm_count_text_shadow", ref countShadowEnabled))
+						{
+							foreach (KVNode selectedNode in _selectedNodes)
+							{
+								selectedNode.CountTextShadowEnabled = countShadowEnabled;
+							}
+							Main.RequestSave();
+						}
+						if (countShadowEnabled)
+						{
+							ImGui.Indent();
+							if (DrawColorPicker("计数文字阴影颜色##fm_count_text_shadow_color", _selectedNodes[0].CountTextShadowColor))
+							{
+								foreach (KVNode selectedNode in _selectedNodes)
+								{
+									CopyColor(_selectedNodes[0].CountTextShadowColor, ref selectedNode.CountTextShadowColor);
+								}
+								Main.RequestSave();
+							}
+							Vector2 countShadowOffset = new Vector2(_selectedNodes[0].CountTextShadowOffset[0], _selectedNodes[0].CountTextShadowOffset[1]);
+							if (ImGui.DragFloat2("计数文字阴影偏移##fm_count_text_shadow_offset", ref countShadowOffset, 0.1f))
+							{
+								foreach (KVNode selectedNode in _selectedNodes)
+								{
+									if (selectedNode.CountTextShadowOffset == null || selectedNode.CountTextShadowOffset.Length != 2)
+									{
+										selectedNode.CountTextShadowOffset = new float[] { 2f, 2f };
+									}
+									selectedNode.CountTextShadowOffset[0] = countShadowOffset.X;
+									selectedNode.CountTextShadowOffset[1] = countShadowOffset.Y;
+								}
+								Main.RequestSave();
+							}
+							float countShadowSoftness = _selectedNodes[0].CountTextShadowSoftness;
+							if (ImGui.DragFloat("计数文字阴影柔度##fm_count_text_shadow_softness", ref countShadowSoftness, 0.5f, 0f, 64f, "%.1f"))
+							{
+								foreach (KVNode selectedNode in _selectedNodes)
+								{
+									selectedNode.CountTextShadowSoftness = Math.Max(0f, countShadowSoftness);
+								}
+								Main.RequestSave();
+							}
+							ImGui.Unindent();
+						}
+					}
+					else
+					{
+						ImGui.Text("当前使用此配置的阴影设置");
+					}
 				}
 				else if (_editMode == 2)
 				{
@@ -1158,10 +1496,14 @@ public static class FreeMakeEditor
 					{
 						KVNode kVNode = _selectedNodes[0];
 						int current_item = kVNode.NodeType;
-						string[] items = new string[4] { "普通按键", "KPS面板", "Total面板", "背景贴图" };
-						if (ImGui.Combo("节点类型", ref current_item, items, 4))
+						if (ImGui.Combo("节点类型", ref current_item, NodeTypeItems, NodeTypeItems.Length))
 						{
+							if (current_item == 4 && HasOtherVideoNode(list, kVNode))
+							{
+								current_item = kVNode.NodeType;
+							}
 							kVNode.NodeType = current_item;
+							if (kVNode.NodeType == 4) kVNode.VideoLoop = true;
 							InputInterceptor.UpdateAllowedKeys();
 							Main.RequestSave();
 						}
@@ -1185,6 +1527,39 @@ public static class FreeMakeEditor
 							}
 							float v2 = kVNode.Opacity;
 							if (ImGui.SliderFloat("透明度", ref v2, 0f, 1f))
+							{
+								kVNode.Opacity = v2;
+								Main.RequestSave();
+							}
+						}
+						else if (current_item == 4)
+						{
+							if (HasOtherVideoNode(list, kVNode))
+							{
+								ImGui.TextColored(new Vector4(1f, 0.55f, 0.55f, 1f), "当前 KV 配置最多只能有一个视频键");
+							}
+							string input = kVNode.VideoPath ?? "";
+							if (ImGui.InputText("视频绝对路径 (.mp4)", ref input, 512u))
+							{
+								kVNode.VideoPath = input;
+								Main.RequestSave();
+							}
+							if (ImGui.IsItemDeactivatedAfterEdit())
+							{
+								ImportResourcePath(ref kVNode.VideoPath, "Videos", false);
+							}
+							bool loop = true;
+							ImGui.BeginDisabled();
+							ImGui.Checkbox("循环播放", ref loop);
+							ImGui.EndDisabled();
+							bool v = kVNode.IsUnselectable;
+							if (ImGui.Checkbox("不可选中 (在按键模式下锁定)##video_unselectable", ref v))
+							{
+								kVNode.IsUnselectable = v;
+								Main.RequestSave();
+							}
+							float v2 = kVNode.Opacity;
+							if (ImGui.SliderFloat("透明度##video_opacity", ref v2, 0f, 1f))
 							{
 								kVNode.Opacity = v2;
 								Main.RequestSave();
@@ -1254,8 +1629,14 @@ public static class FreeMakeEditor
 						Main.RequestSave();
 					}
 				}
+				}
+				finally
+				{
+					ImGui.PopID();
+				}
 			}
 			ImGui.EndChild();
+			ApplyFreeMakeWindowBounds();
 		}
 		ImGui.End();
 	}

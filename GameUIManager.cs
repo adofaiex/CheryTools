@@ -392,15 +392,34 @@ namespace CheryTools
             float alpha = setting.Visible ? (restrictAdvanced ? 1f : Mathf.Clamp01(setting.Alpha)) : 0f;
             float scale = restrictAdvanced ? 1f : Mathf.Clamp(setting.Scale, 0.05f, 5f);
 
-            rect.anchoredPosition = state.AnchoredPosition + new Vector2(offsetX, offsetY);
-            rect.localScale = new Vector3(state.LocalScale.x * scale, state.LocalScale.y * scale, state.LocalScale.z);
+            Vector2 targetPosition = state.AnchoredPosition + new Vector2(offsetX, offsetY);
+            Vector3 targetScale = new Vector3(state.LocalScale.x * scale, state.LocalScale.y * scale, state.LocalScale.z);
+            if (!Approximately(rect.anchoredPosition, targetPosition))
+            {
+                rect.anchoredPosition = targetPosition;
+            }
+            if (!Approximately(rect.localScale, targetScale))
+            {
+                rect.localScale = targetScale;
+            }
 
             CanvasGroup group = state.CanvasGroup;
             if (group != null)
             {
-                group.alpha = alpha;
-                group.interactable = setting.Visible && state.CanvasInteractable;
-                group.blocksRaycasts = setting.Visible && state.CanvasBlocksRaycasts;
+                bool targetInteractable = setting.Visible && state.CanvasInteractable;
+                bool targetBlocksRaycasts = setting.Visible && state.CanvasBlocksRaycasts;
+                if (!Mathf.Approximately(group.alpha, alpha))
+                {
+                    group.alpha = alpha;
+                }
+                if (group.interactable != targetInteractable)
+                {
+                    group.interactable = targetInteractable;
+                }
+                if (group.blocksRaycasts != targetBlocksRaycasts)
+                {
+                    group.blocksRaycasts = targetBlocksRaycasts;
+                }
             }
 
             ApplyGraphicAlpha(state, alpha);
@@ -518,8 +537,31 @@ namespace CheryTools
 
                 Color color = graphicState.Graphic.color;
                 color.a = graphicState.Color.a * alpha;
-                graphicState.Graphic.color = color;
+                if (!Approximately(graphicState.Graphic.color, color))
+                {
+                    graphicState.Graphic.color = color;
+                }
             }
+        }
+
+        private static bool Approximately(Vector2 a, Vector2 b)
+        {
+            return Mathf.Abs(a.x - b.x) < 0.001f && Mathf.Abs(a.y - b.y) < 0.001f;
+        }
+
+        private static bool Approximately(Vector3 a, Vector3 b)
+        {
+            return Mathf.Abs(a.x - b.x) < 0.001f
+                && Mathf.Abs(a.y - b.y) < 0.001f
+                && Mathf.Abs(a.z - b.z) < 0.001f;
+        }
+
+        private static bool Approximately(Color a, Color b)
+        {
+            return Mathf.Abs(a.r - b.r) < 0.001f
+                && Mathf.Abs(a.g - b.g) < 0.001f
+                && Mathf.Abs(a.b - b.b) < 0.001f
+                && Mathf.Abs(a.a - b.a) < 0.001f;
         }
 
         private void Restore(string id)

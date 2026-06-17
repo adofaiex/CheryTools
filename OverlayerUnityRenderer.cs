@@ -67,14 +67,19 @@ namespace CheryTools
             _rootRect = null;
         }
 
-        public static void DrawImageQuad(string id, Texture2D texture, Vector2 topLeft, Vector2 size, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha, int sortingOrder = CanvasSortingOrder)
+        public static void DrawImageQuad(string id, Texture texture, Vector2 topLeft, Vector2 size, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha, int sortingOrder = CanvasSortingOrder)
+        {
+            DrawImageQuad(id, texture, topLeft, size, p1, p2, p3, p4, alpha, Vector2.zero, Vector2.one, sortingOrder);
+        }
+
+        public static void DrawImageQuad(string id, Texture texture, Vector2 topLeft, Vector2 size, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha, Vector2 uvMin, Vector2 uvMax, int sortingOrder = CanvasSortingOrder)
         {
             if (!EnsureReady() || texture == null) return;
             OverlayerImageGraphic image = GetImage(id, sortingOrder);
             if (image == null) return;
 
             SetRectTransform(image.rectTransform, topLeft, size);
-            image.SetImage(texture, p1 - topLeft, p2 - topLeft, p3 - topLeft, p4 - topLeft, alpha);
+            image.SetImage(texture, p1 - topLeft, p2 - topLeft, p3 - topLeft, p4 - topLeft, alpha, uvMin, uvMax);
             Mark(image.gameObject);
         }
 
@@ -167,7 +172,6 @@ namespace CheryTools
                     image.transform.SetParent(layerRoot, false);
                     _imageSortingOrders[id] = sortingOrder;
                 }
-                image.transform.SetAsLastSibling();
                 return image;
             }
 
@@ -250,23 +254,30 @@ namespace CheryTools
 
     internal class OverlayerImageGraphic : MaskableGraphic
     {
-        private Texture2D _texture;
+        private Texture _texture;
         private Vector2 _p1;
         private Vector2 _p2;
         private Vector2 _p3;
         private Vector2 _p4;
         private float _alpha = 1f;
+        private Vector2 _uvMin = Vector2.zero;
+        private Vector2 _uvMax = Vector2.one;
 
         public override Texture mainTexture
         {
             get { return _texture != null ? _texture : s_WhiteTexture; }
         }
 
-        public void SetImage(Texture2D texture, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha)
+        public void SetImage(Texture texture, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha)
+        {
+            SetImage(texture, p1, p2, p3, p4, alpha, Vector2.zero, Vector2.one);
+        }
+
+        public void SetImage(Texture texture, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha, Vector2 uvMin, Vector2 uvMax)
         {
             float safeAlpha = Mathf.Clamp01(alpha);
             bool textureChanged = _texture != texture;
-            bool meshChanged = _p1 != p1 || _p2 != p2 || _p3 != p3 || _p4 != p4 || !Mathf.Approximately(_alpha, safeAlpha);
+            bool meshChanged = _p1 != p1 || _p2 != p2 || _p3 != p3 || _p4 != p4 || !Mathf.Approximately(_alpha, safeAlpha) || _uvMin != uvMin || _uvMax != uvMax;
 
             if (!textureChanged && !meshChanged)
             {
@@ -279,6 +290,8 @@ namespace CheryTools
             _p3 = p3;
             _p4 = p4;
             _alpha = safeAlpha;
+            _uvMin = uvMin;
+            _uvMax = uvMax;
             if (meshChanged) SetVerticesDirty();
             if (textureChanged) SetMaterialDirty();
         }
@@ -289,10 +302,10 @@ namespace CheryTools
             Color c = new Color(1f, 1f, 1f, _alpha);
 
             int start = vh.currentVertCount;
-            vh.AddVert(ToUiLocal(_p1), c, new Vector2(0f, 1f));
-            vh.AddVert(ToUiLocal(_p2), c, new Vector2(1f, 1f));
-            vh.AddVert(ToUiLocal(_p3), c, new Vector2(1f, 0f));
-            vh.AddVert(ToUiLocal(_p4), c, new Vector2(0f, 0f));
+            vh.AddVert(ToUiLocal(_p1), c, new Vector2(_uvMin.x, _uvMax.y));
+            vh.AddVert(ToUiLocal(_p2), c, new Vector2(_uvMax.x, _uvMax.y));
+            vh.AddVert(ToUiLocal(_p3), c, new Vector2(_uvMax.x, _uvMin.y));
+            vh.AddVert(ToUiLocal(_p4), c, new Vector2(_uvMin.x, _uvMin.y));
 
             vh.AddTriangle(start, start + 1, start + 2);
             vh.AddTriangle(start, start + 2, start + 3);

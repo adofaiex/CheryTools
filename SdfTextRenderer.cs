@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text.RegularExpressions;
 using TMPro;
 using UnityEngine;
 using UnityEngine.TextCore.LowLevel;
@@ -33,16 +32,18 @@ namespace CheryTools
         private static readonly Dictionary<int, RectTransform> _layerRects = new Dictionary<int, RectTransform>();
         private static readonly Dictionary<string, TMP_FontAsset> _fontAssets = new Dictionary<string, TMP_FontAsset>();
         private static readonly Dictionary<string, string> _normalizedFontPathCache = new Dictionary<string, string>();
-        private static readonly Dictionary<string, string> _shadowTextIds = new Dictionary<string, string>();
         private static readonly Dictionary<string, TextMeshProUGUI> _texts = new Dictionary<string, TextMeshProUGUI>();
         private static readonly Dictionary<string, int> _textSortingOrders = new Dictionary<string, int>();
         private static readonly Dictionary<TextMeshProUGUI, Material> _materials = new Dictionary<TextMeshProUGUI, Material>();
         private static readonly Dictionary<TextMeshProUGUI, TMP_FontAsset> _materialFonts = new Dictionary<TextMeshProUGUI, TMP_FontAsset>();
         private static readonly Dictionary<TextMeshProUGUI, TextObjectState> _textStates = new Dictionary<TextMeshProUGUI, TextObjectState>();
         private static readonly Dictionary<string, Vector2> _measureCache = new Dictionary<string, Vector2>();
-        private static readonly Regex ColorTagRegex = new Regex(@"</?color(?:=[^>]*)?>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-        private static readonly Regex AlphaTagRegex = new Regex(@"<alpha=[^>]*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly int OutlineSoftnessProperty = Shader.PropertyToID("_OutlineSoftness");
+        private static readonly int UnderlayColorProperty = Shader.PropertyToID("_UnderlayColor");
+        private static readonly int UnderlayOffsetXProperty = Shader.PropertyToID("_UnderlayOffsetX");
+        private static readonly int UnderlayOffsetYProperty = Shader.PropertyToID("_UnderlayOffsetY");
+        private static readonly int UnderlayDilateProperty = Shader.PropertyToID("_UnderlayDilate");
+        private static readonly int UnderlaySoftnessProperty = Shader.PropertyToID("_UnderlaySoftness");
         private static TextMeshProUGUI _measureText;
         private static int _frameId;
         private static bool _isReady;
@@ -68,6 +69,11 @@ namespace CheryTools
             public Vector4 OutlineColor;
             public float OutlineThickness;
             public float OutlineSoftness;
+            public bool ShadowEnabled;
+            public Vector4 ShadowColor;
+            public float ShadowOffsetX;
+            public float ShadowOffsetY;
+            public float ShadowSoftness;
             public float CharacterSpacing;
             public float LineSpacing;
         }
@@ -108,7 +114,6 @@ namespace CheryTools
             _layerRects.Clear();
             _fontAssets.Clear();
             _normalizedFontPathCache.Clear();
-            _shadowTextIds.Clear();
             _measureText = null;
 
             if (_root != null)
@@ -140,35 +145,19 @@ namespace CheryTools
             float safeScaleX = Math.Max(0.001f, scaleX);
             float safeScaleY = Math.Max(0.001f, scaleY);
 
-            if (ovText.EnableShadow)
+            bool materialShadowEnabled = ovText.EnableShadow;
+            Vector4 materialShadow = Vector4.zero;
+            Vector2 materialShadowOffset = Vector2.zero;
+            float materialShadowSoftness = 0f;
+            if (materialShadowEnabled)
             {
-                Vector4 shadow = ColorArrayToVector4(ovText.ShadowColor, new Vector4(0f, 0f, 0f, 1f));
-                float shadowX = ovText.ShadowOffset != null && ovText.ShadowOffset.Length > 0 ? ovText.ShadowOffset[0] : 0f;
-                float shadowY = ovText.ShadowOffset != null && ovText.ShadowOffset.Length > 1 ? ovText.ShadowOffset[1] : 0f;
-                float shadowSoftness = Mathf.Max(0f, ovText.ShadowSoftness);
-                bool shadowOutlineEnabled = shadowSoftness > 0.01f;
-                DrawText(
-                    GetShadowTextId(id),
-                    StripColorTags(text),
-                    ovText.FontPath,
-                    fontSize,
-                    drawWidth,
-                    drawHeight,
-                    pivotedX + shadowX * safeScaleX,
-                    pivotedY + shadowY * safeScaleY,
-                    pivotX,
-                    pivotY,
-                    safeScaleX,
-                    safeScaleY,
-                    ovText.Alignment,
-                    shadow,
-                    shadowOutlineEnabled,
-                    shadow,
-                    shadowOutlineEnabled ? Mathf.Max(1f, shadowSoftness * 0.65f) : 0f,
-                    ovText.LetterSpacing,
-                    ovText.LineHeightOffset,
-                    shadowSoftness,
-                    sortingOrder);
+                materialShadow = ColorArrayToVector4(ovText.ShadowColor, new Vector4(0f, 0f, 0f, 1f));
+                float shadowScale = fontSize / 32f;
+                materialShadowOffset = new Vector2(
+                    (ovText.ShadowOffset != null && ovText.ShadowOffset.Length > 0 ? ovText.ShadowOffset[0] : 0f) * shadowScale,
+                    (ovText.ShadowOffset != null && ovText.ShadowOffset.Length > 1 ? ovText.ShadowOffset[1] : 0f) * shadowScale);
+                materialShadowSoftness = Mathf.Max(0f, ovText.ShadowSoftness) * shadowScale;
+                materialShadowEnabled = materialShadow.w > 0f;
             }
 
             DrawText(
@@ -192,12 +181,11 @@ namespace CheryTools
                 ovText.LetterSpacing,
                 ovText.LineHeightOffset,
                 0f,
-                sortingOrder);
-
-            if (ovText.EnableShadow)
-            {
-                EnsureShadowBehindText(id);
-            }
+                sortingOrder,
+                materialShadowEnabled,
+                materialShadow,
+                materialShadowOffset,
+                materialShadowSoftness);
 
             return new TextBounds
             {
@@ -208,11 +196,20 @@ namespace CheryTools
             };
         }
 
-        public static TextBounds DrawScreenText(string id, string text, string fontPath, float fontSize, Vector2 topLeft, Vector2 size, int alignment, Vector4 color, bool outlineEnabled, Vector4 outlineColor, float outlineThickness, int sortingOrder = CanvasSortingOrder)
+        public static TextBounds DrawScreenText(string id, string text, string fontPath, float fontSize, Vector2 topLeft, Vector2 size, int alignment, Vector4 color, bool outlineEnabled, Vector4 outlineColor, float outlineThickness, int sortingOrder = CanvasSortingOrder, bool shadowEnabled = false, Vector4 shadowColor = default(Vector4), Vector2 shadowOffset = default(Vector2), float shadowSoftness = 0f)
         {
             Vector2 safeSize = new Vector2(Math.Max(1f, size.x), Math.Max(1f, size.y));
             Vector2 pos = new Vector2(RoundPixel(topLeft.x), RoundPixel(topLeft.y));
-            DrawText(id, text, fontPath, fontSize, safeSize.x, safeSize.y, pos.x, pos.y, 0f, 0f, 1f, 1f, alignment, color, outlineEnabled, outlineColor, outlineThickness, 0f, 0f, 0f, sortingOrder);
+            bool materialShadowEnabled = shadowEnabled && shadowColor.w > 0f;
+            Vector2 materialShadowOffset = Vector2.zero;
+            float materialShadowSoftness = 0f;
+            if (materialShadowEnabled)
+            {
+                float shadowScale = Math.Max(1f, fontSize) / 32f;
+                materialShadowOffset = shadowOffset * shadowScale;
+                materialShadowSoftness = Mathf.Max(0f, shadowSoftness) * shadowScale;
+            }
+            DrawText(id, text, fontPath, fontSize, safeSize.x, safeSize.y, pos.x, pos.y, 0f, 0f, 1f, 1f, alignment, color, outlineEnabled, outlineColor, outlineThickness, 0f, 0f, 0f, sortingOrder, materialShadowEnabled, shadowColor, materialShadowOffset, materialShadowSoftness);
             return new TextBounds
             {
                 Left = pos.x,
@@ -220,6 +217,29 @@ namespace CheryTools
                 Width = safeSize.x,
                 Height = safeSize.y
             };
+        }
+
+        public static bool TouchScreenText(string id, int sortingOrder = CanvasSortingOrder)
+        {
+            if (!EnsureReady()) return false;
+
+            if (!_texts.TryGetValue(id, out TextMeshProUGUI tmp) || tmp == null)
+            {
+                return false;
+            }
+
+            if (!_textSortingOrders.TryGetValue(id, out int currentOrder) || currentOrder != sortingOrder)
+            {
+                return false;
+            }
+
+            if (!tmp.gameObject.activeSelf)
+            {
+                tmp.gameObject.SetActive(true);
+            }
+
+            _frameMarks[tmp] = _frameId;
+            return true;
         }
 
         public static Vector2 MeasureText(string fontPath, string text, float fontSize, float characterSpacing, float lineSpacing)
@@ -263,22 +283,6 @@ namespace CheryTools
             return measured;
         }
 
-        private static string GetShadowTextId(string id)
-        {
-            string safeId = id ?? string.Empty;
-            if (_shadowTextIds.TryGetValue(safeId, out string shadowId))
-            {
-                return shadowId;
-            }
-            if (_shadowTextIds.Count > 512)
-            {
-                _shadowTextIds.Clear();
-            }
-            shadowId = safeId + "_shadow";
-            _shadowTextIds[safeId] = shadowId;
-            return shadowId;
-        }
-
         private static void DrawText(
             string id,
             string text,
@@ -300,11 +304,15 @@ namespace CheryTools
             float characterSpacing,
             float lineSpacing,
             float outlineSoftness = 0f,
-            int sortingOrder = CanvasSortingOrder)
+            int sortingOrder = CanvasSortingOrder,
+            bool shadowEnabled = false,
+            Vector4 shadowColor = default(Vector4),
+            Vector2 shadowOffset = default(Vector2),
+            float shadowSoftness = 0f)
         {
             float outlinePixels = ClampOutlineThickness(outlineThickness);
 
-            DrawTextObject(id, text, fontPath, fontSize, width, height, x, y, pivotX, pivotY, scaleX, scaleY, alignment, color, outlineEnabled, outlineColor, outlinePixels, characterSpacing, lineSpacing, outlineSoftness, sortingOrder);
+            DrawTextObject(id, text, fontPath, fontSize, width, height, x, y, pivotX, pivotY, scaleX, scaleY, alignment, color, outlineEnabled, outlineColor, outlinePixels, characterSpacing, lineSpacing, outlineSoftness, sortingOrder, shadowEnabled, shadowColor, shadowOffset, shadowSoftness);
         }
 
         private static void DrawTextObject(
@@ -328,7 +336,11 @@ namespace CheryTools
             float characterSpacing,
             float lineSpacing,
             float outlineSoftness,
-            int sortingOrder)
+            int sortingOrder,
+            bool shadowEnabled,
+            Vector4 shadowColor,
+            Vector2 shadowOffset,
+            float shadowSoftness)
         {
             if (!EnsureReady()) return;
             TMP_FontAsset fontAsset = GetFontAsset(fontPath);
@@ -350,6 +362,10 @@ namespace CheryTools
             Vector2 safeSize = new Vector2(Math.Max(1f, width), Math.Max(1f, height));
             Vector2 safePivot = new Vector2(pivotX, 1f - pivotY);
             Vector3 safeScale = new Vector3(scaleX, scaleY, 1f);
+            bool effectiveShadowEnabled = shadowEnabled && shadowColor.w > 0f;
+            Vector4 effectiveShadowColor = effectiveShadowEnabled ? shadowColor : Vector4.zero;
+            Vector2 effectiveShadowOffset = effectiveShadowEnabled ? shadowOffset : Vector2.zero;
+            float effectiveShadowSoftness = effectiveShadowEnabled ? Mathf.Max(0f, shadowSoftness) : 0f;
 
             bool hasState = _textStates.TryGetValue(tmp, out TextObjectState lastState);
             bool contentChanged = !hasState
@@ -365,7 +381,12 @@ namespace CheryTools
                 || lastState.OutlineEnabled != outlineEnabled
                 || !Approximately(lastState.OutlineColor, outlineColor)
                 || !Approximately(lastState.OutlineThickness, outlineThickness)
-                || !Approximately(lastState.OutlineSoftness, outlineSoftness);
+                || !Approximately(lastState.OutlineSoftness, outlineSoftness)
+                || lastState.ShadowEnabled != effectiveShadowEnabled
+                || !Approximately(lastState.ShadowColor, effectiveShadowColor)
+                || !Approximately(lastState.ShadowOffsetX, effectiveShadowOffset.x)
+                || !Approximately(lastState.ShadowOffsetY, effectiveShadowOffset.y)
+                || !Approximately(lastState.ShadowSoftness, effectiveShadowSoftness);
             bool transformChanged = !hasState
                 || !Approximately(lastState.X, roundedPosition.x)
                 || !Approximately(lastState.Y, roundedPosition.y)
@@ -392,7 +413,7 @@ namespace CheryTools
             }
             if (outlineChanged)
             {
-                ApplyOutline(tmp, outlineEnabled, outlineColor, outlineThickness, outlineSoftness);
+                ApplyOutline(tmp, outlineEnabled, outlineColor, outlineThickness, outlineSoftness, effectiveShadowEnabled, effectiveShadowColor, effectiveShadowOffset, effectiveShadowSoftness);
             }
 
             RectTransform rt = tmp.rectTransform;
@@ -425,10 +446,14 @@ namespace CheryTools
                 OutlineColor = outlineColor,
                 OutlineThickness = outlineThickness,
                 OutlineSoftness = outlineSoftness,
+                ShadowEnabled = effectiveShadowEnabled,
+                ShadowColor = effectiveShadowColor,
+                ShadowOffsetX = effectiveShadowOffset.x,
+                ShadowOffsetY = effectiveShadowOffset.y,
+                ShadowSoftness = effectiveShadowSoftness,
                 CharacterSpacing = characterSpacing,
                 LineSpacing = lineSpacing
             };
-            tmp.transform.SetAsLastSibling();
             _frameMarks[tmp] = _frameId;
         }
 
@@ -453,31 +478,6 @@ namespace CheryTools
             _texts[id] = tmp;
             _textSortingOrders[id] = sortingOrder;
             return tmp;
-        }
-
-        private static void EnsureShadowBehindText(string id)
-        {
-            string shadowId = GetShadowTextId(id);
-            if (!_texts.TryGetValue(id, out TextMeshProUGUI text) || text == null)
-            {
-                return;
-            }
-            if (!_texts.TryGetValue(shadowId, out TextMeshProUGUI shadow) || shadow == null)
-            {
-                return;
-            }
-            if (text.transform.parent != shadow.transform.parent)
-            {
-                return;
-            }
-
-            int textIndex = text.transform.GetSiblingIndex();
-            int shadowIndex = shadow.transform.GetSiblingIndex();
-            int targetIndex = shadowIndex < textIndex ? textIndex - 1 : textIndex;
-            if (shadowIndex != targetIndex)
-            {
-                shadow.transform.SetSiblingIndex(Mathf.Max(0, targetIndex));
-            }
         }
 
         private static TextMeshProUGUI CreateTextObject(string id, int sortingOrder)
@@ -671,18 +671,38 @@ namespace CheryTools
             return normalizedPath;
         }
 
-        private static void ApplyOutline(TextMeshProUGUI tmp, bool enabled, Vector4 outlineColor, float outlineThickness, float outlineSoftness)
+        private static void ApplyOutline(
+            TextMeshProUGUI tmp,
+            bool enabled,
+            Vector4 outlineColor,
+            float outlineThickness,
+            float outlineSoftness,
+            bool shadowEnabled,
+            Vector4 shadowColor,
+            Vector2 shadowOffset,
+            float shadowSoftness)
         {
             TMP_FontAsset font = tmp.font;
             if (font == null) return;
 
             float width = enabled && outlineColor.w > 0f ? Mathf.Clamp(outlineThickness / 32f, 0f, 0.35f) : 0f;
             float softness = enabled && outlineColor.w > 0f ? Mathf.Clamp(outlineSoftness / 32f, 0f, 1f) : 0f;
-            if (width <= 0f && softness <= 0f && !_materials.ContainsKey(tmp))
+            bool hasShadow = shadowEnabled && shadowColor.w > 0f;
+
+            if (width <= 0f && softness <= 0f && !hasShadow)
             {
+                if (_materials.TryGetValue(tmp, out var oldMat) && oldMat != null)
+                {
+                    UnityEngine.Object.Destroy(oldMat);
+                }
+                _materials.Remove(tmp);
+                _materialFonts.Remove(tmp);
                 tmp.fontSharedMaterial = font.material;
                 tmp.fontMaterial = font.material;
                 tmp.material = font.material;
+                tmp.UpdateMeshPadding();
+                tmp.SetMaterialDirty();
+                tmp.SetVerticesDirty();
                 return;
             }
 
@@ -713,12 +733,54 @@ namespace CheryTools
                 mat.DisableKeyword("OUTLINE_ON");
             }
 
+            ApplyUnderlay(mat, hasShadow, shadowColor, shadowOffset, shadowSoftness);
+
             tmp.fontSharedMaterial = mat;
             tmp.fontMaterial = mat;
             tmp.material = mat;
             tmp.UpdateMeshPadding();
             tmp.SetMaterialDirty();
             tmp.SetVerticesDirty();
+        }
+
+        private static void ApplyUnderlay(Material mat, bool enabled, Vector4 shadowColor, Vector2 shadowOffset, float shadowSoftness)
+        {
+            if (mat == null)
+            {
+                return;
+            }
+
+            bool supportsUnderlay = mat.HasProperty(UnderlayColorProperty)
+                && mat.HasProperty(UnderlayOffsetXProperty)
+                && mat.HasProperty(UnderlayOffsetYProperty)
+                && mat.HasProperty(UnderlayDilateProperty)
+                && mat.HasProperty(UnderlaySoftnessProperty);
+            if (!supportsUnderlay)
+            {
+                mat.DisableKeyword("UNDERLAY_ON");
+                mat.DisableKeyword("UNDERLAY_INNER");
+                return;
+            }
+
+            if (!enabled)
+            {
+                mat.DisableKeyword("UNDERLAY_ON");
+                mat.DisableKeyword("UNDERLAY_INNER");
+                mat.SetColor(UnderlayColorProperty, Color.clear);
+                mat.SetFloat(UnderlayOffsetXProperty, 0f);
+                mat.SetFloat(UnderlayOffsetYProperty, 0f);
+                mat.SetFloat(UnderlayDilateProperty, 0f);
+                mat.SetFloat(UnderlaySoftnessProperty, 0f);
+                return;
+            }
+
+            mat.EnableKeyword("UNDERLAY_ON");
+            mat.DisableKeyword("UNDERLAY_INNER");
+            mat.SetColor(UnderlayColorProperty, ToColor(shadowColor));
+            mat.SetFloat(UnderlayOffsetXProperty, Mathf.Clamp(shadowOffset.x / 32f, -1f, 1f));
+            mat.SetFloat(UnderlayOffsetYProperty, Mathf.Clamp(-shadowOffset.y / 32f, -1f, 1f));
+            mat.SetFloat(UnderlayDilateProperty, 0f);
+            mat.SetFloat(UnderlaySoftnessProperty, Mathf.Clamp(shadowSoftness / 32f, 0f, 1f));
         }
 
         private static float ClampOutlineThickness(float thickness)
@@ -729,14 +791,6 @@ namespace CheryTools
             }
 
             return Math.Min(thickness, 8f);
-        }
-
-        private static string StripColorTags(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-
-            string withoutColor = ColorTagRegex.Replace(text, string.Empty);
-            return AlphaTagRegex.Replace(withoutColor, string.Empty);
         }
 
         private static TextAlignmentOptions ToTmpAlignment(int alignment)

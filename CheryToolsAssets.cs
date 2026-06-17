@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Xml.Serialization;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace CheryTools
@@ -10,8 +12,10 @@ namespace CheryTools
     [Serializable]
     public class KeyViewerPackage
     {
-        public int FormatVersion = 1;
+        public int FormatVersion = 2;
         public string ExportedAt = "";
+        public int ExportScreenWidth = 0;
+        public int ExportScreenHeight = 0;
         public bool EnableKeyViewer = true;
         public bool KeyViewerOnlyShowPlaying = false;
         public bool LimitInput = false;
@@ -56,14 +60,51 @@ namespace CheryTools
     [Serializable]
     public class OverlayerPackage
     {
-        public int FormatVersion = 1;
+        public int FormatVersion = 2;
         public string ExportedAt = "";
+        public int ExportScreenWidth = 0;
+        public int ExportScreenHeight = 0;
         public bool OverlayerSystemEnabled = true;
         public bool OverlayerOnlyShowPlaying = false;
         public bool OverlayerEditMode = false;
         public List<OverlayerText> OverlayerTexts = new List<OverlayerText>();
         public List<OverlayerImage> OverlayerImages = new List<OverlayerImage>();
+        public List<OverlayerVideo> OverlayerVideos = new List<OverlayerVideo>();
         public List<OverlayerProgressBar> OverlayerProgressBars = new List<OverlayerProgressBar>();
+    }
+
+    public class PackageImportResult
+    {
+        public bool AppliedResolutionAdaptation = false;
+        public int SourceScreenWidth = 0;
+        public int SourceScreenHeight = 0;
+        public int TargetScreenWidth = 0;
+        public int TargetScreenHeight = 0;
+        public float ScaleX = 1f;
+        public float ScaleY = 1f;
+        public float UniformScale = 1f;
+
+        public bool HasSourceResolution
+        {
+            get { return SourceScreenWidth > 0 && SourceScreenHeight > 0; }
+        }
+
+        public string ToSummary()
+        {
+            if (!AppliedResolutionAdaptation)
+            {
+                return HasSourceResolution ? "未进行分辨率适配" : "包内没有分辨率信息";
+            }
+
+            return string.Format(
+                "已按分辨率适配: {0}x{1} -> {2}x{3} (X {4:0.###}, Y {5:0.###})",
+                SourceScreenWidth,
+                SourceScreenHeight,
+                TargetScreenWidth,
+                TargetScreenHeight,
+                ScaleX,
+                ScaleY);
+        }
     }
 
     internal static class CheryToolsAssets
@@ -145,6 +186,11 @@ namespace CheryTools
 
             string resolved = ResolveAssetPath(normalized);
             if (string.IsNullOrEmpty(resolved) || !File.Exists(resolved)) return normalized;
+            if (string.Equals(category, "Videos", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(Path.GetExtension(resolved), ".mp4", StringComparison.OrdinalIgnoreCase))
+            {
+                return normalized;
+            }
 
             string assetRelative = ToArchiveRelativeAssetPath(resolved);
             if (!string.IsNullOrEmpty(assetRelative)) return assetRelative;
@@ -200,12 +246,21 @@ namespace CheryTools
                 }
             }
 
+            if (settings.OverlayerVideos != null)
+            {
+                foreach (OverlayerVideo video in settings.OverlayerVideos)
+                {
+                    if (video == null) continue;
+                    changed |= ImportPath(ref video.VideoPath, "Videos");
+                }
+            }
+
             changed |= ImportNodeAssetPaths(settings.GetAllKeyViewerNodes());
 
             return changed;
         }
 
-        public static string ExportCytPackage(Settings settings)
+        public static string ExportCytPackage(Settings settings, string outputPath)
         {
             if (settings == null) throw new InvalidOperationException("Settings is null.");
 
@@ -213,7 +268,6 @@ namespace CheryTools
             Settings exportSettings = CloneSettings(settings);
             RewriteAssetPathsForExport(exportSettings);
 
-            string outputPath = Path.Combine(GameRoot, "CheryTools_Settings_Backup.cyt");
             if (File.Exists(outputPath)) File.Delete(outputPath);
 
             using (FileStream stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
@@ -242,7 +296,7 @@ namespace CheryTools
             return outputPath;
         }
 
-        public static string ExportKeyViewerPackage(Settings settings)
+        public static string ExportKeyViewerPackage(Settings settings, string outputPath)
         {
             if (settings == null) throw new InvalidOperationException("Settings is null.");
 
@@ -250,12 +304,11 @@ namespace CheryTools
             KeyViewerPackage package = CreateKeyViewerPackage(settings);
             RewriteKeyViewerPackageAssetPaths(package);
 
-            string outputPath = Path.Combine(GameRoot, "CheryTools_KeyViewer.ctkv");
             WritePackage(outputPath, "KeyViewer.xml", package, CollectKeyViewerAssetPaths(package));
             return outputPath;
         }
 
-        public static string ExportOverlayerPackage(Settings settings)
+        public static string ExportOverlayerPackage(Settings settings, string outputPath)
         {
             if (settings == null) throw new InvalidOperationException("Settings is null.");
 
@@ -263,12 +316,11 @@ namespace CheryTools
             OverlayerPackage package = CreateOverlayerPackage(settings);
             RewriteOverlayerPackageAssetPaths(package);
 
-            string outputPath = Path.Combine(GameRoot, "CheryTools_Overlayer.ctov");
             WritePackage(outputPath, "Overlayer.xml", package, CollectOverlayerAssetPaths(package));
             return outputPath;
         }
 
-        public static void ImportKeyViewerPackage(Settings settings, string packagePath)
+        public static PackageImportResult ImportKeyViewerPackage(Settings settings, string packagePath)
         {
             if (settings == null) throw new InvalidOperationException("Settings is null.");
 
@@ -280,11 +332,13 @@ namespace CheryTools
             {
                 KeyViewerPackage package = ReadPackageManifest<KeyViewerPackage>(archive, "KeyViewer.xml");
                 ExtractAssetsFromArchive(archive);
+                PackageImportResult result = AdaptKeyViewerPackageToCurrentResolution(package);
                 ApplyKeyViewerPackage(settings, package);
+                return result;
             }
         }
 
-        public static void ImportOverlayerPackage(Settings settings, string packagePath)
+        public static PackageImportResult ImportOverlayerPackage(Settings settings, string packagePath)
         {
             if (settings == null) throw new InvalidOperationException("Settings is null.");
 
@@ -296,7 +350,9 @@ namespace CheryTools
             {
                 OverlayerPackage package = ReadPackageManifest<OverlayerPackage>(archive, "Overlayer.xml");
                 ExtractAssetsFromArchive(archive);
+                PackageImportResult result = AdaptOverlayerPackageToCurrentResolution(package);
                 ApplyOverlayerPackage(settings, package);
+                return result;
             }
         }
 
@@ -304,6 +360,7 @@ namespace CheryTools
         {
             KeyViewerPackage package = new KeyViewerPackage();
             package.ExportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            StampExportScreenSize(package);
             package.EnableKeyViewer = settings.EnableKeyViewer;
             package.KeyViewerOnlyShowPlaying = settings.KeyViewerOnlyShowPlaying;
             package.LimitInput = settings.LimitInput;
@@ -350,11 +407,13 @@ namespace CheryTools
         {
             OverlayerPackage package = new OverlayerPackage();
             package.ExportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            StampExportScreenSize(package);
             package.OverlayerSystemEnabled = settings.OverlayerSystemEnabled;
             package.OverlayerOnlyShowPlaying = settings.OverlayerOnlyShowPlaying;
             package.OverlayerEditMode = settings.OverlayerEditMode;
             package.OverlayerTexts = CloneByXml(settings.OverlayerTexts) ?? new List<OverlayerText>();
             package.OverlayerImages = CloneByXml(settings.OverlayerImages) ?? new List<OverlayerImage>();
+            package.OverlayerVideos = CloneByXml(settings.OverlayerVideos) ?? new List<OverlayerVideo>();
             package.OverlayerProgressBars = CloneByXml(settings.OverlayerProgressBars) ?? new List<OverlayerProgressBar>();
             return package;
         }
@@ -391,6 +450,15 @@ namespace CheryTools
                     image.ImagePath = PreparePathForExport(image.ImagePath, "Images");
                 }
             }
+
+            if (package.OverlayerVideos != null)
+            {
+                foreach (OverlayerVideo video in package.OverlayerVideos)
+                {
+                    if (video == null) continue;
+                    video.VideoPath = PreparePathForExport(video.VideoPath, "Videos");
+                }
+            }
         }
 
         private static List<string> CollectKeyViewerAssetPaths(KeyViewerPackage package)
@@ -410,6 +478,7 @@ namespace CheryTools
                     AddAssetPath(paths, node.KeyFontPath);
                     AddAssetPath(paths, node.CountFontPath);
                     AddAssetPath(paths, node.ImagePath);
+                    AddAssetPath(paths, node.VideoPath);
                 }
             }
             return paths;
@@ -434,7 +503,280 @@ namespace CheryTools
                     AddAssetPath(paths, image.ImagePath);
                 }
             }
+            if (package.OverlayerVideos != null)
+            {
+                foreach (OverlayerVideo video in package.OverlayerVideos)
+                {
+                    if (video == null) continue;
+                    AddAssetPath(paths, video.VideoPath);
+                }
+            }
             return paths;
+        }
+
+        private static void StampExportScreenSize(KeyViewerPackage package)
+        {
+            int width;
+            int height;
+            GetCurrentScreenSize(out width, out height);
+            package.ExportScreenWidth = width;
+            package.ExportScreenHeight = height;
+        }
+
+        private static void StampExportScreenSize(OverlayerPackage package)
+        {
+            int width;
+            int height;
+            GetCurrentScreenSize(out width, out height);
+            package.ExportScreenWidth = width;
+            package.ExportScreenHeight = height;
+        }
+
+        private static void GetCurrentScreenSize(out int width, out int height)
+        {
+            width = Mathf.RoundToInt(Mathf.Max(1f, Screen.width));
+            height = Mathf.RoundToInt(Mathf.Max(1f, Screen.height));
+        }
+
+        private static PackageImportResult CreateResolutionImportResult(int sourceWidth, int sourceHeight)
+        {
+            int targetWidth;
+            int targetHeight;
+            GetCurrentScreenSize(out targetWidth, out targetHeight);
+
+            PackageImportResult result = new PackageImportResult();
+            result.SourceScreenWidth = sourceWidth;
+            result.SourceScreenHeight = sourceHeight;
+            result.TargetScreenWidth = targetWidth;
+            result.TargetScreenHeight = targetHeight;
+
+            if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0)
+            {
+                return result;
+            }
+
+            result.ScaleX = targetWidth / (float)sourceWidth;
+            result.ScaleY = targetHeight / (float)sourceHeight;
+            result.UniformScale = Mathf.Min(result.ScaleX, result.ScaleY);
+            result.AppliedResolutionAdaptation = !Approximately(result.ScaleX, 1f) || !Approximately(result.ScaleY, 1f);
+            return result;
+        }
+
+        private static PackageImportResult AdaptKeyViewerPackageToCurrentResolution(KeyViewerPackage package)
+        {
+            if (package == null) return new PackageImportResult();
+
+            PackageImportResult result = CreateResolutionImportResult(package.ExportScreenWidth, package.ExportScreenHeight);
+            if (!result.AppliedResolutionAdaptation)
+            {
+                return result;
+            }
+
+            float scale = result.UniformScale;
+            ScaleKeyViewerConfigurations(package.KeyViewerConfigurations, scale);
+            return result;
+        }
+
+        private static void ScaleKeyViewerConfigurations(List<KVConfiguration> configurations, float scale)
+        {
+            if (configurations == null) return;
+
+            foreach (KVConfiguration config in configurations)
+            {
+                if (config == null) continue;
+
+                config.AppearanceMigrated = true;
+                config.Scale = ScaleValue(config.Scale, scale);
+                config.BorderThickness = ScaleValue(config.BorderThickness, scale);
+                config.KeyRainSpeed = ScaleValue(config.KeyRainSpeed, scale);
+                config.KeyRainMaxHeight = ScaleValue(config.KeyRainMaxHeight, scale);
+                config.KeyRainYOffsetRow1 = ScaleValue(config.KeyRainYOffsetRow1, scale);
+                config.KeyRainYOffsetRow2 = ScaleValue(config.KeyRainYOffsetRow2, scale);
+
+                ScaleKeyViewerNodes(config.Nodes, scale);
+            }
+        }
+
+        private static void ScaleKeyViewerNodes(List<KVNode> nodes, float scale)
+        {
+            if (nodes == null) return;
+
+            foreach (KVNode node in nodes)
+            {
+                if (node == null) continue;
+
+                node.BorderThickness = ScaleOptionalValue(node.BorderThickness, scale);
+                node.RainYOffset = ScaleValue(node.RainYOffset, scale);
+            }
+        }
+
+        private static PackageImportResult AdaptOverlayerPackageToCurrentResolution(OverlayerPackage package)
+        {
+            if (package == null) return new PackageImportResult();
+
+            PackageImportResult result = CreateResolutionImportResult(package.ExportScreenWidth, package.ExportScreenHeight);
+            if (!result.AppliedResolutionAdaptation)
+            {
+                return result;
+            }
+
+            ScaleOverlayerTexts(package.OverlayerTexts, result.ScaleX, result.ScaleY, result.UniformScale);
+            ScaleOverlayerImages(package.OverlayerImages, result.ScaleX, result.ScaleY, result.UniformScale);
+            ScaleOverlayerVideos(package.OverlayerVideos, result.ScaleX, result.ScaleY, result.UniformScale);
+            ScaleOverlayerProgressBars(package.OverlayerProgressBars, result.ScaleX, result.ScaleY, result.UniformScale);
+            return result;
+        }
+
+        private static void ScaleOverlayerTexts(List<OverlayerText> texts, float scaleX, float scaleY, float uniformScale)
+        {
+            if (texts == null) return;
+
+            foreach (OverlayerText text in texts)
+            {
+                if (text == null) continue;
+
+                text.PositionX = ScaleValue(text.PositionX, scaleX);
+                text.PositionY = ScaleValue(text.PositionY, scaleY);
+                text.FontSize = ScaleValue(text.FontSize, uniformScale);
+                text.LetterSpacing = ScaleValue(text.LetterSpacing, uniformScale);
+                text.LineHeightOffset = ScaleValue(text.LineHeightOffset, uniformScale);
+                ScaleOverlayerAnimations(text.Animations, scaleX, scaleY);
+            }
+        }
+
+        private static void ScaleOverlayerImages(List<OverlayerImage> images, float scaleX, float scaleY, float uniformScale)
+        {
+            if (images == null) return;
+
+            foreach (OverlayerImage image in images)
+            {
+                if (image == null) continue;
+
+                image.PositionX = ScaleValue(image.PositionX, scaleX);
+                image.PositionY = ScaleValue(image.PositionY, scaleY);
+                image.Scale = ScaleValue(image.Scale, uniformScale);
+                ScaleOverlayerAnimations(image.Animations, scaleX, scaleY);
+            }
+        }
+
+        private static void ScaleOverlayerVideos(List<OverlayerVideo> videos, float scaleX, float scaleY, float uniformScale)
+        {
+            if (videos == null) return;
+
+            foreach (OverlayerVideo video in videos)
+            {
+                if (video == null) continue;
+
+                video.PositionX = ScaleValue(video.PositionX, scaleX);
+                video.PositionY = ScaleValue(video.PositionY, scaleY);
+                video.Width = ScaleValue(video.Width, uniformScale);
+                video.Height = ScaleValue(video.Height, uniformScale);
+            }
+        }
+
+        private static void ScaleOverlayerProgressBars(List<OverlayerProgressBar> bars, float scaleX, float scaleY, float uniformScale)
+        {
+            if (bars == null) return;
+
+            foreach (OverlayerProgressBar bar in bars)
+            {
+                if (bar == null) continue;
+
+                bar.PositionX = ScaleValue(bar.PositionX, scaleX);
+                bar.PositionY = ScaleValue(bar.PositionY, scaleY);
+                bar.Width = ScaleValue(bar.Width, uniformScale);
+                bar.Height = ScaleValue(bar.Height, uniformScale);
+                bar.BorderThickness = ScaleValue(bar.BorderThickness, uniformScale);
+                bar.CornerRadius = ScaleValue(bar.CornerRadius, uniformScale);
+                ScalePair(bar.ShadowOffset, scaleX, scaleY);
+                bar.ShadowSoftness = ScaleValue(bar.ShadowSoftness, uniformScale);
+            }
+        }
+
+        private static void ScaleOverlayerAnimations(List<OverlayerAnimation> animations, float scaleX, float scaleY)
+        {
+            if (animations == null) return;
+
+            foreach (OverlayerAnimation animation in animations)
+            {
+                if (animation == null) continue;
+
+                animation.StartX = ScaleValue(animation.StartX, scaleX);
+                animation.StartY = ScaleValue(animation.StartY, scaleY);
+                animation.EndX = ScaleValue(animation.EndX, scaleX);
+                animation.EndY = ScaleValue(animation.EndY, scaleY);
+                ScaleAnimationJsonOffsets(animation, scaleX, scaleY);
+                animation.ParseJson();
+            }
+        }
+
+        private static void ScaleAnimationJsonOffsets(OverlayerAnimation animation, float scaleX, float scaleY)
+        {
+            if (animation == null || string.IsNullOrWhiteSpace(animation.JsonString))
+            {
+                return;
+            }
+
+            try
+            {
+                JArray frames = JArray.Parse(animation.JsonString);
+                bool changed = false;
+                foreach (JToken token in frames)
+                {
+                    JObject frame = token as JObject;
+                    if (frame == null) continue;
+
+                    JToken xToken = frame["x"];
+                    if (xToken != null && xToken.Type != JTokenType.Null)
+                    {
+                        frame["x"] = xToken.Value<float>() * scaleX;
+                        changed = true;
+                    }
+
+                    JToken yToken = frame["y"];
+                    if (yToken != null && yToken.Type != JTokenType.Null)
+                    {
+                        frame["y"] = yToken.Value<float>() * scaleY;
+                        changed = true;
+                    }
+                }
+
+                if (changed)
+                {
+                    animation.JsonString = frames.ToString(Formatting.Indented);
+                }
+            }
+            catch
+            {
+                // Keep custom animation JSON untouched when it is not a frame array.
+            }
+        }
+
+        private static float ScaleValue(float value, float scale)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+            {
+                return value;
+            }
+
+            return value * scale;
+        }
+
+        private static float ScaleOptionalValue(float value, float scale)
+        {
+            return value < 0f ? value : ScaleValue(value, scale);
+        }
+
+        private static void ScalePair(float[] pair, float scaleX, float scaleY)
+        {
+            if (pair == null || pair.Length < 2) return;
+            pair[0] = ScaleValue(pair[0], scaleX);
+            pair[1] = ScaleValue(pair[1], scaleY);
+        }
+
+        private static bool Approximately(float a, float b)
+        {
+            return Mathf.Abs(a - b) <= 0.0001f;
         }
 
         private static void AddAssetPath(List<string> paths, string path)
@@ -544,9 +886,13 @@ namespace CheryTools
             if (package == null)
                 throw new InvalidDataException("KeyViewer package manifest is empty.");
 
-            settings.EnableKeyViewer = package.EnableKeyViewer;
-            settings.KeyViewerOnlyShowPlaying = package.KeyViewerOnlyShowPlaying;
-            settings.LimitInput = package.LimitInput;
+            bool localEnableKeyViewer = settings.EnableKeyViewer;
+            bool localKeyViewerOnlyShowPlaying = settings.KeyViewerOnlyShowPlaying;
+            bool localLimitInput = settings.LimitInput;
+
+            settings.EnableKeyViewer = localEnableKeyViewer;
+            settings.KeyViewerOnlyShowPlaying = localKeyViewerOnlyShowPlaying;
+            settings.LimitInput = localLimitInput;
             settings.KeyViewerHideCountText = package.KeyViewerHideCountText;
             settings.KeyViewerSelectedConfigIndex = package.KeyViewerSelectedConfigIndex;
             settings.KeyViewerScale = package.KeyViewerScale;
@@ -596,6 +942,7 @@ namespace CheryTools
             settings.OverlayerEditMode = package.OverlayerEditMode;
             settings.OverlayerTexts = package.OverlayerTexts ?? new List<OverlayerText>();
             settings.OverlayerImages = package.OverlayerImages ?? new List<OverlayerImage>();
+            settings.OverlayerVideos = package.OverlayerVideos ?? new List<OverlayerVideo>();
             settings.OverlayerProgressBars = package.OverlayerProgressBars ?? new List<OverlayerProgressBar>();
         }
 
@@ -696,6 +1043,15 @@ namespace CheryTools
                 }
             }
 
+            if (settings.OverlayerVideos != null)
+            {
+                foreach (OverlayerVideo video in settings.OverlayerVideos)
+                {
+                    if (video == null) continue;
+                    video.VideoPath = PreparePathForExport(video.VideoPath, "Videos");
+                }
+            }
+
             RewriteNodeAssetPaths(settings.GetAllKeyViewerNodes());
         }
 
@@ -709,6 +1065,7 @@ namespace CheryTools
                 node.KeyFontPath = PreparePathForExport(node.KeyFontPath, "Fonts");
                 node.CountFontPath = PreparePathForExport(node.CountFontPath, "Fonts");
                 node.ImagePath = PreparePathForExport(node.ImagePath, "Images");
+                node.VideoPath = PreparePathForExport(node.VideoPath, "Videos");
             }
         }
 
@@ -723,6 +1080,7 @@ namespace CheryTools
                 changed |= ImportPath(ref node.KeyFontPath, "Fonts");
                 changed |= ImportPath(ref node.CountFontPath, "Fonts");
                 changed |= ImportPath(ref node.ImagePath, "Images");
+                changed |= ImportPath(ref node.VideoPath, "Videos");
             }
 
             return changed;

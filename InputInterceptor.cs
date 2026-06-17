@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
@@ -8,14 +9,19 @@ namespace CheryTools
     public static class InputInterceptor
     {
         private static HashSet<string> _allowedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static bool _filteringEnabled;
+        private static bool _inputPatchesApplied;
 
         public static void UpdateAllowedKeys()
         {
             _allowedKeys.Clear();
+            bool shouldLimitInput = Main.IsEnabled
+                && Main.Settings != null
+                && (Main.Settings.ToolsLimitInput || (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput));
             
             // Default whitelist
             _allowedKeys.Add("Escape");
-            _allowedKeys.Add("Space");
+            _allowedKeys.Add("Esc");
             _allowedKeys.Add("LeftControl");
             _allowedKeys.Add("RightControl");
             _allowedKeys.Add("F10");
@@ -23,6 +29,9 @@ namespace CheryTools
             Action<string> addKeyWithAliases = (k) => {
                 if (string.IsNullOrEmpty(k)) return;
                 _allowedKeys.Add(k);
+
+                if (k.Equals("Escape", StringComparison.OrdinalIgnoreCase)) _allowedKeys.Add("Esc");
+                if (k.Equals("Esc", StringComparison.OrdinalIgnoreCase)) _allowedKeys.Add("Escape");
                 
                 if (k.Equals("Equals", StringComparison.OrdinalIgnoreCase)) _allowedKeys.Add("Equal");
                 if (k.Equals("Equal", StringComparison.OrdinalIgnoreCase)) _allowedKeys.Add("Equals");
@@ -104,8 +113,21 @@ namespace CheryTools
             if (Main.Settings != null)
             {
                 addKeyWithAliases(Main.Settings.ToggleMenuKey.ToString());
-                if (Main.Settings.KeyViewerConfigurations != null)
+
+                if (Main.Settings.ToolsLimitInput)
                 {
+                    if (Main.Settings.ToolsLimitedKeys != null)
+                    {
+                        int count = Math.Min(30, Main.Settings.ToolsLimitedKeys.Count);
+                        for (int i = 0; i < count; i++)
+                        {
+                            addKeyWithAliases(Main.Settings.ToolsLimitedKeys[i].ToString());
+                        }
+                    }
+                }
+                else if (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput && Main.Settings.KeyViewerConfigurations != null)
+                {
+                    addKeyWithAliases("Space");
                     foreach (KVConfiguration config in Main.Settings.KeyViewerConfigurations)
                     {
                         if (config == null || !config.IsEnabled || config.Nodes == null) continue;
@@ -121,6 +143,44 @@ namespace CheryTools
             {
                 _allowedKeys.Add("Insert");
             }
+
+            _filteringEnabled = shouldLimitInput;
+            UpdateInputPatches(shouldLimitInput);
+        }
+
+        public static void ResetPatches()
+        {
+            _filteringEnabled = false;
+            _inputPatchesApplied = false;
+        }
+
+        private static void UpdateInputPatches(bool shouldPatch)
+        {
+            if (Main.harmony == null || shouldPatch == _inputPatchesApplied)
+            {
+                return;
+            }
+
+            MethodInfo keyboardMethod = AccessTools.Method(typeof(RDInputType_Keyboard), "MainIgnoreActive");
+            MethodInfo asyncKeyboardMethod = AccessTools.Method(typeof(RDInputType_AsyncKeyboard), "Main");
+            MethodInfo keyboardPostfix = AccessTools.Method(typeof(Patch_RDInputType_Keyboard_MainIgnoreActive), nameof(Patch_RDInputType_Keyboard_MainIgnoreActive.Postfix));
+            MethodInfo asyncKeyboardPostfix = AccessTools.Method(typeof(Patch_RDInputType_AsyncKeyboard_Main), nameof(Patch_RDInputType_AsyncKeyboard_Main.Postfix));
+            if (keyboardMethod == null || asyncKeyboardMethod == null || keyboardPostfix == null || asyncKeyboardPostfix == null)
+            {
+                return;
+            }
+
+            if (shouldPatch)
+            {
+                Main.harmony.Patch(keyboardMethod, postfix: new HarmonyMethod(keyboardPostfix));
+                Main.harmony.Patch(asyncKeyboardMethod, postfix: new HarmonyMethod(asyncKeyboardPostfix));
+            }
+            else
+            {
+                Main.harmony.Unpatch(keyboardMethod, keyboardPostfix);
+                Main.harmony.Unpatch(asyncKeyboardMethod, asyncKeyboardPostfix);
+            }
+            _inputPatchesApplied = shouldPatch;
         }
 
         public static bool IsKeyAllowed(AnyKeyCode anyKey)
@@ -141,9 +201,9 @@ namespace CheryTools
 
         public static void FilterInputState(RDInputType instance, ButtonState state, ref int result)
         {
-            if (!Main.IsEnabled || Main.Settings == null) return;
+            if (!_filteringEnabled || !Main.IsEnabled || Main.Settings == null) return;
 
-            bool shouldLimitInput = Main.Settings.EnableKeyViewer && Main.Settings.LimitInput;
+            bool shouldLimitInput = Main.Settings.ToolsLimitInput || (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput);
             if (!shouldLimitInput) return;
 
             RDInputType.MainStateCount stateCount = null;
@@ -166,7 +226,6 @@ namespace CheryTools
         }
     }
 
-    [HarmonyPatch(typeof(RDInputType_Keyboard), "MainIgnoreActive")]
     public static class Patch_RDInputType_Keyboard_MainIgnoreActive
     {
         public static void Postfix(RDInputType_Keyboard __instance, ButtonState state, ref int __result)
@@ -175,7 +234,6 @@ namespace CheryTools
         }
     }
 
-    [HarmonyPatch(typeof(RDInputType_AsyncKeyboard), "Main")]
     public static class Patch_RDInputType_AsyncKeyboard_Main
     {
         public static void Postfix(RDInputType_AsyncKeyboard __instance, ButtonState state, ref int __result)

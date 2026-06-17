@@ -10,8 +10,9 @@ namespace CheryTools
         public const int LayerBaseSortingOrder = 31960;
         public const int LayerStride = 4;
 
-        public const int SublayerRain = 0;
-        public const int SublayerGraphic = 1;
+        public const int SublayerRainShadow = 0;
+        public const int SublayerRain = 1;
+        public const int SublayerGraphic = 2;
         public const int SublayerText = 3;
 
         public const int EditOverlaySortingOrder = 32765;

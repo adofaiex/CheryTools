@@ -18,11 +18,14 @@ namespace CheryTools
         private List<Mesh> _meshes = new List<Mesh>();
         private bool _imguiCanvasHasContent = false;
         private float _nextOverlayUpdateTime = 0f;
+        private long _lastOverlayRevision = -1;
+        private int _lastOverlayStateHash = 0;
 
         private Vector3[] _vertices = new Vector3[0];
         private Vector2[] _uvs = new Vector2[0];
         private Color32[] _colors = new Color32[0];
         private int[] _indices = new int[0];
+        private int[] _subIndices = new int[0];
 
         public static float PanelScale { get; private set; } = 1.0f;
         private static System.Numerics.Vector2 _screenMousePos = System.Numerics.Vector2.Zero;
@@ -56,6 +59,7 @@ namespace CheryTools
             ImGui.SetCurrentContext(_context);
 
             RebuildFontAtlas();
+            ClampPanelStyle();
 
             var shader = Shader.Find("UI/Default");
             _material = new Material(shader);
@@ -93,6 +97,13 @@ namespace CheryTools
         private static void ClampPanelStyle()
         {
             var style = ImGui.GetStyle();
+            style.WindowRounding = 6.0f;
+            style.ChildRounding = 5.0f;
+            style.PopupRounding = 5.0f;
+            style.FrameRounding = 4.0f;
+            style.GrabRounding = 4.0f;
+            style.ScrollbarRounding = 6.0f;
+            style.TabRounding = 4.0f;
             if (style.WindowMinSize.X < 1.0f || style.WindowMinSize.Y < 1.0f)
             {
                 style.WindowMinSize = new System.Numerics.Vector2(
@@ -413,6 +424,8 @@ namespace CheryTools
                 SdfTextRenderer.BeginFrame();
                 OnOverlayLayout?.Invoke();
                 SdfTextRenderer.EndFrame();
+                KeyViewerManager.Instance?.MarkOverlayRendered();
+                OverlayerManager.Instance?.MarkOverlayRendered();
             }
 
             if (!ShouldRenderImGui())
@@ -500,6 +513,24 @@ namespace CheryTools
             }
             rate = Mathf.Clamp(rate, 30.0f, 360.0f);
             float now = Time.unscaledTime;
+
+            long revision = OverlayRenderInvalidator.Revision;
+            int stateHash = BuildOverlayStateHash();
+            if (revision != _lastOverlayRevision || stateHash != _lastOverlayStateHash)
+            {
+                _lastOverlayRevision = revision;
+                _lastOverlayStateHash = stateHash;
+                _nextOverlayUpdateTime = now;
+                return true;
+            }
+
+            bool keyViewerNeedsUpdate = KeyViewerManager.Instance != null && KeyViewerManager.Instance.ShouldUpdateOverlay(now, rate);
+            bool overlayerNeedsUpdate = OverlayerManager.Instance != null && OverlayerManager.Instance.ShouldUpdateOverlay(now, rate);
+            if (!keyViewerNeedsUpdate && !overlayerNeedsUpdate)
+            {
+                return false;
+            }
+
             if (now < _nextOverlayUpdateTime)
             {
                 return false;
@@ -507,6 +538,29 @@ namespace CheryTools
 
             _nextOverlayUpdateTime = now + 1.0f / rate;
             return true;
+        }
+
+        private int BuildOverlayStateHash()
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 31 + Screen.width;
+                hash = hash * 31 + Screen.height;
+                hash = hash * 31 + (Main.IsEnabled ? 1 : 0);
+                hash = hash * 31 + (Main.IsGamePlaying() ? 1 : 0);
+                hash = hash * 31 + (CheryToolsMenu.IsMenuOpen ? 1 : 0);
+                hash = hash * 31 + (FreeMakeEditor.IsOpen ? 1 : 0);
+                if (Main.Settings != null)
+                {
+                    hash = hash * 31 + (Main.Settings.EnableKeyViewer ? 1 : 0);
+                    hash = hash * 31 + (Main.Settings.KeyViewerOnlyShowPlaying ? 1 : 0);
+                    hash = hash * 31 + (Main.Settings.OverlayerSystemEnabled ? 1 : 0);
+                    hash = hash * 31 + (Main.Settings.OverlayerOnlyShowPlaying ? 1 : 0);
+                    hash = hash * 31 + (Main.Settings.OverlayerEditMode ? 1 : 0);
+                }
+                return hash;
+            }
         }
 
         private void ClearImGuiCanvasOnce()
@@ -558,7 +612,7 @@ namespace CheryTools
                 ImDrawVert* vtxPtr = (ImDrawVert*)cmdList.VtxBuffer.Data;
                 for (int i = 0; i < vtxCount; i++)
                 {
-                    _vertices[i] = new Vector3(vtxPtr[i].pos.X * panelScale, -vtxPtr[i].pos.Y * panelScale, 0); // Invert Y for Canvas
+                    _vertices[i] = new Vector3(offsetX + vtxPtr[i].pos.X * panelScale, offsetY - vtxPtr[i].pos.Y * panelScale, 0); // Invert Y for Canvas
                     _uvs[i] = new Vector2(vtxPtr[i].uv.X, vtxPtr[i].uv.Y);
                     uint c = vtxPtr[i].col;
                     _colors[i] = new Color32((byte)(c & 0xFF), (byte)((c >> 8) & 0xFF), (byte)((c >> 16) & 0xFF), (byte)((c >> 24) & 0xFF));
@@ -591,21 +645,17 @@ namespace CheryTools
                     var meshObj = _meshes[cmdCount];
 
                     int elemCount = (int)pcmd.ElemCount;
-                    int[] subIndices = new int[elemCount];
-                    Array.Copy(_indices, (int)pcmd.IdxOffset, subIndices, 0, elemCount);
-
-                    // Apply offset so that ImGui (0,0) ends up at Top-Left of Screen
-                    Vector3[] shiftedVertices = new Vector3[vtxCount];
-                    for (int i = 0; i < vtxCount; i++)
+                    if (_subIndices.Length < elemCount)
                     {
-                        shiftedVertices[i] = new Vector3(offsetX + _vertices[i].x, offsetY + _vertices[i].y, 0); // Note: _vertices[i].y is already -pos.Y
+                        _subIndices = new int[elemCount];
                     }
+                    Array.Copy(_indices, (int)pcmd.IdxOffset, _subIndices, 0, elemCount);
 
                     meshObj.Clear();
-                    meshObj.SetVertices(shiftedVertices, 0, vtxCount);
+                    meshObj.SetVertices(_vertices, 0, vtxCount);
                     meshObj.SetUVs(0, _uvs, 0, vtxCount);
                     meshObj.SetColors(_colors, 0, vtxCount);
-                    meshObj.SetIndices(subIndices, 0, elemCount, MeshTopology.Triangles, 0);
+                    meshObj.SetIndices(_subIndices, 0, elemCount, MeshTopology.Triangles, 0);
 
                     // Transform clipping rect to match the centered RectTransform
                     float clipX = offsetX + pcmd.ClipRect.X * panelScale;

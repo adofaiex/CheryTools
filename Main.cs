@@ -12,6 +12,7 @@ namespace CheryTools
     public class OverlayerImage
     {
         public bool IsEnabled = true;
+        public bool ShowInGame = true;
         public string ImagePath = "";
         public float PositionX = 200f;
         public float PositionY = 200f;
@@ -29,6 +30,34 @@ namespace CheryTools
         public float LastWidth = 100f;
         [System.Xml.Serialization.XmlIgnore]
         public float LastHeight = 100f;
+    }
+
+    [Serializable]
+    public class OverlayerVideo
+    {
+        public string Name = "新视频";
+        public bool IsEnabled = true;
+        public bool ShowInGame = true;
+        public string VideoPath = "";
+        public bool Loop = true;
+        public float ContentScale = 1.0f;
+        public float ContentOffsetX = 0f;
+        public float ContentOffsetY = 0f;
+        public float PositionX = 200f;
+        public float PositionY = 200f;
+        public float Width = 320f;
+        public float Height = 180f;
+        public float Rotation = 0f;
+        public float Opacity = 1.0f;
+        public int Depth = 0;
+
+        public float PivotX = 0f;
+        public float PivotY = 0f;
+
+        [System.Xml.Serialization.XmlIgnore]
+        public float LastWidth = 320f;
+        [System.Xml.Serialization.XmlIgnore]
+        public float LastHeight = 180f;
     }
 
     public enum OverlayerProgressValueKind
@@ -80,6 +109,7 @@ namespace CheryTools
     {
         public string Name = "新进度条";
         public bool IsEnabled = true;
+        public bool ShowInGame = true;
 
         public OverlayerProgressValueSource ValueSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Progress);
         public OverlayerProgressValueSource MinSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Constant, 0.0);
@@ -119,10 +149,15 @@ namespace CheryTools
     [Serializable]
     public class KVNode
     {
-        public int NodeType = 0; // 0 = Normal Key, 1 = KPS Box, 2 = Total Box, 3 = Background Image Key
+        public int NodeType = 0; // 0 = Normal Key, 1 = KPS Box, 2 = Total Box, 3 = Background Image Key, 4 = Video Key
         public string KeyBind = "None";
         public string CustomText = "";
         public string ImagePath = "";
+        public string VideoPath = "";
+        public bool VideoLoop = true;
+        public float VideoContentScale = 1.0f;
+        public float VideoContentOffsetX = 0f;
+        public float VideoContentOffsetY = 0f;
         public bool IsUnselectable = false;
         public float Opacity = 1.0f;
         public int Depth = 0;
@@ -153,6 +188,16 @@ namespace CheryTools
         public bool CountTextOutlineEnabled = false;
         public float[] CountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
         public float CountTextOutlineThickness = 1f;
+
+        public bool UseCustomShadow = false;
+        public bool KeyTextShadowEnabled = false;
+        public float[] KeyTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+        public float[] KeyTextShadowOffset = new float[] { 2f, 2f };
+        public float KeyTextShadowSoftness = 0f;
+        public bool CountTextShadowEnabled = false;
+        public float[] CountTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+        public float[] CountTextShadowOffset = new float[] { 2f, 2f };
+        public float CountTextShadowSoftness = 0f;
         
         public bool UseCustomColor = false;
         public float[] ColorBgNormal = new float[] { 0.2f, 0.2f, 0.2f, 0.8f };
@@ -163,10 +208,18 @@ namespace CheryTools
         public float[] ColorTextPressed = new float[] { 0.0f, 0.0f, 0.0f, 1.0f };
 
         public int RainRow = 0;
+        public bool EnableKeyRain = true;
         public bool UseCustomRain = false;
         public float[] RainColor = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
         public float RainWidthRatio = 0.8f;
         public float RainYOffset = 0f;
+        public float RainCornerRadius = 0f;
+        public bool UseCustomRainShadow = false;
+        public bool RainShadowEnabled = false;
+        public float[] RainShadowColor = new float[] { 0f, 0f, 0f, 0.35f };
+        public float[] RainShadowOffset = new float[] { 0f, 0f };
+        public float RainShadowSoftness = 12f;
+        public float RainShadowStrength = 1f;
 
         public int HitCount = 0;
         
@@ -190,6 +243,7 @@ namespace CheryTools
     {
         public string Name = "新配置";
         public bool IsEnabled = true;
+        public bool ShowInGame = true;
         public System.Collections.Generic.List<KVNode> Nodes = new System.Collections.Generic.List<KVNode>();
 
         public bool AppearanceMigrated = false;
@@ -220,6 +274,15 @@ namespace CheryTools
         public float[] CountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
         public float CountTextOutlineThickness = 1f;
 
+        public bool KeyTextShadowEnabled = false;
+        public float[] KeyTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+        public float[] KeyTextShadowOffset = new float[] { 2f, 2f };
+        public float KeyTextShadowSoftness = 0f;
+        public bool CountTextShadowEnabled = false;
+        public float[] CountTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+        public float[] CountTextShadowOffset = new float[] { 2f, 2f };
+        public float CountTextShadowSoftness = 0f;
+
         public bool EnableKeyRain = false;
         public float KeyRainSpeed = 800.0f;
         public float KeyRainMaxHeight = 400.0f;
@@ -228,8 +291,14 @@ namespace CheryTools
         public float KeyRainWidthRatio2 = 0.4f;
         public float KeyRainYOffsetRow1 = 0.0f;
         public float KeyRainYOffsetRow2 = 0.0f;
+        public float KeyRainCornerRadius = 0f;
         public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
         public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
+        public bool KeyRainShadowEnabled = false;
+        public float[] KeyRainShadowColor = new float[] { 0f, 0f, 0f, 0.35f };
+        public float[] KeyRainShadowOffset = new float[] { 0f, 0f };
+        public float KeyRainShadowSoftness = 12f;
+        public float KeyRainShadowStrength = 1f;
     }
 
     [Serializable]
@@ -237,7 +306,8 @@ namespace CheryTools
     {
         public string Name = "新模块";
         public bool IsEnabled = true;
-        public string TextFormat = "<color=#FF0000FF>{te} </color><color=#FF8E00FF>{ve} </color><color=#D7FF27FF>{ep}</color><color=#30FF20FF> {p}</color> <color=#D7FF27FF>{lp}</color> <color=#FF8E00FF>{vl} </color><color=#FF0000FF>{tl}</color>";
+        public bool ShowInGame = true;
+        public string TextFormat = "<color=#DA59FFFF>{fo}</color>  <color=#FF0000FF>{te}</color>  <color=#FF8E00FF>{ve}</color>  <color=#D7FF27FF>{ep}</color>  <color=#4DFF2DFF>{p}</color>  <color=#D7FF27FF>{lp}</color>  <color=#FF8E00FF>{vl}</color>  <color=#FF0000FF>{tl}</color>  <color=#DA59FFFF>{fm}</color>";
         public float PositionX = 50f;
         public float PositionY = 50f;
         public float FontSize = 32f;
@@ -296,20 +366,21 @@ namespace CheryTools
         public bool OverlayerOnlyShowPlaying = false;
         public System.Collections.Generic.List<OverlayerText> OverlayerTexts = new System.Collections.Generic.List<OverlayerText>();
         public System.Collections.Generic.List<OverlayerImage> OverlayerImages = new System.Collections.Generic.List<OverlayerImage>();
+        public System.Collections.Generic.List<OverlayerVideo> OverlayerVideos = new System.Collections.Generic.List<OverlayerVideo>();
         public System.Collections.Generic.List<OverlayerProgressBar> OverlayerProgressBars = new System.Collections.Generic.List<OverlayerProgressBar>();
-        
-        public bool EnableLegacyPauseFix = true;
-
         // Visual Settings
         public bool EnableCustomPlanetColors = false;
 
         public float[] RedPlanetColor = new float[] { 1f, 0f, 0f, 1f };
+        public float[] RedRingColor = new float[] { 1f, 0f, 0f, 0.4f };
         public float[] RedTailColor = new float[] { 1f, 0f, 0f, 1f };
 
         public float[] BluePlanetColor = new float[] { 0f, 0f, 1f, 1f };
+        public float[] BlueRingColor = new float[] { 0f, 0f, 1f, 0.4f };
         public float[] BlueTailColor = new float[] { 0f, 0f, 1f, 1f };
 
         public float[] GreenPlanetColor = new float[] { 0f, 1f, 0f, 1f };
+        public float[] GreenRingColor = new float[] { 0f, 1f, 0f, 0.4f };
         public float[] GreenTailColor = new float[] { 0f, 1f, 0f, 1f };
 
         public float[] ComboColor = new float[4] { 1f, 1f, 1f, 1f };
@@ -343,6 +414,11 @@ namespace CheryTools
         // Optimization Settings
         public bool DisableAutoplaySpacePause = false;
         public bool DisablePlayModeScrollZoom = false;
+        public bool ToolsLimitInput = false;
+        public System.Collections.Generic.List<KeyCode> ToolsLimitedKeys = new System.Collections.Generic.List<KeyCode>();
+
+        // Integration Settings
+        public bool XPerfectIntegrationEnabled = false;
 
         // KeyViewer Settings
         public bool EnableKeyViewer = true;
@@ -374,6 +450,15 @@ namespace CheryTools
         public float[] KeyViewerCountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
         public float KeyViewerCountTextOutlineThickness = 1f;
 
+        public bool KeyViewerKeyTextShadowEnabled = false;
+        public float[] KeyViewerKeyTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+        public float[] KeyViewerKeyTextShadowOffset = new float[] { 2f, 2f };
+        public float KeyViewerKeyTextShadowSoftness = 0f;
+        public bool KeyViewerCountTextShadowEnabled = false;
+        public float[] KeyViewerCountTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+        public float[] KeyViewerCountTextShadowOffset = new float[] { 2f, 2f };
+        public float KeyViewerCountTextShadowSoftness = 0f;
+
         // KeyRain Settings
         public bool EnableKeyRain = false;
         public float KeyRainSpeed = 800.0f;
@@ -383,6 +468,7 @@ namespace CheryTools
         public float KeyRainWidthRatio2 = 0.4f;
         public float KeyRainYOffsetRow1 = 0.0f;
         public float KeyRainYOffsetRow2 = 0.0f;
+        public float KeyRainCornerRadius = 0f;
         public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
         public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
 
@@ -426,6 +512,10 @@ namespace CheryTools
 
         public void InitNulls()
         {
+            if (ToolsLimitedKeys == null)
+                ToolsLimitedKeys = new System.Collections.Generic.List<KeyCode>();
+            if (ToolsLimitedKeys.Count > 30)
+                ToolsLimitedKeys.RemoveRange(30, ToolsLimitedKeys.Count - 30);
             if (ImGuiPanelScale <= 0f || float.IsNaN(ImGuiPanelScale) || float.IsInfinity(ImGuiPanelScale))
                 ImGuiPanelScale = 1.0f;
             ImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, ImGuiPanelScale));
@@ -437,8 +527,15 @@ namespace CheryTools
             ImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, ImageRenderScale));
             EnsureGameUIElementSettings();
             
-            if (GreenTailColor == null || GreenTailColor.Length != 4) GreenTailColor = new float[] { 0f, 1f, 0f, 1f };
+            if (RedPlanetColor == null || RedPlanetColor.Length != 4) RedPlanetColor = new float[] { 1f, 0f, 0f, 1f };
+            if (RedRingColor == null || RedRingColor.Length != 4) RedRingColor = new float[] { 1f, 0f, 0f, 0.4f };
             if (RedTailColor == null || RedTailColor.Length != 4) RedTailColor = new float[] { 1f, 0f, 0f, 1f };
+            if (BluePlanetColor == null || BluePlanetColor.Length != 4) BluePlanetColor = new float[] { 0f, 0f, 1f, 1f };
+            if (BlueRingColor == null || BlueRingColor.Length != 4) BlueRingColor = new float[] { 0f, 0f, 1f, 0.4f };
+            if (BlueTailColor == null || BlueTailColor.Length != 4) BlueTailColor = new float[] { 0f, 0f, 1f, 1f };
+            if (GreenPlanetColor == null || GreenPlanetColor.Length != 4) GreenPlanetColor = new float[] { 0f, 1f, 0f, 1f };
+            if (GreenRingColor == null || GreenRingColor.Length != 4) GreenRingColor = new float[] { 0f, 1f, 0f, 0.4f };
+            if (GreenTailColor == null || GreenTailColor.Length != 4) GreenTailColor = new float[] { 0f, 1f, 0f, 1f };
             if (KeyViewerColorBgNormal == null || KeyViewerColorBgNormal.Length != 4) KeyViewerColorBgNormal = new float[] { 0.0f, 0.0f, 0.0f, 0.6f };
             if (KeyViewerColorBgPressed == null || KeyViewerColorBgPressed.Length != 4) KeyViewerColorBgPressed = new float[] { 0.2f, 0.6f, 1.0f, 0.8f };
             if (KeyViewerColorBorderNormal == null || KeyViewerColorBorderNormal.Length != 4) KeyViewerColorBorderNormal = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
@@ -448,6 +545,12 @@ namespace CheryTools
             if (KeyViewerCountTextOutlineColor == null || KeyViewerCountTextOutlineColor.Length != 4) KeyViewerCountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
             if (KeyViewerKeyTextOutlineThickness < 0f) KeyViewerKeyTextOutlineThickness = 1f;
             if (KeyViewerCountTextOutlineThickness < 0f) KeyViewerCountTextOutlineThickness = 1f;
+            if (KeyViewerKeyTextShadowColor == null || KeyViewerKeyTextShadowColor.Length != 4) KeyViewerKeyTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+            if (KeyViewerKeyTextShadowOffset == null || KeyViewerKeyTextShadowOffset.Length != 2) KeyViewerKeyTextShadowOffset = new float[] { 2f, 2f };
+            if (float.IsNaN(KeyViewerKeyTextShadowSoftness) || float.IsInfinity(KeyViewerKeyTextShadowSoftness) || KeyViewerKeyTextShadowSoftness < 0f) KeyViewerKeyTextShadowSoftness = 0f;
+            if (KeyViewerCountTextShadowColor == null || KeyViewerCountTextShadowColor.Length != 4) KeyViewerCountTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+            if (KeyViewerCountTextShadowOffset == null || KeyViewerCountTextShadowOffset.Length != 2) KeyViewerCountTextShadowOffset = new float[] { 2f, 2f };
+            if (float.IsNaN(KeyViewerCountTextShadowSoftness) || float.IsInfinity(KeyViewerCountTextShadowSoftness) || KeyViewerCountTextShadowSoftness < 0f) KeyViewerCountTextShadowSoftness = 0f;
             
             if (OverlayerTexts != null)
             {
@@ -484,6 +587,16 @@ namespace CheryTools
                         }
                     }
                 }
+            }
+            if (OverlayerVideos == null)
+                OverlayerVideos = new System.Collections.Generic.List<OverlayerVideo>();
+            if (OverlayerVideos.Count > 2)
+                OverlayerVideos.RemoveRange(2, OverlayerVideos.Count - 2);
+            for (int i = 0; i < OverlayerVideos.Count; i++)
+            {
+                if (OverlayerVideos[i] == null)
+                    OverlayerVideos[i] = new OverlayerVideo();
+                EnsureOverlayerVideoDefaults(OverlayerVideos[i]);
             }
             if (OverlayerProgressBars == null)
                 OverlayerProgressBars = new System.Collections.Generic.List<OverlayerProgressBar>();
@@ -559,6 +672,30 @@ namespace CheryTools
                 {
                     node.CountTextOutlineThickness = 1f;
                 }
+                if (node.KeyTextShadowColor == null || node.KeyTextShadowColor.Length != 4)
+                {
+                    node.KeyTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+                }
+                if (node.KeyTextShadowOffset == null || node.KeyTextShadowOffset.Length != 2)
+                {
+                    node.KeyTextShadowOffset = new float[] { 2f, 2f };
+                }
+                if (float.IsNaN(node.KeyTextShadowSoftness) || float.IsInfinity(node.KeyTextShadowSoftness) || node.KeyTextShadowSoftness < 0f)
+                {
+                    node.KeyTextShadowSoftness = 0f;
+                }
+                if (node.CountTextShadowColor == null || node.CountTextShadowColor.Length != 4)
+                {
+                    node.CountTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
+                }
+                if (node.CountTextShadowOffset == null || node.CountTextShadowOffset.Length != 2)
+                {
+                    node.CountTextShadowOffset = new float[] { 2f, 2f };
+                }
+                if (float.IsNaN(node.CountTextShadowSoftness) || float.IsInfinity(node.CountTextShadowSoftness) || node.CountTextShadowSoftness < 0f)
+                {
+                    node.CountTextShadowSoftness = 0f;
+                }
             }
         }
 
@@ -574,6 +711,15 @@ namespace CheryTools
             return result;
         }
 
+        private static float[] ClonePair(float[] source, float fallbackX, float fallbackY)
+        {
+            return new float[]
+            {
+                source != null && source.Length > 0 ? source[0] : fallbackX,
+                source != null && source.Length > 1 ? source[1] : fallbackY
+            };
+        }
+
         private static KVNode CloneKeyViewerNode(KVNode source)
         {
             if (source == null) return new KVNode();
@@ -584,6 +730,11 @@ namespace CheryTools
                 KeyBind = source.KeyBind,
                 CustomText = source.CustomText,
                 ImagePath = source.ImagePath,
+                VideoPath = source.VideoPath,
+                VideoLoop = source.VideoLoop,
+                VideoContentScale = source.VideoContentScale,
+                VideoContentOffsetX = source.VideoContentOffsetX,
+                VideoContentOffsetY = source.VideoContentOffsetY,
                 IsUnselectable = source.IsUnselectable,
                 Opacity = source.Opacity,
                 Depth = source.Depth,
@@ -610,6 +761,15 @@ namespace CheryTools
                 CountTextOutlineEnabled = source.CountTextOutlineEnabled,
                 CountTextOutlineColor = CloneColor(source.CountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f }),
                 CountTextOutlineThickness = source.CountTextOutlineThickness,
+                UseCustomShadow = source.UseCustomShadow,
+                KeyTextShadowEnabled = source.KeyTextShadowEnabled,
+                KeyTextShadowColor = CloneColor(source.KeyTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f }),
+                KeyTextShadowOffset = ClonePair(source.KeyTextShadowOffset, 2f, 2f),
+                KeyTextShadowSoftness = source.KeyTextShadowSoftness,
+                CountTextShadowEnabled = source.CountTextShadowEnabled,
+                CountTextShadowColor = CloneColor(source.CountTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f }),
+                CountTextShadowOffset = ClonePair(source.CountTextShadowOffset, 2f, 2f),
+                CountTextShadowSoftness = source.CountTextShadowSoftness,
                 UseCustomColor = source.UseCustomColor,
                 ColorBgNormal = CloneColor(source.ColorBgNormal, new float[] { 0.2f, 0.2f, 0.2f, 0.8f }),
                 ColorBgPressed = CloneColor(source.ColorBgPressed, new float[] { 0.8f, 0.8f, 0.8f, 0.8f }),
@@ -618,10 +778,18 @@ namespace CheryTools
                 ColorTextNormal = CloneColor(source.ColorTextNormal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
                 ColorTextPressed = CloneColor(source.ColorTextPressed, new float[] { 0.0f, 0.0f, 0.0f, 1.0f }),
                 RainRow = source.RainRow,
+                EnableKeyRain = source.EnableKeyRain,
                 UseCustomRain = source.UseCustomRain,
                 RainColor = CloneColor(source.RainColor, new float[] { 0.8f, 0.5f, 1.0f, 0.8f }),
                 RainWidthRatio = source.RainWidthRatio,
                 RainYOffset = source.RainYOffset,
+                RainCornerRadius = source.RainCornerRadius,
+                UseCustomRainShadow = source.UseCustomRainShadow,
+                RainShadowEnabled = source.RainShadowEnabled,
+                RainShadowColor = CloneColor(source.RainShadowColor, new float[] { 0f, 0f, 0f, 0.35f }),
+                RainShadowOffset = ClonePair(source.RainShadowOffset, 0f, 0f),
+                RainShadowSoftness = source.RainShadowSoftness,
+                RainShadowStrength = source.RainShadowStrength,
                 HitCount = source.HitCount
             };
         }
@@ -636,6 +804,242 @@ namespace CheryTools
                 result.Add(CloneKeyViewerNode(node));
             }
             return result;
+        }
+
+        private static OverlayerProgressValueSource CloneProgressValueSource(OverlayerProgressValueSource source)
+        {
+            if (source == null) return new OverlayerProgressValueSource();
+            return new OverlayerProgressValueSource(source.Kind, source.Constant);
+        }
+
+        private static OverlayerAnimation CloneOverlayerAnimation(OverlayerAnimation source)
+        {
+            if (source == null) return new OverlayerAnimation();
+
+            var clone = new OverlayerAnimation
+            {
+                IsEnabled = source.IsEnabled,
+                Name = source.Name,
+                Trigger = source.Trigger,
+                JsonString = source.JsonString,
+                UseGraphicalAnimation = source.UseGraphicalAnimation,
+                StartScale = source.StartScale,
+                StartRotation = source.StartRotation,
+                StartX = source.StartX,
+                StartY = source.StartY,
+                StartOpacity = source.StartOpacity,
+                EndScale = source.EndScale,
+                EndRotation = source.EndRotation,
+                EndX = source.EndX,
+                EndY = source.EndY,
+                EndOpacity = source.EndOpacity,
+                Duration = source.Duration,
+                EasingType = source.EasingType
+            };
+            clone.ParseJson();
+            return clone;
+        }
+
+        private static System.Collections.Generic.List<OverlayerAnimation> CloneOverlayerAnimations(System.Collections.Generic.List<OverlayerAnimation> animations)
+        {
+            var result = new System.Collections.Generic.List<OverlayerAnimation>();
+            if (animations == null) return result;
+
+            foreach (OverlayerAnimation animation in animations)
+            {
+                result.Add(CloneOverlayerAnimation(animation));
+            }
+            return result;
+        }
+
+        public KVConfiguration CloneKeyViewerConfiguration(KVConfiguration source)
+        {
+            if (source == null) return new KVConfiguration();
+
+            return new KVConfiguration
+            {
+                Name = string.IsNullOrEmpty(source.Name) ? "KV 配置 副本" : source.Name + " 副本",
+                IsEnabled = source.IsEnabled,
+                ShowInGame = source.ShowInGame,
+                Nodes = CloneKeyViewerNodes(source.Nodes),
+                AppearanceMigrated = source.AppearanceMigrated,
+                FontPath = source.FontPath,
+                Scale = source.Scale,
+                BorderThickness = source.BorderThickness,
+                HideCountText = source.HideCountText,
+                GlobalTextOffsetX = source.GlobalTextOffsetX,
+                GlobalTextOffsetY = source.GlobalTextOffsetY,
+                GlobalCountOffsetX = source.GlobalCountOffsetX,
+                GlobalCountOffsetY = source.GlobalCountOffsetY,
+                DefaultWidth = source.DefaultWidth,
+                DefaultHeight = source.DefaultHeight,
+                ColorBgNormal = CloneColor(source.ColorBgNormal, new float[] { 0.2f, 0.1f, 0.3f, 0.8f }),
+                ColorBgPressed = CloneColor(source.ColorBgPressed, new float[] { 0.5f, 0.2f, 0.8f, 1.0f }),
+                ColorBorderNormal = CloneColor(source.ColorBorderNormal, new float[] { 0.6f, 0.3f, 0.9f, 0.8f }),
+                ColorBorderPressed = CloneColor(source.ColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f }),
+                ColorTextNormal = CloneColor(source.ColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f }),
+                ColorTextPressed = CloneColor(source.ColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
+                ColorKps = CloneColor(source.ColorKps, new float[] { 1f, 1f, 1f, 1f }),
+                ColorTotal = CloneColor(source.ColorTotal, new float[] { 1f, 1f, 1f, 1f }),
+                KeyTextOutlineEnabled = source.KeyTextOutlineEnabled,
+                KeyTextOutlineColor = CloneColor(source.KeyTextOutlineColor, new float[] { 0f, 0f, 0f, 1f }),
+                KeyTextOutlineThickness = source.KeyTextOutlineThickness,
+                CountTextOutlineEnabled = source.CountTextOutlineEnabled,
+                CountTextOutlineColor = CloneColor(source.CountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f }),
+                CountTextOutlineThickness = source.CountTextOutlineThickness,
+                KeyTextShadowEnabled = source.KeyTextShadowEnabled,
+                KeyTextShadowColor = CloneColor(source.KeyTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f }),
+                KeyTextShadowOffset = ClonePair(source.KeyTextShadowOffset, 2f, 2f),
+                KeyTextShadowSoftness = source.KeyTextShadowSoftness,
+                CountTextShadowEnabled = source.CountTextShadowEnabled,
+                CountTextShadowColor = CloneColor(source.CountTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f }),
+                CountTextShadowOffset = ClonePair(source.CountTextShadowOffset, 2f, 2f),
+                CountTextShadowSoftness = source.CountTextShadowSoftness,
+                EnableKeyRain = source.EnableKeyRain,
+                KeyRainSpeed = source.KeyRainSpeed,
+                KeyRainMaxHeight = source.KeyRainMaxHeight,
+                KeyRainFadeMode = source.KeyRainFadeMode,
+                KeyRainWidthRatio1 = source.KeyRainWidthRatio1,
+                KeyRainWidthRatio2 = source.KeyRainWidthRatio2,
+                KeyRainYOffsetRow1 = source.KeyRainYOffsetRow1,
+                KeyRainYOffsetRow2 = source.KeyRainYOffsetRow2,
+                KeyRainCornerRadius = source.KeyRainCornerRadius,
+                KeyRainColorRow1 = CloneColor(source.KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1f, 0.8f }),
+                KeyRainColorRow2 = CloneColor(source.KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1f, 0.8f }),
+                KeyRainShadowEnabled = source.KeyRainShadowEnabled,
+                KeyRainShadowColor = CloneColor(source.KeyRainShadowColor, new float[] { 0f, 0f, 0f, 0.35f }),
+                KeyRainShadowOffset = ClonePair(source.KeyRainShadowOffset, 0f, 0f),
+                KeyRainShadowSoftness = source.KeyRainShadowSoftness,
+                KeyRainShadowStrength = source.KeyRainShadowStrength
+            };
+        }
+
+        public OverlayerText CloneOverlayerText(OverlayerText source)
+        {
+            if (source == null) return new OverlayerText();
+
+            return new OverlayerText
+            {
+                Name = string.IsNullOrEmpty(source.Name) ? "文本 副本" : source.Name + " 副本",
+                IsEnabled = source.IsEnabled,
+                ShowInGame = source.ShowInGame,
+                TextFormat = source.TextFormat,
+                PositionX = source.PositionX + 16f,
+                PositionY = source.PositionY + 16f,
+                FontSize = source.FontSize,
+                TextColor = CloneColor(source.TextColor, new float[] { 1f, 1f, 1f, 1f }),
+                Alignment = source.Alignment,
+                FontPath = source.FontPath,
+                Depth = source.Depth,
+                EnableShadow = source.EnableShadow,
+                ShadowColor = CloneColor(source.ShadowColor, new float[] { 0f, 0f, 0f, 1f }),
+                ShadowOffset = new float[] {
+                    source.ShadowOffset != null && source.ShadowOffset.Length > 0 ? source.ShadowOffset[0] : 2f,
+                    source.ShadowOffset != null && source.ShadowOffset.Length > 1 ? source.ShadowOffset[1] : 2f
+                },
+                ShadowSoftness = source.ShadowSoftness,
+                EnableOutline = source.EnableOutline,
+                OutlineColor = CloneColor(source.OutlineColor, new float[] { 0f, 0f, 0f, 1f }),
+                OutlineThickness = source.OutlineThickness,
+                LineHeightOffset = source.LineHeightOffset,
+                LetterSpacing = source.LetterSpacing,
+                Animations = CloneOverlayerAnimations(source.Animations),
+                PivotX = source.PivotX,
+                PivotY = source.PivotY,
+                LastWidth = source.LastWidth,
+                LastHeight = source.LastHeight
+            };
+        }
+
+        public OverlayerImage CloneOverlayerImage(OverlayerImage source)
+        {
+            if (source == null) return new OverlayerImage();
+
+            return new OverlayerImage
+            {
+                IsEnabled = source.IsEnabled,
+                ShowInGame = source.ShowInGame,
+                ImagePath = source.ImagePath,
+                PositionX = source.PositionX + 16f,
+                PositionY = source.PositionY + 16f,
+                Scale = source.Scale,
+                Rotation = source.Rotation,
+                Opacity = source.Opacity,
+                Depth = source.Depth,
+                PivotX = source.PivotX,
+                PivotY = source.PivotY,
+                Animations = CloneOverlayerAnimations(source.Animations),
+                LastWidth = source.LastWidth,
+                LastHeight = source.LastHeight
+            };
+        }
+
+        public OverlayerVideo CloneOverlayerVideo(OverlayerVideo source)
+        {
+            if (source == null) return new OverlayerVideo();
+
+            return new OverlayerVideo
+            {
+                Name = string.IsNullOrEmpty(source.Name) ? "视频 副本" : source.Name + " 副本",
+                IsEnabled = source.IsEnabled,
+                ShowInGame = source.ShowInGame,
+                VideoPath = source.VideoPath,
+                Loop = source.Loop,
+                ContentScale = source.ContentScale,
+                ContentOffsetX = source.ContentOffsetX,
+                ContentOffsetY = source.ContentOffsetY,
+                PositionX = source.PositionX + 16f,
+                PositionY = source.PositionY + 16f,
+                Width = source.Width,
+                Height = source.Height,
+                Rotation = source.Rotation,
+                Opacity = source.Opacity,
+                Depth = source.Depth,
+                PivotX = source.PivotX,
+                PivotY = source.PivotY,
+                LastWidth = source.LastWidth,
+                LastHeight = source.LastHeight
+            };
+        }
+
+        public OverlayerProgressBar CloneOverlayerProgressBar(OverlayerProgressBar source)
+        {
+            if (source == null) return new OverlayerProgressBar();
+
+            return new OverlayerProgressBar
+            {
+                Name = string.IsNullOrEmpty(source.Name) ? "进度条 副本" : source.Name + " 副本",
+                IsEnabled = source.IsEnabled,
+                ShowInGame = source.ShowInGame,
+                ValueSource = CloneProgressValueSource(source.ValueSource),
+                MinSource = CloneProgressValueSource(source.MinSource),
+                MaxSource = CloneProgressValueSource(source.MaxSource),
+                PositionX = source.PositionX + 16f,
+                PositionY = source.PositionY + 16f,
+                Width = source.Width,
+                Height = source.Height,
+                Opacity = source.Opacity,
+                Depth = source.Depth,
+                PivotX = source.PivotX,
+                PivotY = source.PivotY,
+                FillDirection = source.FillDirection,
+                Reverse = source.Reverse,
+                ClampValue = source.ClampValue,
+                BackgroundColor = CloneColor(source.BackgroundColor, new float[] { 0f, 0f, 0f, 0.45f }),
+                FillColor = CloneColor(source.FillColor, new float[] { 0.2f, 0.75f, 1f, 0.95f }),
+                BorderColor = CloneColor(source.BorderColor, new float[] { 1f, 1f, 1f, 0.8f }),
+                BorderThickness = source.BorderThickness,
+                CornerRadius = source.CornerRadius,
+                EnableShadow = source.EnableShadow,
+                ShadowColor = CloneColor(source.ShadowColor, new float[] { 0f, 0f, 0f, 0.45f }),
+                ShadowOffset = new float[] {
+                    source.ShadowOffset != null && source.ShadowOffset.Length > 0 ? source.ShadowOffset[0] : 2f,
+                    source.ShadowOffset != null && source.ShadowOffset.Length > 1 ? source.ShadowOffset[1] : 2f
+                },
+                ShadowSoftness = source.ShadowSoftness,
+                LastWidth = source.LastWidth,
+                LastHeight = source.LastHeight
+            };
         }
 
         private void CopyGlobalKeyViewerAppearanceTo(KVConfiguration config)
@@ -666,6 +1070,14 @@ namespace CheryTools
             config.CountTextOutlineEnabled = KeyViewerCountTextOutlineEnabled;
             config.CountTextOutlineColor = CloneColor(KeyViewerCountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
             config.CountTextOutlineThickness = KeyViewerCountTextOutlineThickness;
+            config.KeyTextShadowEnabled = KeyViewerKeyTextShadowEnabled;
+            config.KeyTextShadowColor = CloneColor(KeyViewerKeyTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f });
+            config.KeyTextShadowOffset = ClonePair(KeyViewerKeyTextShadowOffset, 2f, 2f);
+            config.KeyTextShadowSoftness = KeyViewerKeyTextShadowSoftness;
+            config.CountTextShadowEnabled = KeyViewerCountTextShadowEnabled;
+            config.CountTextShadowColor = CloneColor(KeyViewerCountTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f });
+            config.CountTextShadowOffset = ClonePair(KeyViewerCountTextShadowOffset, 2f, 2f);
+            config.CountTextShadowSoftness = KeyViewerCountTextShadowSoftness;
             config.EnableKeyRain = EnableKeyRain;
             config.KeyRainSpeed = KeyRainSpeed;
             config.KeyRainMaxHeight = KeyRainMaxHeight;
@@ -674,6 +1086,7 @@ namespace CheryTools
             config.KeyRainWidthRatio2 = KeyRainWidthRatio2;
             config.KeyRainYOffsetRow1 = KeyRainYOffsetRow1;
             config.KeyRainYOffsetRow2 = KeyRainYOffsetRow2;
+            config.KeyRainCornerRadius = KeyRainCornerRadius;
             config.KeyRainColorRow1 = CloneColor(KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
             config.KeyRainColorRow2 = CloneColor(KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
             config.AppearanceMigrated = true;
@@ -714,6 +1127,12 @@ namespace CheryTools
             config.CountTextOutlineColor = CloneColor(config.CountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
             if (config.KeyTextOutlineThickness < 0f) config.KeyTextOutlineThickness = 1f;
             if (config.CountTextOutlineThickness < 0f) config.CountTextOutlineThickness = 1f;
+            config.KeyTextShadowColor = CloneColor(config.KeyTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f });
+            config.KeyTextShadowOffset = ClonePair(config.KeyTextShadowOffset, 2f, 2f);
+            if (float.IsNaN(config.KeyTextShadowSoftness) || float.IsInfinity(config.KeyTextShadowSoftness) || config.KeyTextShadowSoftness < 0f) config.KeyTextShadowSoftness = 0f;
+            config.CountTextShadowColor = CloneColor(config.CountTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f });
+            config.CountTextShadowOffset = ClonePair(config.CountTextShadowOffset, 2f, 2f);
+            if (float.IsNaN(config.CountTextShadowSoftness) || float.IsInfinity(config.CountTextShadowSoftness) || config.CountTextShadowSoftness < 0f) config.CountTextShadowSoftness = 0f;
 
             if (float.IsNaN(config.KeyRainSpeed) || float.IsInfinity(config.KeyRainSpeed) || config.KeyRainSpeed <= 0f)
                 config.KeyRainSpeed = 800.0f;
@@ -724,16 +1143,63 @@ namespace CheryTools
             config.KeyRainFadeMode = Math.Max(0, Math.Min(1, config.KeyRainFadeMode));
             config.KeyRainWidthRatio1 = Math.Max(0.05f, Math.Min(2.0f, config.KeyRainWidthRatio1));
             config.KeyRainWidthRatio2 = Math.Max(0.05f, Math.Min(2.0f, config.KeyRainWidthRatio2));
+            if (float.IsNaN(config.KeyRainCornerRadius) || float.IsInfinity(config.KeyRainCornerRadius) || config.KeyRainCornerRadius < 0f)
+                config.KeyRainCornerRadius = 0f;
+            config.KeyRainCornerRadius = Math.Max(0f, Math.Min(256f, config.KeyRainCornerRadius));
             config.KeyRainColorRow1 = CloneColor(config.KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
             config.KeyRainColorRow2 = CloneColor(config.KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
+            config.KeyRainShadowColor = CloneColor(config.KeyRainShadowColor, new float[] { 0f, 0f, 0f, 0.35f });
+            config.KeyRainShadowOffset = ClonePair(config.KeyRainShadowOffset, 0f, 0f);
+            NormalizeLegacyKeyRainShadowOffset(config.KeyRainShadowOffset);
+            if (float.IsNaN(config.KeyRainShadowSoftness) || float.IsInfinity(config.KeyRainShadowSoftness) || config.KeyRainShadowSoftness < 0f)
+                config.KeyRainShadowSoftness = 12f;
+            if (float.IsNaN(config.KeyRainShadowStrength) || float.IsInfinity(config.KeyRainShadowStrength))
+                config.KeyRainShadowStrength = 1f;
+            config.KeyRainShadowSoftness = Math.Max(0f, Math.Min(64f, config.KeyRainShadowSoftness));
+            config.KeyRainShadowStrength = Math.Max(0f, Math.Min(1f, config.KeyRainShadowStrength));
         }
 
         private static void EnsureKeyViewerNodeDefaults(KVNode node)
         {
             if (node == null) return;
+            if (node.NodeType < 0 || node.NodeType > 4)
+                node.NodeType = 0;
             if (float.IsNaN(node.CornerRadius) || float.IsInfinity(node.CornerRadius))
                 node.CornerRadius = -1f;
             node.CornerRadius = Math.Max(-1f, Math.Min(256f, node.CornerRadius));
+            if (float.IsNaN(node.RainCornerRadius) || float.IsInfinity(node.RainCornerRadius) || node.RainCornerRadius < 0f)
+                node.RainCornerRadius = 0f;
+            node.RainCornerRadius = Math.Max(0f, Math.Min(256f, node.RainCornerRadius));
+            node.RainShadowColor = CloneColor(node.RainShadowColor, new float[] { 0f, 0f, 0f, 0.35f });
+            node.RainShadowOffset = ClonePair(node.RainShadowOffset, 0f, 0f);
+            NormalizeLegacyKeyRainShadowOffset(node.RainShadowOffset);
+            if (float.IsNaN(node.RainShadowSoftness) || float.IsInfinity(node.RainShadowSoftness) || node.RainShadowSoftness < 0f)
+                node.RainShadowSoftness = 12f;
+            if (float.IsNaN(node.RainShadowStrength) || float.IsInfinity(node.RainShadowStrength))
+                node.RainShadowStrength = 1f;
+            node.RainShadowSoftness = Math.Max(0f, Math.Min(64f, node.RainShadowSoftness));
+            node.RainShadowStrength = Math.Max(0f, Math.Min(1f, node.RainShadowStrength));
+            if (node.NodeType == 4)
+                node.VideoLoop = true;
+            if (float.IsNaN(node.VideoContentScale) || float.IsInfinity(node.VideoContentScale) || node.VideoContentScale <= 0f)
+                node.VideoContentScale = 1f;
+            node.VideoContentScale = Math.Max(0.1f, Math.Min(10f, node.VideoContentScale));
+            if (float.IsNaN(node.VideoContentOffsetX) || float.IsInfinity(node.VideoContentOffsetX))
+                node.VideoContentOffsetX = 0f;
+            if (float.IsNaN(node.VideoContentOffsetY) || float.IsInfinity(node.VideoContentOffsetY))
+                node.VideoContentOffsetY = 0f;
+            node.VideoContentOffsetX = Math.Max(-1f, Math.Min(1f, node.VideoContentOffsetX));
+            node.VideoContentOffsetY = Math.Max(-1f, Math.Min(1f, node.VideoContentOffsetY));
+        }
+
+        private static void NormalizeLegacyKeyRainShadowOffset(float[] offset)
+        {
+            if (offset == null || offset.Length < 2) return;
+            if (Math.Abs(offset[0] - 3f) <= 0.001f && Math.Abs(offset[1] - 3f) <= 0.001f)
+            {
+                offset[0] = 0f;
+                offset[1] = 0f;
+            }
         }
 
         public void EnsureKeyViewerConfigurations()
@@ -770,6 +1236,7 @@ namespace CheryTools
                     }
                     EnsureKeyViewerNodeDefaults(config.Nodes[j]);
                 }
+                EnforceSingleVideoNode(config.Nodes);
                 EnsureKeyViewerConfigurationAppearance(config);
             }
 
@@ -810,6 +1277,28 @@ namespace CheryTools
             return nodes;
         }
 
+        private static void EnforceSingleVideoNode(System.Collections.Generic.List<KVNode> nodes)
+        {
+            if (nodes == null) return;
+
+            bool hasVideo = false;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                KVNode node = nodes[i];
+                if (node == null || node.NodeType != 4) continue;
+
+                if (!hasVideo)
+                {
+                    hasVideo = true;
+                    node.VideoLoop = true;
+                }
+                else
+                {
+                    node.NodeType = 3;
+                }
+            }
+        }
+
         public KVConfiguration FindKeyViewerConfigurationForNode(KVNode node)
         {
             if (node == null || KeyViewerConfigurations == null)
@@ -833,6 +1322,37 @@ namespace CheryTools
                 ? GenerateDefaultKVLayout(presetKeyCount, config.DefaultWidth, config.DefaultHeight)
                 : new System.Collections.Generic.List<KVNode>();
             return config;
+        }
+
+        private static void EnsureOverlayerVideoDefaults(OverlayerVideo video)
+        {
+            if (video == null) return;
+            if (string.IsNullOrEmpty(video.Name))
+                video.Name = "新视频";
+            if (float.IsNaN(video.Width) || float.IsInfinity(video.Width) || video.Width <= 0f)
+                video.Width = 320f;
+            if (float.IsNaN(video.Height) || float.IsInfinity(video.Height) || video.Height <= 0f)
+                video.Height = 180f;
+            if (float.IsNaN(video.Opacity) || float.IsInfinity(video.Opacity))
+                video.Opacity = 1f;
+            video.Opacity = Math.Max(0f, Math.Min(1f, video.Opacity));
+            if (float.IsNaN(video.PivotX) || float.IsInfinity(video.PivotX))
+                video.PivotX = 0f;
+            if (float.IsNaN(video.PivotY) || float.IsInfinity(video.PivotY))
+                video.PivotY = 0f;
+            video.PivotX = Math.Max(0f, Math.Min(1f, video.PivotX));
+            video.PivotY = Math.Max(0f, Math.Min(1f, video.PivotY));
+            video.Depth = RenderDepth.ClampDepth(video.Depth);
+            video.Loop = true;
+            if (float.IsNaN(video.ContentScale) || float.IsInfinity(video.ContentScale) || video.ContentScale <= 0f)
+                video.ContentScale = 1f;
+            video.ContentScale = Math.Max(0.1f, Math.Min(10f, video.ContentScale));
+            if (float.IsNaN(video.ContentOffsetX) || float.IsInfinity(video.ContentOffsetX))
+                video.ContentOffsetX = 0f;
+            if (float.IsNaN(video.ContentOffsetY) || float.IsInfinity(video.ContentOffsetY))
+                video.ContentOffsetY = 0f;
+            video.ContentOffsetX = Math.Max(-1f, Math.Min(1f, video.ContentOffsetX));
+            video.ContentOffsetY = Math.Max(-1f, Math.Min(1f, video.ContentOffsetY));
         }
 
         private static void EnsureOverlayerProgressBarDefaults(OverlayerProgressBar bar)
@@ -1051,6 +1571,7 @@ namespace CheryTools
         public static void RequestSave()
         {
             _isSaveRequested = true;
+            OverlayRenderInvalidator.InvalidateAll();
         }
         
         private static UnityEngine.GameObject _imguiGameObject;
@@ -1144,6 +1665,7 @@ namespace CheryTools
             else
             {
                 harmony.UnpatchAll(modEntry.Info.Id);
+                InputInterceptor.ResetPatches();
                 
                 if (_imguiGameObject != null)
                 {
@@ -1154,6 +1676,7 @@ namespace CheryTools
                 KeyViewerUnityRenderer.Shutdown();
                 OverlayerUnityRenderer.Shutdown();
                 TextureManager.Clear();
+                VideoTextureManager.Shutdown();
             }
             return true;
         }
@@ -1338,66 +1861,4 @@ namespace CheryTools
         }
     }
 
-    [HarmonyPatch(typeof(ADOFAI.LevelData), "Decode")]
-    public static class LevelData_Decode_Patch
-    {
-        public static void Postfix(ADOFAI.LevelData __instance, System.Collections.Generic.Dictionary<string, object> dict)
-        {
-            if (Main.IsEnabled && Main.Settings.EnableLegacyPauseFix && __instance != null)
-            {
-                __instance.legacyPause = true;
-
-                if (dict != null && dict.TryGetValue("actions", out object actionsObj) && actionsObj is System.Collections.Generic.List<object> actionsList)
-                {
-                    foreach (var ev in __instance.levelEvents)
-                    {
-                        if (ev.eventType == ADOFAI.LevelEventType.Pause)
-                        {
-                            if (IsTurnaround(__instance.angleData, ev.floor))
-                            {
-                                float originalDuration = GetOriginalDuration(actionsList, ev.floor) ?? (ev.GetNullable<float>("duration") ?? 0f);
-                                ev["duration"] = Math.Max(0f, originalDuration - 1f);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        private static float? GetOriginalDuration(System.Collections.Generic.List<object> actionsList, int floor)
-        {
-            foreach (var obj in actionsList)
-            {
-                if (obj is System.Collections.Generic.Dictionary<string, object> actionDict)
-                {
-                    if (actionDict.TryGetValue("floor", out object fObj) && Convert.ToInt32(fObj) == floor)
-                    {
-                        if (actionDict.TryGetValue("eventType", out object eObj) && eObj.ToString() == "Pause")
-                        {
-                            if (actionDict.TryGetValue("duration", out object dObj))
-                            {
-                                return Convert.ToSingle(dObj);
-                            }
-                        }
-                    }
-                }
-            }
-            return null;
-        }
-
-        private static bool IsTurnaround(System.Collections.Generic.List<float> angleData, int floor)
-        {
-            if (angleData == null || floor <= 0 || floor >= angleData.Count) return false;
-            
-            int prevIndex = floor - 1;
-            while (prevIndex >= 0 && angleData[prevIndex] == 999f) prevIndex--;
-            float prevAngle = (prevIndex >= 0) ? angleData[prevIndex] : 0f;
-            
-            float currAngle = angleData[floor];
-            if (currAngle == 999f) return false;
-            
-            float diff = Math.Abs(currAngle - prevAngle) % 360f;
-            return Math.Abs(diff - 180f) < 0.1f;
-        }
-    }
 }

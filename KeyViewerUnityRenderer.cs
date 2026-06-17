@@ -16,6 +16,7 @@ namespace CheryTools
         private static readonly Dictionary<int, RectTransform> _layerRoots = new Dictionary<int, RectTransform>();
         private static readonly Dictionary<int, CheryRectBatchGraphic> _rainBatches = new Dictionary<int, CheryRectBatchGraphic>();
         private static readonly Dictionary<int, CheryRectBatchGraphic> _rectBatches = new Dictionary<int, CheryRectBatchGraphic>();
+        private static readonly Dictionary<int, CheryShadowBatchGraphic> _shadowBatches = new Dictionary<int, CheryShadowBatchGraphic>();
         private static readonly Dictionary<string, KeyViewerImageGraphic> _images = new Dictionary<string, KeyViewerImageGraphic>();
         private static readonly Dictionary<string, int> _imageSortingOrders = new Dictionary<string, int>();
         private static readonly Dictionary<GameObject, int> _frameMarks = new Dictionary<GameObject, int>();
@@ -32,6 +33,10 @@ namespace CheryTools
             {
                 if (pair.Value != null) pair.Value.BeginFrame();
             }
+            foreach (var pair in _shadowBatches)
+            {
+                if (pair.Value != null) pair.Value.BeginFrame();
+            }
         }
 
         public static void EndFrame()
@@ -41,6 +46,10 @@ namespace CheryTools
                 if (pair.Value != null) pair.Value.EndFrame();
             }
             foreach (var pair in _rectBatches)
+            {
+                if (pair.Value != null) pair.Value.EndFrame();
+            }
+            foreach (var pair in _shadowBatches)
             {
                 if (pair.Value != null) pair.Value.EndFrame();
             }
@@ -57,6 +66,10 @@ namespace CheryTools
             {
                 if (pair.Value != null) pair.Value.gameObject.SetActive(false);
             }
+            foreach (var pair in _shadowBatches)
+            {
+                if (pair.Value != null) pair.Value.gameObject.SetActive(false);
+            }
             foreach (var pair in _images)
             {
                 if (pair.Value != null) pair.Value.gameObject.SetActive(false);
@@ -67,6 +80,7 @@ namespace CheryTools
         {
             _rainBatches.Clear();
             _rectBatches.Clear();
+            _shadowBatches.Clear();
             _layerRoots.Clear();
             _images.Clear();
             _imageSortingOrders.Clear();
@@ -91,20 +105,38 @@ namespace CheryTools
 
         public static void DrawGradientRect(string id, Vector2 topLeft, Vector2 size, uint topColor, uint bottomColor, int sortingOrder = CanvasSortingOrder)
         {
+            DrawGradientRect(id, topLeft, size, topColor, bottomColor, 0f, sortingOrder);
+        }
+
+        public static void DrawGradientRect(string id, Vector2 topLeft, Vector2 size, uint topColor, uint bottomColor, float cornerRadius, int sortingOrder = CanvasSortingOrder)
+        {
             if (!EnsureReady()) return;
             CheryRectBatchGraphic batch = GetRainBatch(sortingOrder);
             if (batch == null) return;
-            batch.AddRect(topLeft, size, ToColor(topColor), ToColor(bottomColor), Color.clear, 0f, 0f);
+            batch.AddRect(topLeft, size, ToColor(topColor), ToColor(bottomColor), Color.clear, 0f, cornerRadius);
         }
 
-        public static void DrawImage(string id, Texture2D texture, Vector2 topLeft, Vector2 size, float alpha, float cornerRadius = 0f, int sortingOrder = CanvasSortingOrder)
+        public static void DrawSoftGradientShadowRect(string id, Vector2 topLeft, Vector2 size, uint topColor, uint bottomColor, float softness, int sortingOrder = CanvasSortingOrder)
+        {
+            if (!EnsureReady()) return;
+            CheryShadowBatchGraphic batch = GetShadowBatch(sortingOrder);
+            if (batch == null) return;
+            batch.AddShadow(topLeft, size, ToColor(topColor), ToColor(bottomColor), softness);
+        }
+
+        public static void DrawImage(string id, Texture texture, Vector2 topLeft, Vector2 size, float alpha, float cornerRadius = 0f, int sortingOrder = CanvasSortingOrder)
+        {
+            DrawImage(id, texture, topLeft, size, alpha, cornerRadius, Vector2.zero, Vector2.one, sortingOrder);
+        }
+
+        public static void DrawImage(string id, Texture texture, Vector2 topLeft, Vector2 size, float alpha, float cornerRadius, Vector2 uvMin, Vector2 uvMax, int sortingOrder = CanvasSortingOrder)
         {
             if (!EnsureReady() || texture == null) return;
             KeyViewerImageGraphic image = GetImage(id, sortingOrder);
             if (image == null) return;
 
             SetRectTransform(image.rectTransform, topLeft, size);
-            image.SetImage(texture, alpha, cornerRadius);
+            image.SetImage(texture, alpha, cornerRadius, uvMin, uvMax);
             Mark(image.gameObject);
         }
 
@@ -190,6 +222,18 @@ namespace CheryTools
             return batch;
         }
 
+        private static CheryShadowBatchGraphic GetShadowBatch(int sortingOrder)
+        {
+            if (_shadowBatches.TryGetValue(sortingOrder, out CheryShadowBatchGraphic batch) && batch != null)
+            {
+                return batch;
+            }
+
+            batch = CreateShadowBatch("KV_Shadow_Batch_" + sortingOrder.ToString(), sortingOrder);
+            _shadowBatches[sortingOrder] = batch;
+            return batch;
+        }
+
         private static CheryRectBatchGraphic CreateRectBatch(string name, int sortingOrder)
         {
             if (!EnsureReady()) return null;
@@ -209,6 +253,25 @@ namespace CheryTools
             return batch;
         }
 
+        private static CheryShadowBatchGraphic CreateShadowBatch(string name, int sortingOrder)
+        {
+            if (!EnsureReady()) return null;
+            RectTransform layerRoot = GetLayerRoot(sortingOrder);
+            if (layerRoot == null) return null;
+
+            GameObject go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(layerRoot, false);
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            CheryShadowBatchGraphic batch = go.AddComponent<CheryShadowBatchGraphic>();
+            batch.raycastTarget = false;
+            return batch;
+        }
+
         private static KeyViewerImageGraphic GetImage(string id, int sortingOrder)
         {
             RectTransform layerRoot = GetLayerRoot(sortingOrder);
@@ -223,7 +286,6 @@ namespace CheryTools
                     image.transform.SetParent(layerRoot, false);
                     _imageSortingOrders[id] = sortingOrder;
                 }
-                image.transform.SetAsLastSibling();
                 return image;
             }
 
@@ -283,9 +345,11 @@ namespace CheryTools
     {
         private const int CornerSegments = 8;
 
-        private Texture2D _texture;
+        private Texture _texture;
         private float _alpha = 1f;
         private float _cornerRadius;
+        private Vector2 _uvMin = Vector2.zero;
+        private Vector2 _uvMax = Vector2.one;
         private readonly List<Vector2> _points = new List<Vector2>(CornerSegments * 4 + 4);
 
         public override Texture mainTexture
@@ -293,12 +357,20 @@ namespace CheryTools
             get { return _texture != null ? _texture : s_WhiteTexture; }
         }
 
-        public void SetImage(Texture2D texture, float alpha, float cornerRadius)
+        public void SetImage(Texture texture, float alpha, float cornerRadius)
+        {
+            SetImage(texture, alpha, cornerRadius, Vector2.zero, Vector2.one);
+        }
+
+        public void SetImage(Texture texture, float alpha, float cornerRadius, Vector2 uvMin, Vector2 uvMax)
         {
             float safeAlpha = Mathf.Clamp01(alpha);
             float safeCornerRadius = Mathf.Max(0f, cornerRadius);
             bool textureChanged = _texture != texture;
-            bool meshChanged = !Mathf.Approximately(_alpha, safeAlpha) || !Mathf.Approximately(_cornerRadius, safeCornerRadius);
+            bool meshChanged = !Mathf.Approximately(_alpha, safeAlpha)
+                || !Mathf.Approximately(_cornerRadius, safeCornerRadius)
+                || _uvMin != uvMin
+                || _uvMax != uvMax;
 
             if (!textureChanged && !meshChanged)
             {
@@ -308,6 +380,8 @@ namespace CheryTools
             _texture = texture;
             _alpha = safeAlpha;
             _cornerRadius = safeCornerRadius;
+            _uvMin = uvMin;
+            _uvMax = uvMax;
             if (meshChanged) SetVerticesDirty();
             if (textureChanged) SetMaterialDirty();
         }
@@ -320,19 +394,19 @@ namespace CheryTools
 
             float radius = Mathf.Min(_cornerRadius, Mathf.Min(r.width, r.height) * 0.5f);
             BuildRoundedRect(r, radius, _points);
-            AddTexturedFill(vh, _points, r, new Color(1f, 1f, 1f, _alpha));
+            AddTexturedFill(vh, _points, r, new Color(1f, 1f, 1f, _alpha), _uvMin, _uvMax);
         }
 
-        private static void AddTexturedFill(VertexHelper vh, List<Vector2> points, Rect r, Color color)
+        private static void AddTexturedFill(VertexHelper vh, List<Vector2> points, Rect r, Color color, Vector2 uvMin, Vector2 uvMax)
         {
             int centerIndex = vh.currentVertCount;
             Vector2 center = r.center;
-            vh.AddVert(center, color, ToUv(center, r));
+            vh.AddVert(center, color, ToUv(center, r, uvMin, uvMax));
 
             for (int i = 0; i < points.Count; i++)
             {
                 Vector2 p = points[i];
-                vh.AddVert(p, color, ToUv(p, r));
+                vh.AddVert(p, color, ToUv(p, r, uvMin, uvMax));
             }
 
             for (int i = 0; i < points.Count; i++)
@@ -342,11 +416,11 @@ namespace CheryTools
             }
         }
 
-        private static Vector2 ToUv(Vector2 point, Rect r)
+        private static Vector2 ToUv(Vector2 point, Rect r, Vector2 uvMin, Vector2 uvMax)
         {
             float u = r.width <= 0f ? 0f : Mathf.InverseLerp(r.xMin, r.xMax, point.x);
             float v = r.height <= 0f ? 0f : Mathf.InverseLerp(r.yMin, r.yMax, point.y);
-            return new Vector2(u, v);
+            return new Vector2(Mathf.Lerp(uvMin.x, uvMax.x, u), Mathf.Lerp(uvMin.y, uvMax.y, v));
         }
 
         private static void BuildRoundedRect(Rect r, float radius, List<Vector2> points)
@@ -392,6 +466,8 @@ namespace CheryTools
             public Color BorderColor;
             public float BorderThickness;
             public float CornerRadius;
+            public bool IsSoftShadow;
+            public float Softness;
         }
 
         private readonly List<RectCommand> _commands = new List<RectCommand>(64);
@@ -417,7 +493,27 @@ namespace CheryTools
                 BottomColor = bottomColor,
                 BorderColor = borderColor,
                 BorderThickness = Mathf.Max(0f, borderThickness),
-                CornerRadius = Mathf.Max(0f, cornerRadius)
+                CornerRadius = Mathf.Max(0f, cornerRadius),
+                IsSoftShadow = false,
+                Softness = 0f
+            });
+        }
+
+        public void AddSoftShadowRect(Vector2 topLeft, Vector2 size, Color topColor, Color bottomColor, float softness)
+        {
+            if (size.x <= 0f || size.y <= 0f) return;
+            if (topColor.a <= 0f && bottomColor.a <= 0f) return;
+            _commands.Add(new RectCommand
+            {
+                TopLeft = topLeft,
+                Size = size,
+                TopColor = topColor,
+                BottomColor = bottomColor,
+                BorderColor = Color.clear,
+                BorderThickness = 0f,
+                CornerRadius = 0f,
+                IsSoftShadow = true,
+                Softness = Mathf.Max(0f, softness)
             });
         }
 
@@ -469,6 +565,8 @@ namespace CheryTools
                     hash = hash * 31 + cmd.BorderColor.GetHashCode();
                     hash = hash * 31 + cmd.BorderThickness.GetHashCode();
                     hash = hash * 31 + cmd.CornerRadius.GetHashCode();
+                    hash = hash * 31 + cmd.IsSoftShadow.GetHashCode();
+                    hash = hash * 31 + cmd.Softness.GetHashCode();
                 }
                 return hash;
             }
@@ -489,6 +587,12 @@ namespace CheryTools
         {
             Rect r = ToLocalRect(cmd.TopLeft, cmd.Size);
             if (r.width <= 0f || r.height <= 0f) return;
+
+            if (cmd.IsSoftShadow)
+            {
+                AddSoftShadowFill(vh, r, cmd.TopColor, cmd.BottomColor, cmd.Softness);
+                return;
+            }
 
             float radius = Mathf.Min(cmd.CornerRadius, Mathf.Min(r.width, r.height) * 0.5f);
             if (radius <= 0.01f)
@@ -527,6 +631,112 @@ namespace CheryTools
             float left = Mathf.Round(topLeft.x) - Screen.width * 0.5f;
             float top = Screen.height * 0.5f - Mathf.Round(topLeft.y);
             return new Rect(left, top - height, width, height);
+        }
+
+        private static void AddSoftShadowFill(VertexHelper vh, Rect r, Color topColor, Color bottomColor, float softness)
+        {
+            if (softness <= 0.01f)
+            {
+                AddRectFill(vh, r, topColor, bottomColor);
+                return;
+            }
+
+            float blur = Mathf.Max(1f, softness);
+            Color clearTop = WithAlpha(topColor, 0f);
+            Color clearBottom = WithAlpha(bottomColor, 0f);
+
+            AddRectFill(vh, r, topColor, bottomColor);
+
+            AddGradientQuad(
+                vh,
+                new Vector2(r.xMin - blur, r.yMax),
+                new Vector2(r.xMin, r.yMax),
+                new Vector2(r.xMin, r.yMin),
+                new Vector2(r.xMin - blur, r.yMin),
+                clearTop,
+                topColor,
+                bottomColor,
+                clearBottom);
+            AddGradientQuad(
+                vh,
+                new Vector2(r.xMax, r.yMax),
+                new Vector2(r.xMax + blur, r.yMax),
+                new Vector2(r.xMax + blur, r.yMin),
+                new Vector2(r.xMax, r.yMin),
+                topColor,
+                clearTop,
+                clearBottom,
+                bottomColor);
+            AddGradientQuad(
+                vh,
+                new Vector2(r.xMin, r.yMax + blur),
+                new Vector2(r.xMax, r.yMax + blur),
+                new Vector2(r.xMax, r.yMax),
+                new Vector2(r.xMin, r.yMax),
+                clearTop,
+                clearTop,
+                topColor,
+                topColor);
+            AddGradientQuad(
+                vh,
+                new Vector2(r.xMin, r.yMin),
+                new Vector2(r.xMax, r.yMin),
+                new Vector2(r.xMax, r.yMin - blur),
+                new Vector2(r.xMin, r.yMin - blur),
+                bottomColor,
+                bottomColor,
+                clearBottom,
+                clearBottom);
+
+            AddCornerShadow(vh, new Vector2(r.xMin, r.yMax), blur, 90f, 180f, topColor);
+            AddCornerShadow(vh, new Vector2(r.xMax, r.yMax), blur, 0f, 90f, topColor);
+            AddCornerShadow(vh, new Vector2(r.xMax, r.yMin), blur, -90f, 0f, bottomColor);
+            AddCornerShadow(vh, new Vector2(r.xMin, r.yMin), blur, -180f, -90f, bottomColor);
+        }
+
+        private static void AddIndexedQuad(VertexHelper vh, int topLeft, int topRight, int bottomRight, int bottomLeft)
+        {
+            vh.AddTriangle(topLeft, topRight, bottomRight);
+            vh.AddTriangle(topLeft, bottomRight, bottomLeft);
+        }
+
+        private static Color WithAlpha(Color color, float alpha)
+        {
+            color.a *= Mathf.Clamp01(alpha);
+            return color;
+        }
+
+        private static void AddGradientQuad(VertexHelper vh, Vector2 topLeft, Vector2 topRight, Vector2 bottomRight, Vector2 bottomLeft, Color colorTopLeft, Color colorTopRight, Color colorBottomRight, Color colorBottomLeft)
+        {
+            int start = vh.currentVertCount;
+            vh.AddVert(topLeft, colorTopLeft, Vector2.zero);
+            vh.AddVert(topRight, colorTopRight, Vector2.zero);
+            vh.AddVert(bottomRight, colorBottomRight, Vector2.zero);
+            vh.AddVert(bottomLeft, colorBottomLeft, Vector2.zero);
+            vh.AddTriangle(start, start + 1, start + 2);
+            vh.AddTriangle(start, start + 2, start + 3);
+        }
+
+        private static void AddCornerShadow(VertexHelper vh, Vector2 center, float radius, float startDeg, float endDeg, Color innerColor)
+        {
+            const int Segments = 10;
+            Color outerColor = WithAlpha(innerColor, 0f);
+            int centerIndex = vh.currentVertCount;
+            vh.AddVert(center, innerColor, Vector2.zero);
+
+            for (int i = 0; i <= Segments; i++)
+            {
+                float t = i / (float)Segments;
+                float deg = Mathf.Lerp(startDeg, endDeg, t);
+                float rad = deg * Mathf.Deg2Rad;
+                Vector2 point = new Vector2(center.x + Mathf.Cos(rad) * radius, center.y + Mathf.Sin(rad) * radius);
+                vh.AddVert(point, outerColor, Vector2.zero);
+            }
+
+            for (int i = 0; i < Segments; i++)
+            {
+                vh.AddTriangle(centerIndex, centerIndex + i + 1, centerIndex + i + 2);
+            }
         }
 
         private static void AddRectFill(VertexHelper vh, Rect r, Color topColor, Color bottomColor)
@@ -630,6 +840,226 @@ namespace CheryTools
                 float rad = deg * Mathf.Deg2Rad;
                 points.Add(new Vector2(center.x + Mathf.Cos(rad) * radius, center.y + Mathf.Sin(rad) * radius));
             }
+        }
+    }
+
+    internal class CheryShadowBatchGraphic : MaskableGraphic
+    {
+        private const int TextureSize = 96;
+        private const int TextureBorder = 32;
+        private const float TextureSigma = 14f;
+
+        private struct ShadowCommand
+        {
+            public Vector2 TopLeft;
+            public Vector2 Size;
+            public Color TopColor;
+            public Color BottomColor;
+            public float Softness;
+        }
+
+        private static Texture2D _shadowTexture;
+        private readonly List<ShadowCommand> _commands = new List<ShadowCommand>(64);
+        private int _lastCommandHash;
+        private int _lastCommandCount = -1;
+        private bool _lastHadCommands;
+
+        public override Texture mainTexture
+        {
+            get { return EnsureShadowTexture(); }
+        }
+
+        public void BeginFrame()
+        {
+            _commands.Clear();
+        }
+
+        public void AddShadow(Vector2 topLeft, Vector2 size, Color topColor, Color bottomColor, float softness)
+        {
+            if (size.x <= 0f || size.y <= 0f) return;
+            if (softness <= 0.01f) return;
+            if (topColor.a <= 0f && bottomColor.a <= 0f) return;
+
+            _commands.Add(new ShadowCommand
+            {
+                TopLeft = topLeft,
+                Size = size,
+                TopColor = topColor,
+                BottomColor = bottomColor,
+                Softness = Mathf.Max(1f, softness)
+            });
+        }
+
+        public void EndFrame()
+        {
+            bool hasCommands = _commands.Count > 0;
+            bool activeChanged = gameObject.activeSelf != hasCommands;
+            if (gameObject.activeSelf != hasCommands)
+            {
+                gameObject.SetActive(hasCommands);
+            }
+
+            if (!hasCommands)
+            {
+                _lastHadCommands = false;
+                _lastCommandCount = 0;
+                _lastCommandHash = 0;
+                return;
+            }
+
+            int commandHash = CalculateCommandHash();
+            bool commandsChanged = activeChanged
+                || !_lastHadCommands
+                || _lastCommandCount != _commands.Count
+                || _lastCommandHash != commandHash;
+            if (commandsChanged)
+            {
+                _lastHadCommands = true;
+                _lastCommandCount = _commands.Count;
+                _lastCommandHash = commandHash;
+                SetVerticesDirty();
+                SetMaterialDirty();
+            }
+        }
+
+        private int CalculateCommandHash()
+        {
+            unchecked
+            {
+                int hash = 17;
+                for (int i = 0; i < _commands.Count; i++)
+                {
+                    ShadowCommand cmd = _commands[i];
+                    hash = hash * 31 + cmd.TopLeft.x.GetHashCode();
+                    hash = hash * 31 + cmd.TopLeft.y.GetHashCode();
+                    hash = hash * 31 + cmd.Size.x.GetHashCode();
+                    hash = hash * 31 + cmd.Size.y.GetHashCode();
+                    hash = hash * 31 + cmd.TopColor.GetHashCode();
+                    hash = hash * 31 + cmd.BottomColor.GetHashCode();
+                    hash = hash * 31 + cmd.Softness.GetHashCode();
+                }
+                return hash;
+            }
+        }
+
+        protected override void OnPopulateMesh(VertexHelper vh)
+        {
+            vh.Clear();
+            if (_commands.Count == 0) return;
+
+            for (int i = 0; i < _commands.Count; i++)
+            {
+                AddCommand(vh, _commands[i]);
+            }
+        }
+
+        private void AddCommand(VertexHelper vh, ShadowCommand cmd)
+        {
+            Rect inner = ToLocalRect(cmd.TopLeft, cmd.Size);
+            if (inner.width <= 0f || inner.height <= 0f) return;
+
+            float border = Mathf.Max(1f, cmd.Softness);
+            float uvBorder = TextureBorder / (float)TextureSize;
+
+            float[] xs = new float[] { inner.xMin - border, inner.xMin, inner.xMax, inner.xMax + border };
+            float[] ys = new float[] { inner.yMin - border, inner.yMin, inner.yMax, inner.yMax + border };
+            float[] us = new float[] { 0f, uvBorder, 1f - uvBorder, 1f };
+            float[] vs = new float[] { 0f, uvBorder, 1f - uvBorder, 1f };
+
+            for (int y = 0; y < 3; y++)
+            {
+                for (int x = 0; x < 3; x++)
+                {
+                    Vector2 bottomLeft = new Vector2(xs[x], ys[y]);
+                    Vector2 bottomRight = new Vector2(xs[x + 1], ys[y]);
+                    Vector2 topRight = new Vector2(xs[x + 1], ys[y + 1]);
+                    Vector2 topLeft = new Vector2(xs[x], ys[y + 1]);
+
+                    Vector2 uvBottomLeft = new Vector2(us[x], vs[y]);
+                    Vector2 uvBottomRight = new Vector2(us[x + 1], vs[y]);
+                    Vector2 uvTopRight = new Vector2(us[x + 1], vs[y + 1]);
+                    Vector2 uvTopLeft = new Vector2(us[x], vs[y + 1]);
+
+                    Color colorBottomLeft = EvaluateFillColor(Mathf.Clamp(bottomLeft.y, inner.yMin, inner.yMax), inner, cmd.TopColor, cmd.BottomColor);
+                    Color colorBottomRight = EvaluateFillColor(Mathf.Clamp(bottomRight.y, inner.yMin, inner.yMax), inner, cmd.TopColor, cmd.BottomColor);
+                    Color colorTopRight = EvaluateFillColor(Mathf.Clamp(topRight.y, inner.yMin, inner.yMax), inner, cmd.TopColor, cmd.BottomColor);
+                    Color colorTopLeft = EvaluateFillColor(Mathf.Clamp(topLeft.y, inner.yMin, inner.yMax), inner, cmd.TopColor, cmd.BottomColor);
+
+                    AddTexturedQuad(vh, topLeft, topRight, bottomRight, bottomLeft, uvTopLeft, uvTopRight, uvBottomRight, uvBottomLeft, colorTopLeft, colorTopRight, colorBottomRight, colorBottomLeft);
+                }
+            }
+        }
+
+        private static void AddTexturedQuad(VertexHelper vh, Vector2 topLeft, Vector2 topRight, Vector2 bottomRight, Vector2 bottomLeft, Vector2 uvTopLeft, Vector2 uvTopRight, Vector2 uvBottomRight, Vector2 uvBottomLeft, Color colorTopLeft, Color colorTopRight, Color colorBottomRight, Color colorBottomLeft)
+        {
+            int start = vh.currentVertCount;
+            vh.AddVert(topLeft, colorTopLeft, uvTopLeft);
+            vh.AddVert(topRight, colorTopRight, uvTopRight);
+            vh.AddVert(bottomRight, colorBottomRight, uvBottomRight);
+            vh.AddVert(bottomLeft, colorBottomLeft, uvBottomLeft);
+            vh.AddTriangle(start, start + 1, start + 2);
+            vh.AddTriangle(start, start + 2, start + 3);
+        }
+
+        private static Rect ToLocalRect(Vector2 topLeft, Vector2 size)
+        {
+            float width = Mathf.Max(1f, size.x);
+            float height = Mathf.Max(1f, size.y);
+            float left = Mathf.Round(topLeft.x) - Screen.width * 0.5f;
+            float top = Screen.height * 0.5f - Mathf.Round(topLeft.y);
+            return new Rect(left, top - height, width, height);
+        }
+
+        private static Color EvaluateFillColor(float y, Rect r, Color topColor, Color bottomColor)
+        {
+            float t = r.height <= 0f ? 1f : Mathf.InverseLerp(r.yMin, r.yMax, y);
+            return Color.Lerp(bottomColor, topColor, t);
+        }
+
+        private static Texture2D EnsureShadowTexture()
+        {
+            if (_shadowTexture != null) return _shadowTexture;
+
+            _shadowTexture = new Texture2D(TextureSize, TextureSize, TextureFormat.RGBA32, false);
+            _shadowTexture.name = "CheryTools_KeyRain_GaussianShadow";
+            _shadowTexture.wrapMode = TextureWrapMode.Clamp;
+            _shadowTexture.filterMode = FilterMode.Bilinear;
+            UnityEngine.Object.DontDestroyOnLoad(_shadowTexture);
+
+            Color[] pixels = new Color[TextureSize * TextureSize];
+            for (int y = 0; y < TextureSize; y++)
+            {
+                for (int x = 0; x < TextureSize; x++)
+                {
+                    float alpha = GaussianBoxCoverage(x + 0.5f, TextureBorder, TextureSize - TextureBorder, TextureSigma)
+                        * GaussianBoxCoverage(y + 0.5f, TextureBorder, TextureSize - TextureBorder, TextureSigma);
+                    pixels[y * TextureSize + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(alpha));
+                }
+            }
+            _shadowTexture.SetPixels(pixels);
+            _shadowTexture.Apply(false, true);
+            return _shadowTexture;
+        }
+
+        private static float GaussianBoxCoverage(float point, float min, float max, float sigma)
+        {
+            float left = (point - min) / sigma;
+            float right = (point - max) / sigma;
+            return Mathf.Clamp01(NormalCdf(left) - NormalCdf(right));
+        }
+
+        private static float NormalCdf(float x)
+        {
+            return 0.5f * (1f + ErfApprox(x * 0.70710678118f));
+        }
+
+        private static float ErfApprox(float x)
+        {
+            float sign = x < 0f ? -1f : 1f;
+            x = Mathf.Abs(x);
+            float t = 1f / (1f + 0.3275911f * x);
+            float y = 1f - (((((1.061405429f * t - 1.453152027f) * t) + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t * Mathf.Exp(-x * x);
+            return sign * y;
         }
     }
 

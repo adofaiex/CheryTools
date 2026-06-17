@@ -19,6 +19,7 @@ namespace CheryTools
                 var rRenderer = controller.planetRed.planetRenderer;
                 rRenderer.EnableCustomColor();
                 rRenderer.SetPlanetColor(FloatArrayToColor(Main.Settings.RedPlanetColor));
+                ApplyRingColor(rRenderer, Main.Settings.RedRingColor);
                 rRenderer.SetTailColor(FloatArrayToColor(Main.Settings.RedTailColor));
             }
 
@@ -28,6 +29,7 @@ namespace CheryTools
                 var bRenderer = controller.planetBlue.planetRenderer;
                 bRenderer.EnableCustomColor();
                 bRenderer.SetPlanetColor(FloatArrayToColor(Main.Settings.BluePlanetColor));
+                ApplyRingColor(bRenderer, Main.Settings.BlueRingColor);
                 bRenderer.SetTailColor(FloatArrayToColor(Main.Settings.BlueTailColor));
             }
 
@@ -37,6 +39,7 @@ namespace CheryTools
                 var gRenderer = controller.planetGreen.planetRenderer;
                 gRenderer.EnableCustomColor();
                 gRenderer.SetPlanetColor(FloatArrayToColor(Main.Settings.GreenPlanetColor));
+                ApplyRingColor(gRenderer, Main.Settings.GreenRingColor);
                 gRenderer.SetTailColor(FloatArrayToColor(Main.Settings.GreenTailColor));
             }
         }
@@ -60,6 +63,12 @@ namespace CheryTools
         {
             if (arr == null || arr.Length < 4) return Color.white;
             return new Color(arr[0], arr[1], arr[2], arr[3]);
+        }
+
+        private static void ApplyRingColor(PlanetRenderer renderer, float[] color)
+        {
+            if (renderer == null || renderer.ringComp == null) return;
+            renderer.ringComp.color = FloatArrayToColor(color);
         }
     }
 
