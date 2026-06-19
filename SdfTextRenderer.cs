@@ -65,6 +65,11 @@ namespace CheryTools
             public float ScaleY;
             public int Alignment;
             public Vector4 Color;
+            public bool UseVertexGradient;
+            public Vector4 ColorTopLeft;
+            public Vector4 ColorTopRight;
+            public Vector4 ColorBottomRight;
+            public Vector4 ColorBottomLeft;
             public bool OutlineEnabled;
             public Vector4 OutlineColor;
             public float OutlineThickness;
@@ -196,7 +201,7 @@ namespace CheryTools
             };
         }
 
-        public static TextBounds DrawScreenText(string id, string text, string fontPath, float fontSize, Vector2 topLeft, Vector2 size, int alignment, Vector4 color, bool outlineEnabled, Vector4 outlineColor, float outlineThickness, int sortingOrder = CanvasSortingOrder, bool shadowEnabled = false, Vector4 shadowColor = default(Vector4), Vector2 shadowOffset = default(Vector2), float shadowSoftness = 0f)
+        public static TextBounds DrawScreenText(string id, string text, string fontPath, float fontSize, Vector2 topLeft, Vector2 size, int alignment, Vector4 color, bool outlineEnabled, Vector4 outlineColor, float outlineThickness, int sortingOrder = CanvasSortingOrder, bool shadowEnabled = false, Vector4 shadowColor = default(Vector4), Vector2 shadowOffset = default(Vector2), float shadowSoftness = 0f, bool useVertexGradient = false, Vector4 colorTopLeft = default(Vector4), Vector4 colorTopRight = default(Vector4), Vector4 colorBottomRight = default(Vector4), Vector4 colorBottomLeft = default(Vector4))
         {
             Vector2 safeSize = new Vector2(Math.Max(1f, size.x), Math.Max(1f, size.y));
             Vector2 pos = new Vector2(RoundPixel(topLeft.x), RoundPixel(topLeft.y));
@@ -209,7 +214,7 @@ namespace CheryTools
                 materialShadowOffset = shadowOffset * shadowScale;
                 materialShadowSoftness = Mathf.Max(0f, shadowSoftness) * shadowScale;
             }
-            DrawText(id, text, fontPath, fontSize, safeSize.x, safeSize.y, pos.x, pos.y, 0f, 0f, 1f, 1f, alignment, color, outlineEnabled, outlineColor, outlineThickness, 0f, 0f, 0f, sortingOrder, materialShadowEnabled, shadowColor, materialShadowOffset, materialShadowSoftness);
+            DrawText(id, text, fontPath, fontSize, safeSize.x, safeSize.y, pos.x, pos.y, 0f, 0f, 1f, 1f, alignment, color, outlineEnabled, outlineColor, outlineThickness, 0f, 0f, 0f, sortingOrder, materialShadowEnabled, shadowColor, materialShadowOffset, materialShadowSoftness, useVertexGradient, colorTopLeft, colorTopRight, colorBottomRight, colorBottomLeft);
             return new TextBounds
             {
                 Left = pos.x,
@@ -308,11 +313,16 @@ namespace CheryTools
             bool shadowEnabled = false,
             Vector4 shadowColor = default(Vector4),
             Vector2 shadowOffset = default(Vector2),
-            float shadowSoftness = 0f)
+            float shadowSoftness = 0f,
+            bool useVertexGradient = false,
+            Vector4 colorTopLeft = default(Vector4),
+            Vector4 colorTopRight = default(Vector4),
+            Vector4 colorBottomRight = default(Vector4),
+            Vector4 colorBottomLeft = default(Vector4))
         {
             float outlinePixels = ClampOutlineThickness(outlineThickness);
 
-            DrawTextObject(id, text, fontPath, fontSize, width, height, x, y, pivotX, pivotY, scaleX, scaleY, alignment, color, outlineEnabled, outlineColor, outlinePixels, characterSpacing, lineSpacing, outlineSoftness, sortingOrder, shadowEnabled, shadowColor, shadowOffset, shadowSoftness);
+            DrawTextObject(id, text, fontPath, fontSize, width, height, x, y, pivotX, pivotY, scaleX, scaleY, alignment, color, outlineEnabled, outlineColor, outlinePixels, characterSpacing, lineSpacing, outlineSoftness, sortingOrder, shadowEnabled, shadowColor, shadowOffset, shadowSoftness, useVertexGradient, colorTopLeft, colorTopRight, colorBottomRight, colorBottomLeft);
         }
 
         private static void DrawTextObject(
@@ -340,7 +350,12 @@ namespace CheryTools
             bool shadowEnabled,
             Vector4 shadowColor,
             Vector2 shadowOffset,
-            float shadowSoftness)
+            float shadowSoftness,
+            bool useVertexGradient,
+            Vector4 colorTopLeft,
+            Vector4 colorTopRight,
+            Vector4 colorBottomRight,
+            Vector4 colorBottomLeft)
         {
             if (!EnsureReady()) return;
             TMP_FontAsset fontAsset = GetFontAsset(fontPath);
@@ -358,6 +373,11 @@ namespace CheryTools
             float safeFontSize = Math.Max(1f, fontSize);
             TextAlignmentOptions tmpAlignment = ToTmpAlignment(alignment);
             Color tmpColor = ToColor(color);
+            VertexGradient vertexGradient = new VertexGradient(
+                ToColor(useVertexGradient ? colorTopLeft : color),
+                ToColor(useVertexGradient ? colorTopRight : color),
+                ToColor(useVertexGradient ? colorBottomLeft : color),
+                ToColor(useVertexGradient ? colorBottomRight : color));
             Vector2 roundedPosition = new Vector2(RoundPixel(x), -RoundPixel(y));
             Vector2 safeSize = new Vector2(Math.Max(1f, width), Math.Max(1f, height));
             Vector2 safePivot = new Vector2(pivotX, 1f - pivotY);
@@ -375,7 +395,12 @@ namespace CheryTools
                 || !Approximately(lastState.CharacterSpacing, characterSpacing)
                 || !Approximately(lastState.LineSpacing, lineSpacing)
                 || lastState.Alignment != alignment
-                || !Approximately(lastState.Color, color);
+                || !Approximately(lastState.Color, color)
+                || lastState.UseVertexGradient != useVertexGradient
+                || !Approximately(lastState.ColorTopLeft, colorTopLeft)
+                || !Approximately(lastState.ColorTopRight, colorTopRight)
+                || !Approximately(lastState.ColorBottomRight, colorBottomRight)
+                || !Approximately(lastState.ColorBottomLeft, colorBottomLeft);
             bool outlineChanged = !hasState
                 || lastState.Font != fontAsset
                 || lastState.OutlineEnabled != outlineEnabled
@@ -409,6 +434,8 @@ namespace CheryTools
                 tmp.lineSpacing = lineSpacing;
                 tmp.alignment = tmpAlignment;
                 tmp.color = tmpColor;
+                tmp.enableVertexGradient = useVertexGradient;
+                tmp.colorGradient = vertexGradient;
                 tmp.raycastTarget = false;
             }
             if (outlineChanged)
@@ -442,6 +469,11 @@ namespace CheryTools
                 ScaleY = safeScale.y,
                 Alignment = alignment,
                 Color = color,
+                UseVertexGradient = useVertexGradient,
+                ColorTopLeft = colorTopLeft,
+                ColorTopRight = colorTopRight,
+                ColorBottomRight = colorBottomRight,
+                ColorBottomLeft = colorBottomLeft,
                 OutlineEnabled = outlineEnabled,
                 OutlineColor = outlineColor,
                 OutlineThickness = outlineThickness,

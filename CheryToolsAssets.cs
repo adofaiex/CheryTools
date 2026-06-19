@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Xml.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -48,12 +49,16 @@ namespace CheryTools
         public float KeyRainSpeed = 800.0f;
         public float KeyRainMaxHeight = 400.0f;
         public int KeyRainFadeMode = 1;
+        public float KeyRainFadeHeight = 1.0f;
+        public float KeyRainFadePower = 1.0f;
         public float KeyRainWidthRatio1 = 0.8f;
         public float KeyRainWidthRatio2 = 0.4f;
         public float KeyRainYOffsetRow1 = 0.0f;
         public float KeyRainYOffsetRow2 = 0.0f;
         public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
         public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
+        public float KeyRainGradientHeight = 1.0f;
+        public float KeyRainGradientPower = 1.0f;
         public List<KVConfiguration> KeyViewerConfigurations = new List<KVConfiguration>();
     }
 
@@ -193,13 +198,20 @@ namespace CheryTools
             }
 
             string assetRelative = ToArchiveRelativeAssetPath(resolved);
-            if (!string.IsNullOrEmpty(assetRelative)) return assetRelative;
+            if (!string.IsNullOrEmpty(assetRelative))
+            {
+                string canonicalAsset = FindExistingAssetByContent(resolved, category);
+                return !string.IsNullOrEmpty(canonicalAsset) ? canonicalAsset : assetRelative;
+            }
 
             string safeCategory = SanitizePathSegment(category);
             if (string.IsNullOrEmpty(safeCategory)) safeCategory = "Misc";
 
             string targetDir = Path.Combine(AssetsRoot, safeCategory);
             Directory.CreateDirectory(targetDir);
+
+            string existingAsset = FindExistingAssetByContent(resolved, safeCategory);
+            if (!string.IsNullOrEmpty(existingAsset)) return existingAsset;
 
             string fileName = SanitizeFileName(Path.GetFileName(resolved));
             if (string.IsNullOrEmpty(fileName)) fileName = "asset";
@@ -267,6 +279,7 @@ namespace CheryTools
             Directory.CreateDirectory(AssetsRoot);
             Settings exportSettings = CloneSettings(settings);
             RewriteAssetPathsForExport(exportSettings);
+            List<string> assetPaths = CollectSettingsAssetPaths(exportSettings);
 
             if (File.Exists(outputPath)) File.Delete(outputPath);
 
@@ -280,15 +293,12 @@ namespace CheryTools
                     serializer.Serialize(entryStream, exportSettings);
                 }
 
-                if (Directory.Exists(AssetsRoot))
+                HashSet<string> addedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (assetPaths != null)
                 {
-                    foreach (string file in Directory.GetFiles(AssetsRoot, "*", SearchOption.AllDirectories))
+                    foreach (string assetPath in assetPaths)
                     {
-                        string relative = GetRelativePathUnderRoot(file, AssetsRoot);
-                        if (string.IsNullOrEmpty(relative)) continue;
-
-                        string entryName = ArchiveAssetsPrefix + "/" + relative.Replace('\\', '/');
-                        archive.CreateEntryFromFile(file, entryName, System.IO.Compression.CompressionLevel.Optimal);
+                        AddPackageAsset(archive, assetPath, addedEntries);
                     }
                 }
             }
@@ -393,12 +403,16 @@ namespace CheryTools
             package.KeyRainSpeed = settings.KeyRainSpeed;
             package.KeyRainMaxHeight = settings.KeyRainMaxHeight;
             package.KeyRainFadeMode = settings.KeyRainFadeMode;
+            package.KeyRainFadeHeight = settings.KeyRainFadeHeight;
+            package.KeyRainFadePower = settings.KeyRainFadePower;
             package.KeyRainWidthRatio1 = settings.KeyRainWidthRatio1;
             package.KeyRainWidthRatio2 = settings.KeyRainWidthRatio2;
             package.KeyRainYOffsetRow1 = settings.KeyRainYOffsetRow1;
             package.KeyRainYOffsetRow2 = settings.KeyRainYOffsetRow2;
             package.KeyRainColorRow1 = CloneByXml(settings.KeyRainColorRow1);
             package.KeyRainColorRow2 = CloneByXml(settings.KeyRainColorRow2);
+            package.KeyRainGradientHeight = settings.KeyRainGradientHeight;
+            package.KeyRainGradientPower = settings.KeyRainGradientPower;
             package.KeyViewerConfigurations = CloneByXml(settings.KeyViewerConfigurations) ?? new List<KVConfiguration>();
             return package;
         }
@@ -512,6 +526,66 @@ namespace CheryTools
                 }
             }
             return paths;
+        }
+
+        private static List<string> CollectSettingsAssetPaths(Settings settings)
+        {
+            List<string> paths = new List<string>();
+            if (settings == null) return paths;
+
+            AddAssetPath(paths, settings.KeyViewerFontPath);
+            if (settings.KeyViewerConfigurations != null)
+            {
+                foreach (KVConfiguration config in settings.KeyViewerConfigurations)
+                {
+                    if (config == null) continue;
+                    AddAssetPath(paths, config.FontPath);
+                    AddNodeAssetPaths(paths, config.Nodes);
+                }
+            }
+
+            if (settings.OverlayerTexts != null)
+            {
+                foreach (OverlayerText text in settings.OverlayerTexts)
+                {
+                    if (text == null) continue;
+                    AddAssetPath(paths, text.FontPath);
+                }
+            }
+
+            if (settings.OverlayerImages != null)
+            {
+                foreach (OverlayerImage image in settings.OverlayerImages)
+                {
+                    if (image == null) continue;
+                    AddAssetPath(paths, image.ImagePath);
+                }
+            }
+
+            if (settings.OverlayerVideos != null)
+            {
+                foreach (OverlayerVideo video in settings.OverlayerVideos)
+                {
+                    if (video == null) continue;
+                    AddAssetPath(paths, video.VideoPath);
+                }
+            }
+
+            return paths;
+        }
+
+        private static void AddNodeAssetPaths(List<string> paths, List<KVNode> nodes)
+        {
+            if (paths == null || nodes == null) return;
+
+            foreach (KVNode node in nodes)
+            {
+                if (node == null) continue;
+                AddAssetPath(paths, node.KeyFontPath);
+                AddAssetPath(paths, node.CountFontPath);
+                AddAssetPath(paths, node.ImagePath);
+                AddAssetPath(paths, node.VideoPath);
+            }
         }
 
         private static void StampExportScreenSize(KeyViewerPackage package)
@@ -922,12 +996,16 @@ namespace CheryTools
             settings.KeyRainSpeed = package.KeyRainSpeed;
             settings.KeyRainMaxHeight = package.KeyRainMaxHeight;
             settings.KeyRainFadeMode = package.KeyRainFadeMode;
+            settings.KeyRainFadeHeight = package.KeyRainFadeHeight;
+            settings.KeyRainFadePower = package.KeyRainFadePower;
             settings.KeyRainWidthRatio1 = package.KeyRainWidthRatio1;
             settings.KeyRainWidthRatio2 = package.KeyRainWidthRatio2;
             settings.KeyRainYOffsetRow1 = package.KeyRainYOffsetRow1;
             settings.KeyRainYOffsetRow2 = package.KeyRainYOffsetRow2;
             settings.KeyRainColorRow1 = package.KeyRainColorRow1;
             settings.KeyRainColorRow2 = package.KeyRainColorRow2;
+            settings.KeyRainGradientHeight = package.KeyRainGradientHeight;
+            settings.KeyRainGradientPower = package.KeyRainGradientPower;
             settings.KeyViewerConfigurations = package.KeyViewerConfigurations ?? new List<KVConfiguration>();
             settings.EnsureKeyViewerConfigurations();
         }
@@ -1107,7 +1185,11 @@ namespace CheryTools
             if (string.IsNullOrEmpty(resolved) || !File.Exists(resolved)) return normalized;
 
             string relative = ToArchiveRelativeAssetPath(resolved);
-            if (!string.IsNullOrEmpty(relative)) return relative;
+            if (!string.IsNullOrEmpty(relative))
+            {
+                string canonicalAsset = FindExistingAssetByContent(resolved, category);
+                return !string.IsNullOrEmpty(canonicalAsset) ? canonicalAsset : relative;
+            }
 
             return ImportExternalAsset(resolved, category);
         }
@@ -1191,6 +1273,74 @@ namespace CheryTools
             }
 
             return Path.Combine(targetDir, baseName + "_" + DateTime.Now.ToString("yyyyMMddHHmmss") + ext);
+        }
+
+        private static string FindExistingAssetByContent(string sourcePath, string category)
+        {
+            if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath)) return null;
+
+            string safeCategory = SanitizePathSegment(category);
+            if (string.IsNullOrEmpty(safeCategory)) safeCategory = "Misc";
+
+            string targetDir = Path.Combine(AssetsRoot, safeCategory);
+            if (!Directory.Exists(targetDir)) return null;
+
+            FileInfo sourceInfo;
+            try
+            {
+                sourceInfo = new FileInfo(sourcePath);
+            }
+            catch
+            {
+                return null;
+            }
+
+            string[] files = Directory.GetFiles(targetDir, "*", SearchOption.AllDirectories);
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+            string sourceHash = null;
+            foreach (string file in files)
+            {
+                try
+                {
+                    FileInfo candidateInfo = new FileInfo(file);
+                    if (!candidateInfo.Exists || candidateInfo.Length != sourceInfo.Length) continue;
+
+                    if (sourceHash == null)
+                    {
+                        sourceHash = ComputeFileHash(sourcePath);
+                        if (string.IsNullOrEmpty(sourceHash)) return null;
+                    }
+
+                    string candidateHash = ComputeFileHash(file);
+                    if (string.Equals(sourceHash, candidateHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return ToArchiveRelativeAssetPath(file) ?? file;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            return null;
+        }
+
+        private static string ComputeFileHash(string path)
+        {
+            try
+            {
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (SHA256 sha = SHA256.Create())
+                {
+                    return Convert.ToBase64String(sha.ComputeHash(stream));
+                }
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string NormalizeInputPath(string path)

@@ -15,9 +15,11 @@ namespace CheryTools
             public float SizeValue = -1.0f;
             public bool HasColorTag;
             public bool HasSizeTag;
+            public int SourceStart;
+            public int SourceLength;
         }
 
-        private static readonly Regex TagRegex = new Regex(@"<(color=#([0-9a-fA-F]{6,8})|/color|size=([^>]+)|/size)>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex TagRegex = new Regex(@"<\s*(/)?\s*(color|size)\s*(?:=\s*([^>]+?))?\s*>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public static List<ParsedSegment> Parse(string input, System.Numerics.Vector4 defaultColor)
         {
@@ -35,33 +37,29 @@ namespace CheryTools
 
             foreach (Match match in matches)
             {
-                if (match.Index > currentIndex)
-                {
-                    segments.Add(new ParsedSegment
-                    {
-                        RenderText = input.Substring(currentIndex, match.Index - currentIndex),
-                        Color = currentColor,
-                        SizeValue = currentSize,
-                        HasColorTag = colorStack.Count > 0,
-                        HasSizeTag = sizeStack.Count > 0
-                    });
-                }
+                AppendTextSegments(segments, input, currentIndex, match.Index - currentIndex, currentColor, currentSize, colorStack.Count > 0, sizeStack.Count > 0);
 
-                string tagFull = match.Value.ToLower();
-                if (tagFull.StartsWith("<color=#"))
+                bool isClosing = match.Groups[1].Success;
+                string tagName = match.Groups[2].Value.ToLowerInvariant();
+                string tagValue = match.Groups[3].Success ? match.Groups[3].Value.Trim().Trim('"', '\'') : string.Empty;
+                if (!isClosing && tagName == "color")
                 {
                     colorStack.Push(currentColor);
-                    currentColor = ParseHexColor(match.Groups[2].Value, defaultColor);
+                    if (tagValue.StartsWith("#", StringComparison.Ordinal))
+                    {
+                        tagValue = tagValue.Substring(1);
+                    }
+                    currentColor = ParseHexColor(tagValue, currentColor);
                 }
-                else if (tagFull == "</color>")
+                else if (isClosing && tagName == "color")
                 {
                     if (colorStack.Count > 0) currentColor = colorStack.Pop();
                     else currentColor = defaultColor;
                 }
-                else if (tagFull.StartsWith("<size="))
+                else if (!isClosing && tagName == "size")
                 {
                     sizeStack.Push(currentSize);
-                    string sizeStr = match.Groups[3].Value.Trim();
+                    string sizeStr = tagValue;
                     if (sizeStr.EndsWith("%"))
                     {
                         if (float.TryParse(sizeStr.Substring(0, sizeStr.Length - 1), NumberStyles.Float, CultureInfo.InvariantCulture, out float percent))
@@ -74,7 +72,7 @@ namespace CheryTools
                         currentSize = absSize; // Positive absolute size
                     }
                 }
-                else if (tagFull == "</size>")
+                else if (isClosing && tagName == "size")
                 {
                     if (sizeStack.Count > 0) currentSize = sizeStack.Pop();
                     else currentSize = -1.0f;
@@ -85,17 +83,53 @@ namespace CheryTools
 
             if (currentIndex < input.Length)
             {
-                segments.Add(new ParsedSegment
-                {
-                    RenderText = input.Substring(currentIndex),
-                    Color = currentColor,
-                    SizeValue = currentSize,
-                    HasColorTag = colorStack.Count > 0,
-                    HasSizeTag = sizeStack.Count > 0
-                });
+                AppendTextSegments(segments, input, currentIndex, input.Length - currentIndex, currentColor, currentSize, colorStack.Count > 0, sizeStack.Count > 0);
             }
 
             return segments;
+        }
+
+        private static void AppendTextSegments(List<ParsedSegment> segments, string input, int start, int length, System.Numerics.Vector4 color, float size, bool hasColorTag, bool hasSizeTag)
+        {
+            if (length <= 0)
+            {
+                return;
+            }
+
+            int end = start + length;
+            int lineStart = start;
+            while (lineStart < end)
+            {
+                int newline = input.IndexOf('\n', lineStart, end - lineStart);
+                bool hasNewline = newline >= 0;
+                int lineEnd = hasNewline ? newline : end;
+                int segmentEnd = hasNewline ? newline + 1 : lineEnd;
+                string lineText = input.Substring(lineStart, lineEnd - lineStart).TrimStart();
+                if (!IsDirectiveOrCommentLine(lineText))
+                {
+                    segments.Add(new ParsedSegment
+                    {
+                        RenderText = input.Substring(lineStart, segmentEnd - lineStart),
+                        Color = color,
+                        SizeValue = size,
+                        HasColorTag = hasColorTag,
+                        HasSizeTag = hasSizeTag,
+                        SourceStart = lineStart,
+                        SourceLength = segmentEnd - lineStart
+                    });
+                }
+                lineStart = segmentEnd;
+            }
+        }
+
+        private static bool IsDirectiveOrCommentLine(string trimmedLine)
+        {
+            return trimmedLine.StartsWith("##", StringComparison.Ordinal)
+                || trimmedLine.StartsWith("#import regex", StringComparison.OrdinalIgnoreCase)
+                || trimmedLine.StartsWith("#enable regex", StringComparison.OrdinalIgnoreCase)
+                || trimmedLine.StartsWith("#regex", StringComparison.OrdinalIgnoreCase)
+                || trimmedLine.StartsWith("#replace", StringComparison.OrdinalIgnoreCase)
+                || trimmedLine.StartsWith("#substitute", StringComparison.OrdinalIgnoreCase);
         }
 
         public static System.Numerics.Vector4 ParseHexColor(string hex, System.Numerics.Vector4 fallback)

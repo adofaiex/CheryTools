@@ -31,6 +31,11 @@ namespace CheryTools
             public Vector2 Size;
             public int Alignment;
             public uint Color;
+            public bool UseGradient;
+            public uint ColorTopLeft;
+            public uint ColorTopRight;
+            public uint ColorBottomRight;
+            public uint ColorBottomLeft;
             public bool OutlineEnabled;
             public uint OutlineColor;
             public float OutlineThickness;
@@ -39,6 +44,25 @@ namespace CheryTools
             public Vector2 ShadowOffset;
             public float ShadowSoftness;
             public int SortingOrder;
+        }
+
+        private struct ColorCorners
+        {
+            public uint TopLeft;
+            public uint TopRight;
+            public uint BottomRight;
+            public uint BottomLeft;
+
+            public static ColorCorners Solid(uint color)
+            {
+                return new ColorCorners
+                {
+                    TopLeft = color,
+                    TopRight = color,
+                    BottomRight = color,
+                    BottomLeft = color
+                };
+            }
         }
 
         private NodeRenderIds GetNodeRenderIds(KVNode node)
@@ -120,6 +144,101 @@ namespace CheryTools
             return (uint)((newA << 24) | (b << 16) | (g << 8) | r);
         }
 
+        private uint LerpColor(uint from, uint to, float t)
+        {
+            t = Mathf.Clamp01(t);
+            byte fr = (byte)(from & 0xFF);
+            byte fg = (byte)((from >> 8) & 0xFF);
+            byte fb = (byte)((from >> 16) & 0xFF);
+            byte fa = (byte)((from >> 24) & 0xFF);
+            byte tr = (byte)(to & 0xFF);
+            byte tg = (byte)((to >> 8) & 0xFF);
+            byte tb = (byte)((to >> 16) & 0xFF);
+            byte ta = (byte)((to >> 24) & 0xFF);
+            byte r = (byte)Mathf.RoundToInt(Mathf.Lerp(fr, tr, t));
+            byte g = (byte)Mathf.RoundToInt(Mathf.Lerp(fg, tg, t));
+            byte b = (byte)Mathf.RoundToInt(Mathf.Lerp(fb, tb, t));
+            byte a = (byte)Mathf.RoundToInt(Mathf.Lerp(fa, ta, t));
+            return (uint)((a << 24) | (b << 16) | (g << 8) | r);
+        }
+
+        private uint MatchAlpha(uint color, uint alphaSource)
+        {
+            byte a = (byte)((color >> 24) & 0xFF);
+            byte b = (byte)((color >> 16) & 0xFF);
+            byte g = (byte)((color >> 8) & 0xFF);
+            byte r = (byte)(color & 0xFF);
+            float sourceAlpha = ((alphaSource >> 24) & 0xFF) / 255f;
+            byte newA = (byte)Mathf.RoundToInt(a * sourceAlpha);
+            return (uint)((newA << 24) | (b << 16) | (g << 8) | r);
+        }
+
+        private ColorCorners BuildAxisGradient(uint baseColor, KVAxisGradient gradient)
+        {
+            if (gradient == null || (!gradient.VerticalEnabled && !gradient.HorizontalEnabled))
+            {
+                return ColorCorners.Solid(baseColor);
+            }
+
+            uint verticalColor = gradient.VerticalEnabled ? Vector4ToColor(gradient.VerticalEndColor) : baseColor;
+            uint horizontalColor = gradient.HorizontalEnabled ? Vector4ToColor(gradient.HorizontalEndColor) : baseColor;
+            uint bottomRight = baseColor;
+            if (gradient.VerticalEnabled && gradient.HorizontalEnabled)
+            {
+                bottomRight = LerpColor(verticalColor, horizontalColor, 0.5f);
+            }
+            else if (gradient.VerticalEnabled)
+            {
+                bottomRight = verticalColor;
+            }
+            else if (gradient.HorizontalEnabled)
+            {
+                bottomRight = horizontalColor;
+            }
+
+            return new ColorCorners
+            {
+                TopLeft = baseColor,
+                TopRight = horizontalColor,
+                BottomRight = bottomRight,
+                BottomLeft = verticalColor
+            };
+        }
+
+        private ColorCorners LerpCorners(ColorCorners from, ColorCorners to, float t)
+        {
+            return new ColorCorners
+            {
+                TopLeft = LerpColor(from.TopLeft, to.TopLeft, t),
+                TopRight = LerpColor(from.TopRight, to.TopRight, t),
+                BottomRight = LerpColor(from.BottomRight, to.BottomRight, t),
+                BottomLeft = LerpColor(from.BottomLeft, to.BottomLeft, t)
+            };
+        }
+
+        private bool IsSolid(ColorCorners colors)
+        {
+            return colors.TopLeft == colors.TopRight
+                && colors.TopLeft == colors.BottomRight
+                && colors.TopLeft == colors.BottomLeft;
+        }
+
+        private float GetKeyPressAnimationProgress(KVConfiguration config, KVNode node, bool pressed)
+        {
+            KeyPressAnimationSettings animationSettings = KeyPressAnimationSettings.Resolve(config, node);
+            if (node == null || !animationSettings.Enabled)
+            {
+                return pressed ? 1f : 0f;
+            }
+
+            float progress = pressed ? 1f : 0f;
+            if (KeyViewerManager.Instance != null && KeyViewerManager.Instance.KeyPressAnimationProgress.TryGetValue(node, out float rawProgress))
+            {
+                progress = rawProgress;
+            }
+            return EasingUtil.EvaluateEasing(progress, animationSettings.Easing);
+        }
+
         private static float Alpha01(uint color)
         {
             return ((color >> 24) & 0xFF) / 255f;
@@ -174,9 +293,16 @@ namespace CheryTools
 
         private void DrawText(string id, string text, string fontPath, float fontSize, Vector2 pos, Vector2 size, int alignment, uint color, bool outlineEnabled, uint outlineColor, float outlineThickness, bool shadowEnabled, uint shadowColor, Vector2 shadowOffset, float shadowSoftness, int sortingOrder)
         {
+            DrawText(id, text, fontPath, fontSize, pos, size, alignment, ColorCorners.Solid(color), outlineEnabled, outlineColor, outlineThickness, shadowEnabled, shadowColor, shadowOffset, shadowSoftness, sortingOrder);
+        }
+
+        private void DrawText(string id, string text, string fontPath, float fontSize, Vector2 pos, Vector2 size, int alignment, ColorCorners colors, bool outlineEnabled, uint outlineColor, float outlineThickness, bool shadowEnabled, uint shadowColor, Vector2 shadowOffset, float shadowSoftness, int sortingOrder)
+        {
             string safeText = text ?? string.Empty;
             string safeFontPath = fontPath ?? string.Empty;
             Vector2 safeSize = new Vector2(Mathf.Max(1f, size.x), Mathf.Max(1f, size.y));
+            bool useGradient = !IsSolid(colors);
+            uint color = colors.TopLeft;
 
             if (_textDrawStates.TryGetValue(id, out TextDrawState state)
                 && state.SortingOrder == sortingOrder
@@ -187,6 +313,11 @@ namespace CheryTools
                 && Approximately(state.Size, safeSize)
                 && state.Alignment == alignment
                 && state.Color == color
+                && state.UseGradient == useGradient
+                && state.ColorTopLeft == colors.TopLeft
+                && state.ColorTopRight == colors.TopRight
+                && state.ColorBottomRight == colors.BottomRight
+                && state.ColorBottomLeft == colors.BottomLeft
                 && state.OutlineEnabled == outlineEnabled
                 && state.OutlineColor == outlineColor
                 && Approximately(state.OutlineThickness, outlineThickness)
@@ -216,7 +347,12 @@ namespace CheryTools
                 shadowEnabled,
                 shadowVector,
                 shadowOffset,
-                shadowSoftness);
+                shadowSoftness,
+                useGradient,
+                ColorU32ToVector4(colors.TopLeft),
+                ColorU32ToVector4(colors.TopRight),
+                ColorU32ToVector4(colors.BottomRight),
+                ColorU32ToVector4(colors.BottomLeft));
 
             if (state == null)
             {
@@ -231,6 +367,11 @@ namespace CheryTools
             state.Size = safeSize;
             state.Alignment = alignment;
             state.Color = color;
+            state.UseGradient = useGradient;
+            state.ColorTopLeft = colors.TopLeft;
+            state.ColorTopRight = colors.TopRight;
+            state.ColorBottomRight = colors.BottomRight;
+            state.ColorBottomLeft = colors.BottomLeft;
             state.OutlineEnabled = outlineEnabled;
             state.OutlineColor = outlineColor;
             state.OutlineThickness = outlineThickness;
@@ -375,6 +516,13 @@ namespace CheryTools
                 uint borderPressed = node.UseCustomColor ? Vector4ToColor(node.ColorBorderPressed) : Vector4ToColor(config.ColorBorderPressed);
                 uint textNormal = node.UseCustomColor ? Vector4ToColor(node.ColorTextNormal) : Vector4ToColor(config.ColorTextNormal);
                 uint textPressed = node.UseCustomColor ? Vector4ToColor(node.ColorTextPressed) : Vector4ToColor(config.ColorTextPressed);
+                bool useNodeGradient = node.UseCustomColor && node.UseCustomColorGradient;
+                KVAxisGradient bgGradientNormal = useNodeGradient ? node.BackgroundGradientNormal : config.BackgroundGradientNormal;
+                KVAxisGradient bgGradientPressed = useNodeGradient ? node.BackgroundGradientPressed : config.BackgroundGradientPressed;
+                KVAxisGradient borderGradientNormal = useNodeGradient ? node.BorderGradientNormal : config.BorderGradientNormal;
+                KVAxisGradient borderGradientPressed = useNodeGradient ? node.BorderGradientPressed : config.BorderGradientPressed;
+                KVAxisGradient textGradientNormal = useNodeGradient ? node.TextGradientNormal : config.TextGradientNormal;
+                KVAxisGradient textGradientPressed = useNodeGradient ? node.TextGradientPressed : config.TextGradientPressed;
 
                 bool keyOutlineEnabled = node.UseCustomOutline ? node.KeyTextOutlineEnabled : config.KeyTextOutlineEnabled;
                 bool countOutlineEnabled = node.UseCustomOutline ? node.CountTextOutlineEnabled : config.CountTextOutlineEnabled;
@@ -408,53 +556,68 @@ namespace CheryTools
                 }
                 bool hideCountText = config.HideCountText || node.HideCountText;
 
-                float finalScale = globalScale * node.Scale;
-                Vector2 pos = new Vector2(center.x + node.PositionX * globalScale, center.y + node.PositionY * globalScale);
-                Vector2 size = new Vector2(node.Width * finalScale, node.Height * finalScale);
                 bool pressed = false;
                 KeyViewerManager.Instance.IsNodePressed.TryGetValue(node, out pressed);
+                KeyPressAnimationSettings animationSettings = KeyPressAnimationSettings.Resolve(config, node);
+                float animationProgress = node.NodeType == 0 ? GetKeyPressAnimationProgress(config, node, pressed) : 0f;
+                float pressScale = node.NodeType == 0 && animationSettings.Enabled
+                    ? Mathf.Lerp(1f, animationSettings.Scale, animationProgress)
+                    : 1f;
+                Vector2 animationOffset = node.NodeType == 0 && animationSettings.Enabled
+                    ? new Vector2(animationSettings.OffsetX, animationSettings.OffsetY) * globalScale * animationProgress
+                    : Vector2.zero;
+                float finalScale = globalScale * node.Scale;
+                float animatedFinalScale = finalScale * pressScale;
+                float animatedGlobalScale = globalScale * pressScale;
+                Vector2 basePos = new Vector2(center.x + node.PositionX * globalScale, center.y + node.PositionY * globalScale);
+                Vector2 baseSize = new Vector2(node.Width * finalScale, node.Height * finalScale);
+                Vector2 size = new Vector2(node.Width * animatedFinalScale, node.Height * animatedFinalScale);
+                Vector2 pos = basePos + (baseSize - size) * 0.5f + animationOffset;
                 NodeRenderIds ids = GetNodeRenderIds(node);
                 if (ids == null) continue;
                 int graphicSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerGraphic);
                 int textSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerText);
-                float cornerRadius = ResolveNodeCornerRadius(node, rounding, globalScale);
+                float cornerRadius = ResolveNodeCornerRadius(node, rounding, globalScale) * pressScale;
 
                 if (node.NodeType == 0)
                 {
-                    uint bgColor = pressed ? bgPressed : bgNormal;
-                    uint borderColor = pressed ? borderPressed : borderNormal;
-                    uint txtColor = pressed ? textPressed : textNormal;
+                    float colorProgress = animationSettings.Enabled && animationSettings.AffectColors ? animationProgress : (pressed ? 1f : 0f);
+                    ColorCorners bgColors = LerpCorners(BuildAxisGradient(bgNormal, bgGradientNormal), BuildAxisGradient(bgPressed, bgGradientPressed), colorProgress);
+                    ColorCorners borderColors = LerpCorners(BuildAxisGradient(borderNormal, borderGradientNormal), BuildAxisGradient(borderPressed, borderGradientPressed), colorProgress);
+                    ColorCorners textColors = LerpCorners(BuildAxisGradient(textNormal, textGradientNormal), BuildAxisGradient(textPressed, textGradientPressed), colorProgress);
                     float bThick = node.BorderThickness >= 0f ? node.BorderThickness : borderThickness;
-                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColor, borderColor, bThick, cornerRadius, graphicSortingOrder);
+                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, bThick, cornerRadius, graphicSortingOrder);
 
                     string labelStr = !string.IsNullOrEmpty(node.CustomText) ? node.CustomText : KeyDisplayNames.GetKeySymbol(node.KeyBind);
 
-                    float keyFontSize = 20.0f * globalScale * node.TextScale;
+                    float keyFontSize = 20.0f * animatedGlobalScale * node.TextScale;
                     string keyFontPath = GetKeyFontPath(config, node);
                     float keyTextHeight = TextBoxHeight(keyFontSize);
                     Vector2 keyPos = new Vector2(
-                        pos.x + (node.TextOffsetX + config.GlobalTextOffsetX) * finalScale,
+                        pos.x + (node.TextOffsetX + config.GlobalTextOffsetX) * animatedFinalScale,
                         hideCountText
-                            ? pos.y + (size.y - keyTextHeight) * 0.5f + (node.TextOffsetY + config.GlobalTextOffsetY) * finalScale
-                            : pos.y + 5 * finalScale + (node.TextOffsetY + config.GlobalTextOffsetY) * finalScale);
-                    DrawText(ids.KeyText, labelStr, keyFontPath, keyFontSize, keyPos, new Vector2(size.x, keyTextHeight), 1, txtColor, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, textSortingOrder);
+                            ? pos.y + (size.y - keyTextHeight) * 0.5f + (node.TextOffsetY + config.GlobalTextOffsetY) * animatedFinalScale
+                            : pos.y + 5 * animatedFinalScale + (node.TextOffsetY + config.GlobalTextOffsetY) * animatedFinalScale);
+                    DrawText(ids.KeyText, labelStr, keyFontPath, keyFontSize, keyPos, new Vector2(size.x, keyTextHeight), 1, textColors, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, textSortingOrder);
 
                     if (!hideCountText)
                     {
                         string countStr = node.HitCount.ToString();
-                        float countFontSize = 20.0f * globalScale * node.CountScale;
+                        float countFontSize = 20.0f * animatedGlobalScale * node.CountScale;
                         string countFontPath = GetCountFontPath(config, node);
                         float countTextHeight = TextBoxHeight(countFontSize);
                         Vector2 countPos = new Vector2(
-                            pos.x + (node.CountOffsetX + config.GlobalCountOffsetX) * finalScale,
-                            pos.y + size.y - countTextHeight - 5 * finalScale + (node.CountOffsetY + config.GlobalCountOffsetY) * finalScale);
-                        DrawText(ids.CountText, countStr, countFontPath, countFontSize, countPos, new Vector2(size.x, countTextHeight), 1, txtColor, countOutlineEnabled, countOutlineColor, countOutlineThickness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, textSortingOrder);
+                            pos.x + (node.CountOffsetX + config.GlobalCountOffsetX) * animatedFinalScale,
+                            pos.y + size.y - countTextHeight - 5 * animatedFinalScale + (node.CountOffsetY + config.GlobalCountOffsetY) * animatedFinalScale);
+                        DrawText(ids.CountText, countStr, countFontPath, countFontSize, countPos, new Vector2(size.x, countTextHeight), 1, textColors, countOutlineEnabled, countOutlineColor, countOutlineThickness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, textSortingOrder);
                     }
                 }
                 else if (node.NodeType == 1)
                 {
                     float bThick = node.BorderThickness >= 0f ? node.BorderThickness : borderThickness;
-                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgNormal, borderNormal, bThick, cornerRadius, graphicSortingOrder);
+                    ColorCorners bgColors = BuildAxisGradient(bgNormal, bgGradientNormal);
+                    ColorCorners borderColors = BuildAxisGradient(borderNormal, borderGradientNormal);
+                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, bThick, cornerRadius, graphicSortingOrder);
 
                     string label = !string.IsNullOrEmpty(node.CustomText) ? node.CustomText : "KPS";
                     string val = KeyViewerManager.Instance.CurrentKPS.ToString();
@@ -463,7 +626,9 @@ namespace CheryTools
                 else if (node.NodeType == 2)
                 {
                     float bThick = node.BorderThickness >= 0f ? node.BorderThickness : borderThickness;
-                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgNormal, borderNormal, bThick, cornerRadius, graphicSortingOrder);
+                    ColorCorners bgColors = BuildAxisGradient(bgNormal, bgGradientNormal);
+                    ColorCorners borderColors = BuildAxisGradient(borderNormal, borderGradientNormal);
+                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, bThick, cornerRadius, graphicSortingOrder);
 
                     string label = !string.IsNullOrEmpty(node.CustomText) ? node.CustomText : "Total";
                     string val = Main.Settings.TotalHits.ToString();
@@ -504,7 +669,7 @@ namespace CheryTools
 
         private void DrawKeyRain(KVConfiguration config, Vector2 center, float globalScale)
         {
-            if (config == null || !config.EnableKeyRain || KeyViewerManager.Instance.ActiveDrops.Count <= 0) return;
+            if (config == null || KeyViewerManager.Instance.ActiveDrops.Count <= 0) return;
 
             float speed = config.KeyRainSpeed;
             float maxHeight = config.KeyRainMaxHeight;
@@ -513,6 +678,10 @@ namespace CheryTools
 
             uint row1Color = Vector4ToColor(config.KeyRainColorRow1);
             uint row2Color = Vector4ToColor(config.KeyRainColorRow2);
+            uint row1GradientEndColor = Vector4ToColor(config.KeyRainGradientEndColorRow1);
+            uint row2GradientEndColor = Vector4ToColor(config.KeyRainGradientEndColorRow2);
+            uint row1HorizontalGradientEndColor = Vector4ToColor(config.KeyRainHorizontalGradientEndColorRow1);
+            uint row2HorizontalGradientEndColor = Vector4ToColor(config.KeyRainHorizontalGradientEndColorRow2);
             float row1Ratio = config.KeyRainWidthRatio1;
             float row2Ratio = config.KeyRainWidthRatio2;
             bool configShadowEnabled = false;
@@ -536,7 +705,8 @@ namespace CheryTools
                     KeyDrop drop = KeyViewerManager.Instance.ActiveDrops[i];
                     KVNode node = drop.Node;
                     if (node == null || node.NodeType != 0) continue;
-                    if (!node.EnableKeyRain) continue;
+                    bool useCustomRain = node.UseCustomRain;
+                    if (useCustomRain ? !node.EnableKeyRain : !config.EnableKeyRain) continue;
                     if (drop.Config != null)
                     {
                         if (!ReferenceEquals(drop.Config, config)) continue;
@@ -552,21 +722,48 @@ namespace CheryTools
 
                     float ratio;
                     uint baseColor;
+                    uint farColor;
+                    bool gradientEnabled;
+                    bool horizontalGradientEnabled;
+                    int gradientMode;
+                    uint horizontalColor;
                     float currentYOffset;
                     float cornerRadius;
-                    if (node.UseCustomRain)
+                    float fadeHeight;
+                    float fadePower;
+                    float gradientHeight;
+                    float gradientPower;
+                    if (useCustomRain)
                     {
                         ratio = node.RainWidthRatio;
                         baseColor = Vector4ToColor(node.RainColor);
+                        farColor = Vector4ToColor(node.RainGradientEndColor);
+                        gradientEnabled = node.RainGradientEnabled;
+                        horizontalGradientEnabled = node.RainHorizontalGradientEnabled;
+                        gradientMode = node.RainGradientMode;
+                        horizontalColor = MatchAlpha(Vector4ToColor(node.RainHorizontalGradientEndColor), baseColor);
                         currentYOffset = node.RainYOffset;
                         cornerRadius = node.RainCornerRadius;
+                        fadeHeight = node.RainFadeHeight;
+                        fadePower = node.RainFadePower;
+                        gradientHeight = node.RainGradientHeight;
+                        gradientPower = node.RainGradientPower;
                     }
                     else
                     {
                         ratio = isRow1 ? row1Ratio : row2Ratio;
                         baseColor = isRow1 ? row1Color : row2Color;
+                        farColor = isRow1 ? row1GradientEndColor : row2GradientEndColor;
+                        gradientEnabled = config.KeyRainGradientEnabled;
+                        horizontalGradientEnabled = config.KeyRainHorizontalGradientEnabled;
+                        gradientMode = config.KeyRainGradientMode;
+                        horizontalColor = MatchAlpha(isRow1 ? row1HorizontalGradientEndColor : row2HorizontalGradientEndColor, baseColor);
                         currentYOffset = isRow1 ? config.KeyRainYOffsetRow1 : config.KeyRainYOffsetRow2;
                         cornerRadius = config.KeyRainCornerRadius;
+                        fadeHeight = config.KeyRainFadeHeight;
+                        fadePower = config.KeyRainFadePower;
+                        gradientHeight = config.KeyRainGradientHeight;
+                        gradientPower = config.KeyRainGradientPower;
                     }
 
                     float finalScale = globalScale * node.Scale;
@@ -585,14 +782,30 @@ namespace CheryTools
                     float clampedTopY = Math.Max(dropTopY, keyY - maxHeight);
                     if (clampedBottomY <= clampedTopY) continue;
 
-                    uint topColor = baseColor;
-                    uint bottomColor = baseColor;
+                    uint topColor;
+                    uint bottomColor;
+                    if (gradientEnabled && gradientMode == 1)
+                    {
+                        float gradientDistance = Mathf.Max(1f, maxHeight * Mathf.Clamp(gradientHeight, 0.05f, 3f));
+                        float curvePower = Mathf.Clamp(gradientPower, 0.1f, 5f);
+                        float topHeightRatio = Mathf.Pow(Mathf.Clamp01((keyY - clampedTopY) / gradientDistance), curvePower);
+                        float bottomHeightRatio = Mathf.Pow(Mathf.Clamp01((keyY - clampedBottomY) / gradientDistance), curvePower);
+                        topColor = LerpColor(baseColor, farColor, topHeightRatio);
+                        bottomColor = LerpColor(baseColor, farColor, bottomHeightRatio);
+                    }
+                    else
+                    {
+                        topColor = gradientEnabled ? farColor : baseColor;
+                        bottomColor = baseColor;
+                    }
                     if (fadeMode == 1)
                     {
-                        float bottomAlphaRatio = 1.0f - Mathf.Clamp((keyY - clampedBottomY) / maxHeight, 0f, 1f);
-                        float topAlphaRatio = 1.0f - Mathf.Clamp((keyY - clampedTopY) / maxHeight, 0f, 1f);
-                        bottomColor = MultiplyAlpha(baseColor, bottomAlphaRatio);
-                        topColor = MultiplyAlpha(baseColor, topAlphaRatio);
+                        float fadeDistance = Mathf.Max(1f, maxHeight * Mathf.Clamp(fadeHeight, 0.05f, 3f));
+                        float curvePower = Mathf.Clamp(fadePower, 0.1f, 5f);
+                        float bottomAlphaRatio = Mathf.Pow(1.0f - Mathf.Clamp01((keyY - clampedBottomY) / fadeDistance), curvePower);
+                        float topAlphaRatio = Mathf.Pow(1.0f - Mathf.Clamp01((keyY - clampedTopY) / fadeDistance), curvePower);
+                        bottomColor = MultiplyAlpha(bottomColor, bottomAlphaRatio);
+                        topColor = MultiplyAlpha(topColor, topAlphaRatio);
                     }
 
                     float snapLeft = Mathf.Round(dropX);
@@ -603,6 +816,9 @@ namespace CheryTools
 
                     int shadowSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerRainShadow);
                     int sortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerRain);
+                    bool useHeightCurveFill =
+                        (fadeMode == 1 && (Mathf.Abs(fadeHeight - 1f) > 0.0001f || Mathf.Abs(fadePower - 1f) > 0.0001f))
+                        || (gradientEnabled && gradientMode == 1 && (Mathf.Abs(gradientHeight - 1f) > 0.0001f || Mathf.Abs(gradientPower - 1f) > 0.0001f));
                     bool currentShadowEnabled = configShadowEnabled;
                     uint currentShadowColor = configShadowColor;
                     Vector2 currentShadowOffset = configShadowOffset;
@@ -633,14 +849,45 @@ namespace CheryTools
                             currentShadowSoftness,
                             shadowSortingOrder);
                     }
-                    KeyViewerUnityRenderer.DrawGradientRect(
-                        drop.RenderId,
-                        new Vector2(snapLeft, snapTop),
-                        new Vector2(snapRight - snapLeft, snapBottom - snapTop),
-                        topColor,
-                        bottomColor,
-                        Mathf.Max(0f, cornerRadius) * globalScale,
-                        sortingOrder);
+                    if (useHeightCurveFill)
+                    {
+                        KeyViewerUnityRenderer.DrawKeyRainCurveRect(
+                            drop.RenderId,
+                            new Vector2(snapLeft, snapTop),
+                            new Vector2(snapRight - snapLeft, snapBottom - snapTop),
+                            baseColor,
+                            farColor,
+                            gradientEnabled,
+                            gradientMode == 1,
+                            fadeMode,
+                            keyY,
+                            maxHeight,
+                            fadeHeight,
+                            fadePower,
+                            gradientHeight,
+                            gradientPower,
+                            horizontalGradientEnabled,
+                            horizontalColor,
+                            Mathf.Max(0f, cornerRadius) * globalScale,
+                            sortingOrder);
+                    }
+                    else
+                    {
+                        uint topRightColor = horizontalGradientEnabled ? MatchAlpha(horizontalColor, topColor) : topColor;
+                        uint bottomRightColor = horizontalGradientEnabled
+                            ? (gradientEnabled ? LerpColor(bottomColor, MatchAlpha(horizontalColor, bottomColor), 0.5f) : MatchAlpha(horizontalColor, bottomColor))
+                            : bottomColor;
+                        KeyViewerUnityRenderer.DrawGradientRect(
+                            drop.RenderId,
+                            new Vector2(snapLeft, snapTop),
+                            new Vector2(snapRight - snapLeft, snapBottom - snapTop),
+                            topColor,
+                            topRightColor,
+                            bottomRightColor,
+                            bottomColor,
+                            Mathf.Max(0f, cornerRadius) * globalScale,
+                            sortingOrder);
+                    }
                 }
             }
         }

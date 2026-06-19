@@ -8,7 +8,10 @@ namespace CheryTools
 {
     public static class InputInterceptor
     {
+        private const float DefaultAntiBounceIntervalSeconds = 0.05f;
         private static HashSet<string> _allowedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, float> _lastWentDownTimes = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, int> _lastWentDownFrames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static bool _filteringEnabled;
         private static bool _inputPatchesApplied;
 
@@ -18,6 +21,9 @@ namespace CheryTools
             bool shouldLimitInput = Main.IsEnabled
                 && Main.Settings != null
                 && (Main.Settings.ToolsLimitInput || (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput));
+            bool shouldAntiBounce = Main.IsEnabled
+                && Main.Settings != null
+                && Main.Settings.ToolsAntiBounceKeys;
             
             // Default whitelist
             _allowedKeys.Add("Escape");
@@ -145,13 +151,20 @@ namespace CheryTools
             }
 
             _filteringEnabled = shouldLimitInput;
-            UpdateInputPatches(shouldLimitInput);
+            if (!shouldAntiBounce)
+            {
+                _lastWentDownTimes.Clear();
+                _lastWentDownFrames.Clear();
+            }
+            UpdateInputPatches(shouldLimitInput || shouldAntiBounce);
         }
 
         public static void ResetPatches()
         {
             _filteringEnabled = false;
             _inputPatchesApplied = false;
+            _lastWentDownTimes.Clear();
+            _lastWentDownFrames.Clear();
         }
 
         private static void UpdateInputPatches(bool shouldPatch)
@@ -185,26 +198,19 @@ namespace CheryTools
 
         public static bool IsKeyAllowed(AnyKeyCode anyKey)
         {
-            string keyName = null;
-            if (anyKey.value is KeyCode kc)
-            {
-                keyName = kc.ToString();
-            }
-            else if (anyKey.value is AsyncKeyCode akc)
-            {
-                keyName = akc.label.ToString();
-            }
-
+            string keyName = GetKeyName(anyKey);
             if (string.IsNullOrEmpty(keyName)) return false;
             return _allowedKeys.Contains(keyName);
         }
 
         public static void FilterInputState(RDInputType instance, ButtonState state, ref int result)
         {
-            if (!_filteringEnabled || !Main.IsEnabled || Main.Settings == null) return;
+            if (!Main.IsEnabled || Main.Settings == null) return;
 
-            bool shouldLimitInput = Main.Settings.ToolsLimitInput || (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput);
-            if (!shouldLimitInput) return;
+            bool shouldLimitInput = _filteringEnabled
+                && (Main.Settings.ToolsLimitInput || (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput));
+            bool shouldAntiBounce = Main.Settings.ToolsAntiBounceKeys;
+            if (!shouldLimitInput && !shouldAntiBounce) return;
 
             RDInputType.MainStateCount stateCount = null;
             switch (state)
@@ -217,12 +223,71 @@ namespace CheryTools
 
             if (stateCount != null && stateCount.keys != null)
             {
-                int removed = stateCount.keys.RemoveAll(k => !IsKeyAllowed(k));
+                int removed = 0;
+                if (shouldLimitInput)
+                {
+                    removed += stateCount.keys.RemoveAll(k => !IsKeyAllowed(k));
+                }
+                if (shouldAntiBounce && state == ButtonState.WentDown)
+                {
+                    removed += stateCount.keys.RemoveAll(IsBouncedWentDown);
+                }
                 if (removed > 0)
                 {
                     result = stateCount.keys.Count;
                 }
             }
+        }
+
+        private static bool IsBouncedWentDown(AnyKeyCode anyKey)
+        {
+            string keyName = GetKeyName(anyKey);
+            if (string.IsNullOrEmpty(keyName)) return false;
+
+            float now = Time.unscaledTime;
+            int frame = Time.frameCount;
+            float interval = GetAntiBounceIntervalSeconds();
+            if (_lastWentDownTimes.TryGetValue(keyName, out float lastTime) && now - lastTime < interval)
+            {
+                if (!_lastWentDownFrames.TryGetValue(keyName, out int lastFrame) || lastFrame != frame)
+                {
+                    return true;
+                }
+                return false;
+            }
+
+            _lastWentDownTimes[keyName] = now;
+            _lastWentDownFrames[keyName] = frame;
+            return false;
+        }
+
+        private static float GetAntiBounceIntervalSeconds()
+        {
+            if (Main.Settings == null)
+            {
+                return DefaultAntiBounceIntervalSeconds;
+            }
+
+            float intervalMs = Main.Settings.ToolsAntiBounceIntervalMs;
+            if (intervalMs <= 0f || float.IsNaN(intervalMs) || float.IsInfinity(intervalMs))
+            {
+                intervalMs = 50f;
+            }
+            intervalMs = Math.Max(1f, Math.Min(500f, intervalMs));
+            return intervalMs / 1000f;
+        }
+
+        private static string GetKeyName(AnyKeyCode anyKey)
+        {
+            if (anyKey.value is KeyCode kc)
+            {
+                return kc.ToString();
+            }
+            if (anyKey.value is AsyncKeyCode akc)
+            {
+                return akc.label.ToString();
+            }
+            return null;
         }
     }
 

@@ -84,7 +84,8 @@ namespace CheryTools
             Music,
             XPerfectXpp,
             XPerfectEpp,
-            XPerfectLpp
+            XPerfectLpp,
+            Expression
         }
 
         private struct OvTagToken
@@ -99,6 +100,215 @@ namespace CheryTools
             public string Format;
             public OvTagToken[] Tokens;
             public bool HasTags;
+        }
+
+        private sealed class OvExpressionParser
+        {
+            private readonly string _text;
+            private readonly Func<string, double> _resolveVariable;
+            private int _index;
+
+            public OvExpressionParser(string text, Func<string, double> resolveVariable)
+            {
+                _text = text ?? string.Empty;
+                _resolveVariable = resolveVariable;
+            }
+
+            public bool TryEvaluate(out double value)
+            {
+                value = 0.0;
+                try
+                {
+                    value = ParseAddSubtract();
+                    SkipWhitespace();
+                    return _index >= _text.Length && !double.IsNaN(value) && !double.IsInfinity(value);
+                }
+                catch
+                {
+                    value = 0.0;
+                    return false;
+                }
+            }
+
+            private double ParseAddSubtract()
+            {
+                double value = ParseMultiplyDivide();
+                while (true)
+                {
+                    SkipWhitespace();
+                    if (Match('+'))
+                    {
+                        value += ParseMultiplyDivide();
+                    }
+                    else if (Match('-'))
+                    {
+                        value -= ParseMultiplyDivide();
+                    }
+                    else
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            private double ParseMultiplyDivide()
+            {
+                double value = ParsePower();
+                while (true)
+                {
+                    SkipWhitespace();
+                    if (Match('*'))
+                    {
+                        value *= ParsePower();
+                    }
+                    else if (Match('/'))
+                    {
+                        double denominator = ParsePower();
+                        value = Math.Abs(denominator) <= double.Epsilon ? 0.0 : value / denominator;
+                    }
+                    else
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            private double ParsePower()
+            {
+                double value = ParseUnary();
+                SkipWhitespace();
+                if (Match('^'))
+                {
+                    value = Math.Pow(value, ParsePower());
+                }
+                return value;
+            }
+
+            private double ParseUnary()
+            {
+                SkipWhitespace();
+                if (Match('+'))
+                {
+                    return ParseUnary();
+                }
+                if (Match('-'))
+                {
+                    return -ParseUnary();
+                }
+                return ParsePrimary();
+            }
+
+            private double ParsePrimary()
+            {
+                SkipWhitespace();
+                if (Match('('))
+                {
+                    double value = ParseAddSubtract();
+                    SkipWhitespace();
+                    if (!Match(')'))
+                    {
+                        throw new FormatException("Missing closing parenthesis.");
+                    }
+                    return value;
+                }
+
+                if (_index < _text.Length && (char.IsDigit(_text[_index]) || _text[_index] == '.'))
+                {
+                    return ParseNumber();
+                }
+
+                string identifier = ParseIdentifier();
+                if (identifier.Length == 0)
+                {
+                    throw new FormatException("Expected expression value.");
+                }
+
+                SkipWhitespace();
+                if (string.Equals(identifier, "sqrt", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!Match('('))
+                    {
+                        throw new FormatException("sqrt requires parentheses.");
+                    }
+                    double value = ParseAddSubtract();
+                    SkipWhitespace();
+                    if (!Match(')'))
+                    {
+                        throw new FormatException("Missing sqrt closing parenthesis.");
+                    }
+                    return Math.Sqrt(Math.Max(0.0, value));
+                }
+
+                return _resolveVariable != null ? _resolveVariable(identifier) : 0.0;
+            }
+
+            private double ParseNumber()
+            {
+                int start = _index;
+                bool hasDot = false;
+                while (_index < _text.Length)
+                {
+                    char c = _text[_index];
+                    if (char.IsDigit(c))
+                    {
+                        _index++;
+                    }
+                    else if (c == '.' && !hasDot)
+                    {
+                        hasDot = true;
+                        _index++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                string number = _text.Substring(start, _index - start);
+                if (!double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
+                {
+                    throw new FormatException("Invalid number.");
+                }
+                return value;
+            }
+
+            private string ParseIdentifier()
+            {
+                int start = _index;
+                while (_index < _text.Length)
+                {
+                    char c = _text[_index];
+                    if (char.IsLetterOrDigit(c) || c == '_' || c == ':' || c == '.')
+                    {
+                        _index++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                return _text.Substring(start, _index - start);
+            }
+
+            private bool Match(char expected)
+            {
+                SkipWhitespace();
+                if (_index < _text.Length && _text[_index] == expected)
+                {
+                    _index++;
+                    return true;
+                }
+                return false;
+            }
+
+            private void SkipWhitespace()
+            {
+                while (_index < _text.Length && char.IsWhiteSpace(_text[_index]))
+                {
+                    _index++;
+                }
+            }
         }
 
         private readonly System.Collections.Generic.Dictionary<OverlayerText, OvTagPlan> _ovTagPlans = new System.Collections.Generic.Dictionary<OverlayerText, OvTagPlan>();
@@ -272,9 +482,8 @@ namespace CheryTools
                         || format.Contains("{cbpm")
                         || format.Contains("{interval}")
                         || format.Contains("{x}")
-                        || (Main.Settings.XPerfectIntegrationEnabled
-                            && (format.Contains("{xprefect:")
-                                || format.Contains("{xperfect:"))))
+                        || format.Contains("{xperfect:")
+                        || format.IndexOf("{expr:", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         _hasRateDynamicContent = true;
                     }
@@ -571,7 +780,7 @@ namespace CheryTools
                     AddLiteralToken(tokens, safeFormat.Substring(index, open - index));
                 }
 
-                int close = safeFormat.IndexOf('}', open + 1);
+                int close = FindOvTagClose(safeFormat, open);
                 if (close < 0)
                 {
                     AddLiteralToken(tokens, safeFormat.Substring(open));
@@ -579,7 +788,17 @@ namespace CheryTools
                 }
 
                 string tagBody = safeFormat.Substring(open + 1, close - open - 1);
-                if (TryParseOvTag(tagBody, out OvTagKind kind, out int decimals))
+                if (TryParseExpressionTag(tagBody, out string expression))
+                {
+                    tokens.Add(new OvTagToken
+                    {
+                        Kind = OvTagKind.Expression,
+                        Literal = expression,
+                        Decimals = 2
+                    });
+                    hasTags = true;
+                }
+                else if (TryParseOvTag(tagBody, out OvTagKind kind, out int decimals))
                 {
                     tokens.Add(new OvTagToken
                     {
@@ -602,6 +821,49 @@ namespace CheryTools
                 Tokens = tokens.ToArray(),
                 HasTags = hasTags
             };
+        }
+
+        private static int FindOvTagClose(string format, int open)
+        {
+            if (format == null || open < 0 || open >= format.Length || format[open] != '{')
+            {
+                return -1;
+            }
+
+            const string ExprPrefix = "{expr:";
+            if (!StartsWithOrdinalIgnoreCase(format, open, ExprPrefix))
+            {
+                return format.IndexOf('}', open + 1);
+            }
+
+            int depth = 0;
+            for (int i = open + ExprPrefix.Length; i < format.Length; i++)
+            {
+                char c = format[i];
+                if (c == '{')
+                {
+                    depth++;
+                }
+                else if (c == '}')
+                {
+                    if (depth == 0)
+                    {
+                        return i;
+                    }
+                    depth--;
+                }
+            }
+
+            return -1;
+        }
+
+        private static bool StartsWithOrdinalIgnoreCase(string value, int start, string prefix)
+        {
+            return value != null
+                && prefix != null
+                && start >= 0
+                && start + prefix.Length <= value.Length
+                && string.Compare(value, start, prefix, 0, prefix.Length, StringComparison.OrdinalIgnoreCase) == 0;
         }
 
         private static void AddLiteralToken(System.Collections.Generic.List<OvTagToken> tokens, string literal)
@@ -657,13 +919,10 @@ namespace CheryTools
                 case "combo": kind = OvTagKind.PureCombo; return true;
                 case "combo:p": kind = OvTagKind.PerfectCombo; return true;
                 case "music": kind = OvTagKind.Music; return true;
-                case "xprefect:xpp":
                 case "xperfect:xpp":
                     kind = OvTagKind.XPerfectXpp; return true;
-                case "xprefect:epp":
                 case "xperfect:epp":
                     kind = OvTagKind.XPerfectEpp; return true;
-                case "xprefect:lpp":
                 case "xperfect:lpp":
                     kind = OvTagKind.XPerfectLpp; return true;
             }
@@ -707,6 +966,18 @@ namespace CheryTools
             return false;
         }
 
+        private static bool TryParseExpressionTag(string tagBody, out string expression)
+        {
+            expression = null;
+            if (string.IsNullOrEmpty(tagBody) || !tagBody.StartsWith("expr:", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            expression = tagBody.Substring(5).Trim();
+            return expression.Length > 0;
+        }
+
         private static bool TryParseDecimalTag(string tagBody, string name, int defaultDecimals, out int decimals)
         {
             decimals = defaultDecimals;
@@ -732,10 +1003,12 @@ namespace CheryTools
 
         private string ResolveOvTextTags(OverlayerText ovText, string format)
         {
-            OvTagPlan plan = GetOvTagPlan(ovText, format ?? string.Empty);
+            OverlayerRegexDocument regexDocument = OverlayerRegexProcessor.GetDocument(format);
+            string bodyFormat = regexDocument != null ? regexDocument.Body : (format ?? string.Empty);
+            OvTagPlan plan = GetOvTagPlan(ovText, bodyFormat);
             if (plan == null || !plan.HasTags || plan.Tokens == null || plan.Tokens.Length == 0)
             {
-                return format ?? string.Empty;
+                return OverlayerRegexProcessor.Apply(bodyFormat, regexDocument, ovText != null ? ovText.Name : "OV Text");
             }
 
             _ovTagBuilder.Length = 0;
@@ -761,7 +1034,7 @@ namespace CheryTools
                 _ovTagBuilder.Append(EvaluateOvTag(token, ref now, ref nowReady, ref tracker, ref trackerReady, ref bpmReady, ref baseBpm, ref trackBpm, ref currentBpm));
             }
 
-            return _ovTagBuilder.ToString();
+            return OverlayerRegexProcessor.Apply(_ovTagBuilder.ToString(), regexDocument, ovText != null ? ovText.Name : "OV Text");
         }
 
         private string EvaluateOvTag(
@@ -876,9 +1149,189 @@ namespace CheryTools
                     return IsXPerfectIntegrationActive() ? XPerfectBridge.PlusPerfectCount().ToString(CultureInfo.InvariantCulture) : "0";
                 case OvTagKind.XPerfectLpp:
                     return IsXPerfectIntegrationActive() ? XPerfectBridge.MinusPerfectCount().ToString(CultureInfo.InvariantCulture) : "0";
+                case OvTagKind.Expression:
+                    return FormatNumberTrimZeros(EvaluateExpressionTag(token.Literal, ref tracker, ref trackerReady, ref bpmReady, ref baseBpm, ref trackBpm, ref currentBpm), token.Decimals);
                 default:
                     return token.Literal ?? string.Empty;
             }
+        }
+
+        private double EvaluateExpressionTag(
+            string expression,
+            ref scrMarginTracker tracker,
+            ref bool trackerReady,
+            ref bool bpmReady,
+            ref float baseBpm,
+            ref double trackBpm,
+            ref double currentBpm)
+        {
+            if (string.IsNullOrWhiteSpace(expression))
+            {
+                return 0.0;
+            }
+
+            scrMarginTracker localTracker = tracker;
+            bool localTrackerReady = trackerReady;
+            bool localBpmReady = bpmReady;
+            float localBaseBpm = baseBpm;
+            double localTrackBpm = trackBpm;
+            double localCurrentBpm = currentBpm;
+
+            string normalized = NormalizeExpressionVariables(expression);
+            var parser = new OvExpressionParser(normalized, name => ResolveExpressionVariable(name, ref localTracker, ref localTrackerReady, ref localBpmReady, ref localBaseBpm, ref localTrackBpm, ref localCurrentBpm));
+            bool evaluated = parser.TryEvaluate(out double value);
+
+            tracker = localTracker;
+            trackerReady = localTrackerReady;
+            bpmReady = localBpmReady;
+            baseBpm = localBaseBpm;
+            trackBpm = localTrackBpm;
+            currentBpm = localCurrentBpm;
+
+            if (!evaluated || double.IsNaN(value) || double.IsInfinity(value))
+            {
+                return 0.0;
+            }
+
+            return value;
+        }
+
+        private static string NormalizeExpressionVariables(string expression)
+        {
+            if (string.IsNullOrEmpty(expression))
+            {
+                return string.Empty;
+            }
+
+            return Regex.Replace(expression, @"\{([^{}]+)\}", match =>
+            {
+                string name = match.Groups[1].Value.Trim();
+                int colon = name.IndexOf(':');
+                if (colon > 0)
+                {
+                    string suffix = name.Substring(colon + 1);
+                    if (suffix.Length > 0 && int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                    {
+                        name = name.Substring(0, colon);
+                    }
+                }
+
+                return name;
+            });
+        }
+
+        private double ResolveExpressionVariable(
+            string name,
+            ref scrMarginTracker tracker,
+            ref bool trackerReady,
+            ref bool bpmReady,
+            ref float baseBpm,
+            ref double trackBpm,
+            ref double currentBpm)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return 0.0;
+            }
+
+            switch (name.Trim().ToLowerInvariant())
+            {
+                case "fps":
+                    return _cachedFps;
+                case "kps":
+                    return KeyViewerManager.Instance != null ? KeyViewerManager.Instance.CurrentKPS : 0.0;
+                case "tot":
+                    return Main.Settings != null ? Main.Settings.TotalHits : 0.0;
+                case "ttile":
+                    return GetTotalTileCount();
+                case "atile":
+                    return GetPassedTileCount();
+                case "x":
+                    return GetSpeedMultiplierValue();
+                case "cur":
+                    return TryGetCurrentClicksPerSecond(out double cps) ? cps : 0.0;
+                case "bpm":
+                    EnsureBpmValues(ref bpmReady, ref baseBpm, ref trackBpm, ref currentBpm);
+                    return baseBpm;
+                case "tbpm":
+                    EnsureBpmValues(ref bpmReady, ref baseBpm, ref trackBpm, ref currentBpm);
+                    return trackBpm;
+                case "cbpm":
+                    EnsureBpmValues(ref bpmReady, ref baseBpm, ref trackBpm, ref currentBpm);
+                    return currentBpm;
+                case "acc":
+                    EnsureTracker(ref tracker, ref trackerReady);
+                    return tracker != null ? tracker.percentAcc * 100.0 : 0.0;
+                case "xacc":
+                    EnsureTracker(ref tracker, ref trackerReady);
+                    return tracker != null ? tracker.percentXAcc * 100.0 : 0.0;
+                case "progress":
+                    EnsureTracker(ref tracker, ref trackerReady);
+                    return tracker != null && scrController.instance != null && scrController.instance.gameworld
+                        ? scrController.instance.percentComplete * 100.0
+                        : 0.0;
+                case "maptime":
+                    return TryGetMapTotalSeconds(out double mapTotalSeconds) ? mapTotalSeconds : 0.0;
+                case "maptime:p":
+                case "maptimep":
+                    return TryGetMapPlayedSeconds(out double mapPlayedSeconds) ? mapPlayedSeconds : 0.0;
+                case "musictime":
+                    return TryGetMusicTotalSeconds(out double musicTotalSeconds) ? musicTotalSeconds : 0.0;
+                case "musictime:p":
+                case "musictimep":
+                    return TryGetMusicPlayedSeconds(out double musicPlayedSeconds) ? musicPlayedSeconds : 0.0;
+                case "te":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.TooEarly);
+                case "ve":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.VeryEarly);
+                case "ep":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.EarlyPerfect);
+                case "p":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.Perfect);
+                case "lp":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.LatePerfect);
+                case "vl":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.VeryLate);
+                case "tl":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.TooLate);
+                case "miss":
+                    EnsureTracker(ref tracker, ref trackerReady);
+                    return tracker != null ? tracker.GetDeaths() : 0.0;
+                case "fm":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.FailMiss);
+                case "fo":
+                    return GetTrackerHitCountValue(ref tracker, ref trackerReady, HitMargin.FailOverload);
+                case "combo":
+                    return _currentPureCombo;
+                case "combo:p":
+                case "combop":
+                    return _currentPerfectCombo;
+                case "xperfect:xpp":
+                case "xperfectxpp":
+                    return IsXPerfectIntegrationActive() ? XPerfectBridge.XPerfectCount() : 0.0;
+                case "xperfect:epp":
+                case "xperfectepp":
+                    return IsXPerfectIntegrationActive() ? XPerfectBridge.PlusPerfectCount() : 0.0;
+                case "xperfect:lpp":
+                case "xperfectlpp":
+                    return IsXPerfectIntegrationActive() ? XPerfectBridge.MinusPerfectCount() : 0.0;
+                default:
+                    return 0.0;
+            }
+        }
+
+        private static double GetSpeedMultiplierValue()
+        {
+            if (scrConductor.instance != null && scrConductor.instance.song != null)
+            {
+                return scrConductor.instance.song.pitch;
+            }
+            if (GCS.speedTrialMode)
+            {
+                return GCS.currentSpeedTrial;
+            }
+
+            return 1.0;
         }
 
         private static bool IsXPerfectIntegrationActive()
@@ -909,6 +1362,12 @@ namespace CheryTools
         {
             EnsureTracker(ref tracker, ref trackerReady);
             return tracker != null ? tracker.GetHits(margin).ToString(CultureInfo.InvariantCulture) : "0";
+        }
+
+        private static double GetTrackerHitCountValue(ref scrMarginTracker tracker, ref bool trackerReady, HitMargin margin)
+        {
+            EnsureTracker(ref tracker, ref trackerReady);
+            return tracker != null ? tracker.GetHits(margin) : 0.0;
         }
 
         private static void EnsureBpmValues(ref bool bpmReady, ref float baseBpm, ref double trackBpm, ref double currentBpm)
@@ -1621,6 +2080,12 @@ namespace CheryTools
                     {
                         rawText = rawText.Replace("{music}", GetMusicText());
                     }
+                    if (rawText.Contains("{xperfect:"))
+                    {
+                        rawText = rawText.Replace("{xperfect:xpp}", IsXPerfectIntegrationActive() ? XPerfectBridge.XPerfectCount().ToString(CultureInfo.InvariantCulture) : "0");
+                        rawText = rawText.Replace("{xperfect:epp}", IsXPerfectIntegrationActive() ? XPerfectBridge.PlusPerfectCount().ToString(CultureInfo.InvariantCulture) : "0");
+                        rawText = rawText.Replace("{xperfect:lpp}", IsXPerfectIntegrationActive() ? XPerfectBridge.MinusPerfectCount().ToString(CultureInfo.InvariantCulture) : "0");
+                    }
                 }
 
                 string layoutKey = BuildOvTextLayoutKey(ovText, rawText);
@@ -2149,7 +2614,7 @@ namespace CheryTools
             }
 
             float fillAmount = Mathf.Clamp01((float)normalized);
-            if (fillAmount > 0.0001f && HasVisibleColor(bar.FillColor, opacity))
+            if (fillAmount > 0.0001f && HasVisibleProgressFillColor(bar, fillAmount, opacity))
             {
                 var fillTopLeft = topLeft;
                 var fillSize = size;
@@ -2175,7 +2640,7 @@ namespace CheryTools
                 if (fillSize.x > 0.5f && fillSize.y > 0.5f)
                 {
                     float fillRadius = Mathf.Min(cornerRadius, Mathf.Min(fillSize.x, fillSize.y) * 0.5f);
-                    OverlayerUnityRenderer.DrawFilledRect(renderIds.Fill, fillTopLeft, fillSize, PackColor(bar.FillColor, opacity), fillRadius, sortingOrder);
+                    OverlayerUnityRenderer.DrawFilledRect(renderIds.Fill, fillTopLeft, fillSize, PackProgressFillColor(bar, fillAmount, opacity), fillRadius, sortingOrder);
                 }
             }
 
@@ -2332,6 +2797,46 @@ namespace CheryTools
                 default:
                     return source.Constant;
             }
+        }
+
+        private static bool HasVisibleProgressFillColor(OverlayerProgressBar bar, float fillAmount, float opacity)
+        {
+            if (bar == null || !bar.EnableFillGradient)
+            {
+                return bar != null && HasVisibleColor(bar.FillColor, opacity);
+            }
+
+            float[] start = bar.FillGradientStartColor;
+            float[] end = bar.FillGradientEndColor;
+            if (start == null || start.Length < 4 || end == null || end.Length < 4)
+            {
+                return HasVisibleColor(bar.FillColor, opacity);
+            }
+
+            float t = Mathf.Clamp01(fillAmount);
+            return Mathf.Lerp(start[3], end[3], t) * opacity > 0.001f;
+        }
+
+        private static uint PackProgressFillColor(OverlayerProgressBar bar, float fillAmount, float opacity)
+        {
+            if (bar == null || !bar.EnableFillGradient)
+            {
+                return PackColor(bar != null ? bar.FillColor : null, opacity);
+            }
+
+            float[] start = bar.FillGradientStartColor;
+            float[] end = bar.FillGradientEndColor;
+            if (start == null || start.Length < 4 || end == null || end.Length < 4)
+            {
+                return PackColor(bar.FillColor, opacity);
+            }
+
+            float t = Mathf.Clamp01(fillAmount);
+            int r = Mathf.Clamp(Mathf.RoundToInt(Mathf.Lerp(start[0], end[0], t) * 255f), 0, 255);
+            int g = Mathf.Clamp(Mathf.RoundToInt(Mathf.Lerp(start[1], end[1], t) * 255f), 0, 255);
+            int b = Mathf.Clamp(Mathf.RoundToInt(Mathf.Lerp(start[2], end[2], t) * 255f), 0, 255);
+            int a = Mathf.Clamp(Mathf.RoundToInt(Mathf.Lerp(start[3], end[3], t) * Mathf.Clamp01(opacity) * 255f), 0, 255);
+            return (uint)(r | (g << 8) | (b << 16) | (a << 24));
         }
 
         private static bool HasVisibleColor(float[] color, float opacity)

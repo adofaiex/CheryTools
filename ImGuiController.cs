@@ -48,10 +48,13 @@ namespace CheryTools
 
         public static Dictionary<string, ImFontPtr> CustomFonts = new Dictionary<string, ImFontPtr>();
         public static Dictionary<string, ImFontPtr> CustomLargeFonts = new Dictionary<string, ImFontPtr>();
+        public static ImFontPtr ChineseDefaultUIFont; // 20px MiSans - used for mixed CJK UI labels
         public static ImFontPtr DefaultHighResFont;  // 48px - for text sizes ≤72px
         public static ImFontPtr DefaultLargeFont;      // 128px - for text sizes >72px
         public static bool NeedsFontAtlasRebuild = false;
         private static List<GCHandle> _pinnedHandles = new List<GCHandle>();
+        private const string ChineseDefaultFontFile = "MiSans-Bold.ttf";
+        private const string LatinKoreanDefaultFontFile = "Maplestory OTF Bold.otf";
 
         void Awake()
         {
@@ -133,6 +136,40 @@ namespace CheryTools
 
         public void RebuildFontAtlas()
         {
+            if (TryRebuildFontAtlas(true, true, true, "full")) return;
+            if (TryRebuildFontAtlas(true, true, false, "without custom large fonts")) return;
+            if (TryRebuildFontAtlas(false, true, false, "without large fonts")) return;
+            TryRebuildFontAtlas(false, false, false, "default fonts only");
+        }
+
+        private bool TryRebuildFontAtlas(bool loadDefaultLargeFont, bool loadCustomFonts, bool loadCustomLargeFonts, string modeName)
+        {
+            try
+            {
+                RebuildFontAtlasInternal(loadDefaultLargeFont, loadCustomFonts, loadCustomLargeFonts);
+                if (!loadDefaultLargeFont || !loadCustomFonts || !loadCustomLargeFonts)
+                {
+                    Main.Logger?.Log($"[CheryTools] Rebuilt ImGui font atlas in fallback mode: {modeName}");
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Main.Logger?.Log($"[CheryTools] Failed to rebuild ImGui font atlas ({modeName}): {ex.Message}");
+                try
+                {
+                    ImGui.GetIO().Fonts.ClearTexData();
+                }
+                catch
+                {
+                    // Keep the previous font texture if cleanup itself fails.
+                }
+                return false;
+            }
+        }
+
+        private void RebuildFontAtlasInternal(bool loadDefaultLargeFont, bool loadCustomFonts, bool loadCustomLargeFonts)
+        {
             var io = ImGui.GetIO();
             io.Fonts.Clear();
             CustomFonts.Clear();
@@ -145,28 +182,39 @@ namespace CheryTools
             }
             _pinnedHandles.Clear();
 
-            string defaultFontPath = System.IO.Path.Combine(Main.ModEntry.Path, "MiSans-Bold.ttf");
+            string defaultFontPath = GetDefaultUIFontPath();
             
             // Build the optimized glyph ranges for 128px fonts
-            IntPtr largeFontRanges = GetLargeFontGlyphRanges();
+            bool needsLargeFontRanges = loadDefaultLargeFont || loadCustomLargeFonts;
+            IntPtr largeFontRanges = needsLargeFontRanges ? GetLargeFontGlyphRanges() : IntPtr.Zero;
 
             IntPtr customChineseFull = GetCustomGlyphRanges(io.Fonts.GetGlyphRangesChineseFull());
             IntPtr customChineseCommon = GetCustomGlyphRanges(io.Fonts.GetGlyphRangesChineseSimplifiedCommon());
 
             if (System.IO.File.Exists(defaultFontPath))
             {
-                io.Fonts.AddFontFromFileTTF(defaultFontPath, 20.0f, null, customChineseFull);
+                ImFontPtr defaultUIFont = io.Fonts.AddFontFromFileTTF(defaultFontPath, 20.0f, null, customChineseFull);
+                ChineseDefaultUIFont = defaultUIFont;
                 DefaultHighResFont = io.Fonts.AddFontFromFileTTF(defaultFontPath, 48.0f, null, customChineseCommon);
-                DefaultLargeFont = io.Fonts.AddFontFromFileTTF(defaultFontPath, 128.0f, null, largeFontRanges);
+                DefaultLargeFont = loadDefaultLargeFont
+                    ? io.Fonts.AddFontFromFileTTF(defaultFontPath, 128.0f, null, largeFontRanges)
+                    : DefaultHighResFont;
+
+                string chineseFontPath = System.IO.Path.Combine(Main.ModEntry.Path, ChineseDefaultFontFile);
+                if (!string.Equals(defaultFontPath, chineseFontPath, StringComparison.OrdinalIgnoreCase)
+                    && System.IO.File.Exists(chineseFontPath))
+                {
+                    ChineseDefaultUIFont = io.Fonts.AddFontFromFileTTF(chineseFontPath, 20.0f, null, customChineseFull);
+                }
             }
             else
             {
-                io.Fonts.AddFontDefault();
+                ChineseDefaultUIFont = io.Fonts.AddFontDefault();
                 DefaultHighResFont = io.Fonts.AddFontDefault();
                 DefaultLargeFont = DefaultHighResFont; // fallback
             }
 
-            if (Main.Settings != null && Main.Settings.OverlayerTexts != null)
+            if (loadCustomFonts && Main.Settings != null && Main.Settings.OverlayerTexts != null)
             {
                 foreach (var txt in Main.Settings.OverlayerTexts)
                 {
@@ -211,7 +259,7 @@ namespace CheryTools
                                 }
                             }
 
-                            if (maxEffectiveSize > 72f && !CustomLargeFonts.ContainsKey(fontKey) && !CustomLargeFonts.ContainsKey(resolvedFontPath))
+                            if (loadCustomLargeFonts && maxEffectiveSize > 72f && !CustomLargeFonts.ContainsKey(fontKey) && !CustomLargeFonts.ContainsKey(resolvedFontPath))
                             {
                                 try {
                                     var ptr = io.Fonts.AddFontFromFileTTF(resolvedFontPath, 128.0f, null, largeFontRanges);
@@ -226,7 +274,7 @@ namespace CheryTools
                 }
             }
 
-            if (Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.KeyViewerFontPath))
+            if (loadCustomFonts && Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.KeyViewerFontPath))
             {
                 string fontKey = Main.Settings.KeyViewerFontPath;
                 string resolvedFontPath = CheryToolsAssets.ResolveAssetPath(fontKey);
@@ -241,7 +289,7 @@ namespace CheryTools
                 }
             }
 
-            if (Main.Settings != null)
+            if (loadCustomFonts && Main.Settings != null)
             {
                 var allNodes = Main.Settings.GetAllKeyViewerNodes();
 
@@ -273,17 +321,24 @@ namespace CheryTools
             }
 
             io.Fonts.GetTexDataAsRGBA32(out IntPtr pixels, out int width, out int height, out int bytesPerPixel);
-            
-            if (_fontTexture != null) Destroy(_fontTexture);
+            int maxTextureSize = Mathf.Max(1, SystemInfo.maxTextureSize);
+            if (width <= 0 || height <= 0 || width > maxTextureSize || height > maxTextureSize)
+            {
+                io.Fonts.ClearTexData();
+                throw new InvalidOperationException($"atlas size {width}x{height} exceeds Unity max texture size {maxTextureSize}");
+            }
             
             // Simple clean texture - no mipmaps, no blur hacks needed
             // Font loaded at 64px means typical 30-50px display is only 1.3-2.1x downscale
             // Bilinear filtering handles this well without artifacts
-            _fontTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            _fontTexture.filterMode = FilterMode.Bilinear;
-            _fontTexture.wrapMode = TextureWrapMode.Clamp;
-            _fontTexture.LoadRawTextureData(pixels, width * height * bytesPerPixel);
-            _fontTexture.Apply(false);
+            Texture2D newFontTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            newFontTexture.filterMode = FilterMode.Bilinear;
+            newFontTexture.wrapMode = TextureWrapMode.Clamp;
+            newFontTexture.LoadRawTextureData(pixels, width * height * bytesPerPixel);
+            newFontTexture.Apply(false);
+
+            if (_fontTexture != null) Destroy(_fontTexture);
+            _fontTexture = newFontTexture;
             
             io.Fonts.SetTexID((IntPtr)_fontTexture.GetInstanceID());
             io.Fonts.ClearTexData();
@@ -292,6 +347,25 @@ namespace CheryTools
             {
                 _material.mainTexture = _fontTexture;
             }
+        }
+
+        private static string GetDefaultUIFontPath()
+        {
+            string language = Main.Settings != null
+                ? LocalizationManager.NormalizeLanguage(Main.Settings.Language)
+                : LocalizationManager.DefaultLanguage;
+
+            if (string.Equals(language, "English", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(language, "Korean", StringComparison.OrdinalIgnoreCase))
+            {
+                string localizedFont = System.IO.Path.Combine(Main.ModEntry.Path, LatinKoreanDefaultFontFile);
+                if (System.IO.File.Exists(localizedFont))
+                {
+                    return localizedFont;
+                }
+            }
+
+            return System.IO.Path.Combine(Main.ModEntry.Path, ChineseDefaultFontFile);
         }
 
         private static IntPtr GetLargeFontGlyphRanges()
@@ -481,9 +555,18 @@ namespace CheryTools
 
             ImGui.NewFrame();
 
-            OnImGuiLayout?.Invoke();
-
-            ImGui.Render();
+            try
+            {
+                OnImGuiLayout?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Main.Logger?.Log("[CheryTools] ImGui layout exception: " + ex);
+            }
+            finally
+            {
+                ImGui.Render();
+            }
             UpdateCanvas();
         }
 
@@ -709,6 +792,10 @@ namespace CheryTools
                 uniqueChars.Add(c);
             }
 
+            AddRange(uniqueChars, 0x1100, 0x11FF); // Hangul Jamo
+            AddRange(uniqueChars, 0x3130, 0x318F); // Hangul Compatibility Jamo
+            AddRange(uniqueChars, 0xAC00, 0xD7AF); // Hangul Syllables
+
             var rangesList = new List<ushort>();
             ushort rangeStart = 0;
             ushort prev = 0;
@@ -745,6 +832,14 @@ namespace CheryTools
             var handle = GCHandle.Alloc(rangesArray, GCHandleType.Pinned);
             _pinnedHandles.Add(handle);
             return handle.AddrOfPinnedObject();
+        }
+
+        private static void AddRange(SortedSet<ushort> chars, int start, int end)
+        {
+            for (int c = start; c <= end; c++)
+            {
+                chars.Add((ushort)c);
+            }
         }
     }
 }

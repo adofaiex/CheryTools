@@ -20,6 +20,7 @@ namespace CheryTools
         public int CurrentKPS = 0;
         
         public Dictionary<KVNode, bool> IsNodePressed = new Dictionary<KVNode, bool>();
+        public Dictionary<KVNode, float> KeyPressAnimationProgress = new Dictionary<KVNode, float>();
 
         private Queue<float> _hitTimestamps = new Queue<float>();
         public List<KeyDrop> ActiveDrops = new List<KeyDrop>();
@@ -32,6 +33,8 @@ namespace CheryTools
         private readonly HashSet<KVNode> _pressedNodes = new HashSet<KVNode>();
         private readonly HashSet<KeyCode> _keysToPoll = new HashSet<KeyCode>();
         private readonly Dictionary<KeyCode, KeyPollState> _polledKeys = new Dictionary<KeyCode, KeyPollState>();
+        private readonly Dictionary<KVNode, KVConfiguration> _animationNodeConfigMap = new Dictionary<KVNode, KVConfiguration>();
+        private readonly List<KVNode> _animationKeysBuffer = new List<KVNode>();
         private int _nextDropRenderId = 1;
         private bool _renderDirty = true;
         private long _activeNodesRevision = -1;
@@ -66,6 +69,8 @@ namespace CheryTools
             _activeNodeSet.Clear();
             _keysToPoll.Clear();
             _polledKeys.Clear();
+            _animationNodeConfigMap.Clear();
+            KeyPressAnimationProgress.Clear();
             _pressedNodes.RemoveWhere(node => node == null);
             MarkRenderDirty();
         }
@@ -88,6 +93,8 @@ namespace CheryTools
             CurrentKPS = 0;
             ActiveDrops.Clear();
             _pressedNodes.Clear();
+            KeyPressAnimationProgress.Clear();
+            _animationNodeConfigMap.Clear();
             MarkRenderDirty();
             if (Main.ModEntry != null && Main.Settings != null)
                 Main.RequestSave();
@@ -130,7 +137,7 @@ namespace CheryTools
                 return true;
             }
 
-            return HasActiveKeyRain();
+            return HasActiveKeyRain() || HasActiveKeyPressAnimation();
         }
 
         public void MarkOverlayRendered()
@@ -155,14 +162,145 @@ namespace CheryTools
             {
                 KeyDrop drop = ActiveDrops[i];
                 if (drop == null) continue;
-                KVConfiguration config = drop.Config;
-                if (config == null || config.EnableKeyRain)
+                if (IsKeyRainEnabled(drop.Config, drop.Node))
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        private static bool IsKeyRainEnabled(KVConfiguration config, KVNode node)
+        {
+            if (node == null || node.NodeType != 0)
+            {
+                return false;
+            }
+
+            return node.UseCustomRain ? node.EnableKeyRain : (config != null && config.EnableKeyRain);
+        }
+
+        private static float ResolveKeyRainSpeed(KVConfiguration config, KVNode node)
+        {
+            return config != null ? config.KeyRainSpeed : 800.0f;
+        }
+
+        private static float ResolveKeyRainMaxHeight(KVConfiguration config, KVNode node)
+        {
+            return config != null ? config.KeyRainMaxHeight : 400.0f;
+        }
+
+        private bool HasActiveKeyPressAnimation()
+        {
+            if (KeyPressAnimationProgress.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var pair in KeyPressAnimationProgress)
+            {
+                float progress = pair.Value;
+                if (progress > 0.0001f && progress < 0.9999f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsKeyPressAnimationEnabled(KVConfiguration config, KVNode node)
+        {
+            KeyPressAnimationSettings settings = KeyPressAnimationSettings.Resolve(config, node);
+            return settings.Enabled && settings.Duration > 0f;
+        }
+
+        private void AdvanceKeyPressAnimations(List<KVNode> activeNodes)
+        {
+            if (activeNodes == null || activeNodes.Count == 0)
+            {
+                if (KeyPressAnimationProgress.Count > 0 || _animationNodeConfigMap.Count > 0)
+                {
+                    KeyPressAnimationProgress.Clear();
+                    _animationNodeConfigMap.Clear();
+                    MarkRenderDirty();
+                }
+                return;
+            }
+
+            _activeNodeSet.Clear();
+            for (int i = 0; i < activeNodes.Count; i++)
+            {
+                KVNode node = activeNodes[i];
+                if (node != null)
+                {
+                    _activeNodeSet.Add(node);
+                }
+            }
+
+            bool changed = false;
+            _animationKeysBuffer.Clear();
+            foreach (var pair in KeyPressAnimationProgress)
+            {
+                _animationKeysBuffer.Add(pair.Key);
+            }
+            for (int i = 0; i < _animationKeysBuffer.Count; i++)
+            {
+                KVNode node = _animationKeysBuffer[i];
+                if (node == null || !_activeNodeSet.Contains(node))
+                {
+                    KeyPressAnimationProgress.Remove(node);
+                    _animationNodeConfigMap.Remove(node);
+                    changed = true;
+                }
+            }
+
+            for (int i = 0; i < activeNodes.Count; i++)
+            {
+                KVNode node = activeNodes[i];
+                if (node == null || node.NodeType != 0) continue;
+                _activeNodeConfigMap.TryGetValue(node, out KVConfiguration ownerConfig);
+                KeyPressAnimationSettings animationSettings = KeyPressAnimationSettings.Resolve(ownerConfig, node);
+                if (!animationSettings.Enabled || animationSettings.Duration <= 0f)
+                {
+                    if (KeyPressAnimationProgress.Remove(node))
+                    {
+                        _animationNodeConfigMap.Remove(node);
+                        changed = true;
+                    }
+                    continue;
+                }
+
+                bool pressed = false;
+                IsNodePressed.TryGetValue(node, out pressed);
+                float current = 0f;
+                KeyPressAnimationProgress.TryGetValue(node, out current);
+                float target = pressed ? 1f : 0f;
+                float step = Time.unscaledDeltaTime / Mathf.Max(0.01f, animationSettings.Duration);
+                float next = Mathf.MoveTowards(current, target, step);
+                if (Mathf.Abs(next - current) > 0.0001f)
+                {
+                    KeyPressAnimationProgress[node] = next;
+                    _animationNodeConfigMap[node] = ownerConfig;
+                    changed = true;
+                }
+                else if (next > 0.0001f || pressed)
+                {
+                    KeyPressAnimationProgress[node] = next;
+                    _animationNodeConfigMap[node] = ownerConfig;
+                }
+                else if (KeyPressAnimationProgress.Remove(node))
+                {
+                    _animationNodeConfigMap.Remove(node);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                MarkRenderDirty();
+            }
         }
 
         public List<KVNode> GetEditingNodes()
@@ -256,7 +394,7 @@ namespace CheryTools
 
             float currentTime = Time.unscaledTime;
             bool hasInputActivity = Input.anyKey || Input.anyKeyDown;
-            if (!hasInputActivity && _pressedNodes.Count == 0 && ActiveDrops.Count == 0 && _hitTimestamps.Count == 0)
+            if (!hasInputActivity && _pressedNodes.Count == 0 && ActiveDrops.Count == 0 && _hitTimestamps.Count == 0 && KeyPressAnimationProgress.Count == 0)
             {
                 if (CurrentKPS != 0)
                 {
@@ -340,8 +478,11 @@ namespace CheryTools
                                 Main.Settings.TotalHits++;
                                 _hitTimestamps.Enqueue(currentTime);
                             }
-                            ActiveDrops.Add(new KeyDrop { Node = node, Config = ownerConfig, StartTime = currentTime, EndTime = null, RenderId = "rain_" + (_nextDropRenderId++).ToString() });
-                            MarkRenderDirty();
+                            if (IsKeyRainEnabled(ownerConfig, node))
+                            {
+                                ActiveDrops.Add(new KeyDrop { Node = node, Config = ownerConfig, StartTime = currentTime, EndTime = null, RenderId = "rain_" + (_nextDropRenderId++).ToString() });
+                                MarkRenderDirty();
+                            }
                         }
 
                         // 使用 !isPressed 替代 GetKeyUp，无视丢帧卡顿，只要按键处于松开状态就强制切断雨滴
@@ -368,6 +509,7 @@ namespace CheryTools
                         _pressedNodes.Remove(node);
                     }
                 }
+                AdvanceKeyPressAnimations(activeNodes);
             }
 
             if (ActiveDrops.Count > 0)
@@ -376,8 +518,8 @@ namespace CheryTools
                 {
                     KeyDrop drop = ActiveDrops[i];
                     KVConfiguration config = drop.Config;
-                    float speed = config != null && config.EnableKeyRain ? config.KeyRainSpeed : 800.0f;
-                    float maxHeight = config != null && config.EnableKeyRain ? config.KeyRainMaxHeight : 400.0f;
+                    float speed = ResolveKeyRainSpeed(config, drop.Node);
+                    float maxHeight = ResolveKeyRainMaxHeight(config, drop.Node);
                     float maxLifespan = speed > 0f ? (maxHeight + 200f) / speed : 1f;
                     if (drop.EndTime.HasValue && (currentTime - drop.EndTime.Value) > maxLifespan)
                     {

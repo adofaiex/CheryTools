@@ -91,6 +91,9 @@
   <ItemGroup>
     <Compile Remove="ExternalOverlayBridge.cs" />
     <Compile Remove="ExternalOverlayStateBuilder.cs" />
+    <Compile Remove="CheryToolsUpdater\**\*.cs" />
+    <EmbeddedResource Remove="CheryToolsUpdater\**\*" />
+    <None Remove="CheryToolsUpdater\**\*" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="ImGui.NET" Version="1.91.6.1" />

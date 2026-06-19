@@ -131,6 +131,9 @@ namespace CheryTools
 
         public float[] BackgroundColor = new float[] { 0f, 0f, 0f, 0.45f };
         public float[] FillColor = new float[] { 0.2f, 0.75f, 1f, 0.95f };
+        public bool EnableFillGradient = false;
+        public float[] FillGradientStartColor = new float[] { 1f, 0.25f, 0.25f, 0.95f };
+        public float[] FillGradientEndColor = new float[] { 0.25f, 1f, 0.35f, 0.95f };
         public float[] BorderColor = new float[] { 1f, 1f, 1f, 0.8f };
         public float BorderThickness = 1f;
         public float CornerRadius = 0f;
@@ -144,6 +147,15 @@ namespace CheryTools
         public float LastWidth = 300f;
         [System.Xml.Serialization.XmlIgnore]
         public float LastHeight = 20f;
+    }
+
+    [Serializable]
+    public class KVAxisGradient
+    {
+        public bool VerticalEnabled = false;
+        public bool HorizontalEnabled = false;
+        public float[] VerticalEndColor = new float[] { 1f, 1f, 1f, 1f };
+        public float[] HorizontalEndColor = new float[] { 1f, 1f, 1f, 1f };
     }
 
     [Serializable]
@@ -200,17 +212,33 @@ namespace CheryTools
         public float CountTextShadowSoftness = 0f;
         
         public bool UseCustomColor = false;
+        public bool UseCustomColorGradient = false;
         public float[] ColorBgNormal = new float[] { 0.2f, 0.2f, 0.2f, 0.8f };
         public float[] ColorBgPressed = new float[] { 0.8f, 0.8f, 0.8f, 0.8f };
         public float[] ColorBorderNormal = new float[] { 0.4f, 0.4f, 0.4f, 1.0f };
         public float[] ColorBorderPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
         public float[] ColorTextNormal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
         public float[] ColorTextPressed = new float[] { 0.0f, 0.0f, 0.0f, 1.0f };
+        public KVAxisGradient BackgroundGradientNormal = new KVAxisGradient();
+        public KVAxisGradient BackgroundGradientPressed = new KVAxisGradient();
+        public KVAxisGradient BorderGradientNormal = new KVAxisGradient();
+        public KVAxisGradient BorderGradientPressed = new KVAxisGradient();
+        public KVAxisGradient TextGradientNormal = new KVAxisGradient();
+        public KVAxisGradient TextGradientPressed = new KVAxisGradient();
 
         public int RainRow = 0;
         public bool EnableKeyRain = true;
         public bool UseCustomRain = false;
         public float[] RainColor = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
+        public bool RainGradientEnabled = false;
+        public bool RainHorizontalGradientEnabled = false;
+        public float[] RainGradientEndColor = new float[] { 1.0f, 0.25f, 0.8f, 0.8f };
+        public float[] RainHorizontalGradientEndColor = new float[] { 0.45f, 0.75f, 1.0f, 0.8f };
+        public int RainGradientMode = 0; // 0=UV, 1=Height mask
+        public float RainFadeHeight = 1.0f;
+        public float RainFadePower = 1.0f;
+        public float RainGradientHeight = 1.0f;
+        public float RainGradientPower = 1.0f;
         public float RainWidthRatio = 0.8f;
         public float RainYOffset = 0f;
         public float RainCornerRadius = 0f;
@@ -220,6 +248,15 @@ namespace CheryTools
         public float[] RainShadowOffset = new float[] { 0f, 0f };
         public float RainShadowSoftness = 12f;
         public float RainShadowStrength = 1f;
+
+        public bool UseCustomKeyPressAnimation = false;
+        public bool KeyPressAnimationEnabled = false;
+        public float KeyPressAnimationDuration = 0.12f;
+        public string KeyPressAnimationEasing = "ease-out-quad";
+        public bool KeyPressAnimationAffectColors = true;
+        public float KeyPressAnimationScale = 1.0f;
+        public float KeyPressAnimationOffsetX = 0f;
+        public float KeyPressAnimationOffsetY = 0f;
 
         public int HitCount = 0;
         
@@ -264,6 +301,12 @@ namespace CheryTools
         public float[] ColorBorderPressed = new float[] { 0.8f, 0.4f, 1.0f, 1.0f };
         public float[] ColorTextNormal = new float[] { 0.8f, 0.8f, 0.8f, 1.0f };
         public float[] ColorTextPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
+        public KVAxisGradient BackgroundGradientNormal = new KVAxisGradient();
+        public KVAxisGradient BackgroundGradientPressed = new KVAxisGradient();
+        public KVAxisGradient BorderGradientNormal = new KVAxisGradient();
+        public KVAxisGradient BorderGradientPressed = new KVAxisGradient();
+        public KVAxisGradient TextGradientNormal = new KVAxisGradient();
+        public KVAxisGradient TextGradientPressed = new KVAxisGradient();
         public float[] ColorKps = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
         public float[] ColorTotal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
 
@@ -294,11 +337,30 @@ namespace CheryTools
         public float KeyRainCornerRadius = 0f;
         public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
         public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
+        public bool KeyRainGradientEnabled = false;
+        public bool KeyRainHorizontalGradientEnabled = false;
+        public float[] KeyRainGradientEndColorRow1 = new float[] { 1.0f, 0.25f, 0.8f, 0.8f };
+        public float[] KeyRainGradientEndColorRow2 = new float[] { 0.25f, 1.0f, 0.8f, 0.8f };
+        public float[] KeyRainHorizontalGradientEndColorRow1 = new float[] { 0.45f, 0.75f, 1.0f, 0.8f };
+        public float[] KeyRainHorizontalGradientEndColorRow2 = new float[] { 1.0f, 0.65f, 0.35f, 0.8f };
+        public int KeyRainGradientMode = 0; // 0=UV, 1=Height mask
+        public float KeyRainFadeHeight = 1.0f;
+        public float KeyRainFadePower = 1.0f;
+        public float KeyRainGradientHeight = 1.0f;
+        public float KeyRainGradientPower = 1.0f;
         public bool KeyRainShadowEnabled = false;
         public float[] KeyRainShadowColor = new float[] { 0f, 0f, 0f, 0.35f };
         public float[] KeyRainShadowOffset = new float[] { 0f, 0f };
         public float KeyRainShadowSoftness = 12f;
         public float KeyRainShadowStrength = 1f;
+
+        public bool KeyPressAnimationEnabled = false;
+        public float KeyPressAnimationDuration = 0.12f;
+        public string KeyPressAnimationEasing = "ease-out-quad";
+        public bool KeyPressAnimationAffectColors = true;
+        public float KeyPressAnimationScale = 1.0f;
+        public float KeyPressAnimationOffsetX = 0f;
+        public float KeyPressAnimationOffsetY = 0f;
     }
 
     [Serializable]
@@ -402,6 +464,7 @@ namespace CheryTools
         public bool HideHitTextOverPress = false;
 
         public KeyCode ToggleMenuKey = KeyCode.Insert;
+        public string Language = LocalizationManager.DefaultLanguage;
         public float ImGuiPanelScale = 1.0f;
         public float OverlayUpdateRate = 240.0f;
         public float ImageRenderScale = 1.0f;
@@ -414,6 +477,8 @@ namespace CheryTools
         // Optimization Settings
         public bool DisableAutoplaySpacePause = false;
         public bool DisablePlayModeScrollZoom = false;
+        public bool ToolsAntiBounceKeys = false;
+        public float ToolsAntiBounceIntervalMs = 50f;
         public bool ToolsLimitInput = false;
         public System.Collections.Generic.List<KeyCode> ToolsLimitedKeys = new System.Collections.Generic.List<KeyCode>();
 
@@ -464,6 +529,8 @@ namespace CheryTools
         public float KeyRainSpeed = 800.0f;
         public float KeyRainMaxHeight = 400.0f;
         public int KeyRainFadeMode = 1; // 0=Clip, 1=Fade
+        public float KeyRainFadeHeight = 1.0f;
+        public float KeyRainFadePower = 1.0f;
         public float KeyRainWidthRatio1 = 0.8f;
         public float KeyRainWidthRatio2 = 0.4f;
         public float KeyRainYOffsetRow1 = 0.0f;
@@ -471,6 +538,8 @@ namespace CheryTools
         public float KeyRainCornerRadius = 0f;
         public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
         public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
+        public float KeyRainGradientHeight = 1.0f;
+        public float KeyRainGradientPower = 1.0f;
 
         private static readonly string[] DefaultKeyBindings = new string[16] {
             "Tab", "Alpha1", "Alpha2", "E", "P", "Equals", "Backspace", "Backslash",
@@ -516,6 +585,10 @@ namespace CheryTools
                 ToolsLimitedKeys = new System.Collections.Generic.List<KeyCode>();
             if (ToolsLimitedKeys.Count > 30)
                 ToolsLimitedKeys.RemoveRange(30, ToolsLimitedKeys.Count - 30);
+            if (ToolsAntiBounceIntervalMs <= 0f || float.IsNaN(ToolsAntiBounceIntervalMs) || float.IsInfinity(ToolsAntiBounceIntervalMs))
+                ToolsAntiBounceIntervalMs = 50f;
+            ToolsAntiBounceIntervalMs = Math.Max(1f, Math.Min(500f, ToolsAntiBounceIntervalMs));
+            Language = LocalizationManager.NormalizeLanguage(Language);
             if (ImGuiPanelScale <= 0f || float.IsNaN(ImGuiPanelScale) || float.IsInfinity(ImGuiPanelScale))
                 ImGuiPanelScale = 1.0f;
             ImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, ImGuiPanelScale));
@@ -652,6 +725,10 @@ namespace CheryTools
                 {
                     node.RainColor = (node.RainRow == 1) ? new float[] { 0.8f, 0.5f, 1.0f, 0.8f } : new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
                 }
+                if (node.RainGradientEndColor == null || node.RainGradientEndColor.Length != 4)
+                {
+                    node.RainGradientEndColor = (node.RainRow == 1) ? new float[] { 1.0f, 0.25f, 0.8f, 0.8f } : new float[] { 0.25f, 1.0f, 0.8f, 0.8f };
+                }
                 if (node.RainWidthRatio <= 0.01f)
                 {
                     node.RainWidthRatio = 0.8f;
@@ -720,6 +797,26 @@ namespace CheryTools
             };
         }
 
+        private static KVAxisGradient CloneAxisGradient(KVAxisGradient source, float[] fallbackVertical, float[] fallbackHorizontal)
+        {
+            if (source == null)
+            {
+                return new KVAxisGradient
+                {
+                    VerticalEndColor = CloneColor(fallbackVertical, new float[] { 1f, 1f, 1f, 1f }),
+                    HorizontalEndColor = CloneColor(fallbackHorizontal, new float[] { 1f, 1f, 1f, 1f })
+                };
+            }
+
+            return new KVAxisGradient
+            {
+                VerticalEnabled = source.VerticalEnabled,
+                HorizontalEnabled = source.HorizontalEnabled,
+                VerticalEndColor = CloneColor(source.VerticalEndColor, fallbackVertical),
+                HorizontalEndColor = CloneColor(source.HorizontalEndColor, fallbackHorizontal)
+            };
+        }
+
         private static KVNode CloneKeyViewerNode(KVNode source)
         {
             if (source == null) return new KVNode();
@@ -771,16 +868,32 @@ namespace CheryTools
                 CountTextShadowOffset = ClonePair(source.CountTextShadowOffset, 2f, 2f),
                 CountTextShadowSoftness = source.CountTextShadowSoftness,
                 UseCustomColor = source.UseCustomColor,
+                UseCustomColorGradient = source.UseCustomColorGradient,
                 ColorBgNormal = CloneColor(source.ColorBgNormal, new float[] { 0.2f, 0.2f, 0.2f, 0.8f }),
                 ColorBgPressed = CloneColor(source.ColorBgPressed, new float[] { 0.8f, 0.8f, 0.8f, 0.8f }),
                 ColorBorderNormal = CloneColor(source.ColorBorderNormal, new float[] { 0.4f, 0.4f, 0.4f, 1.0f }),
                 ColorBorderPressed = CloneColor(source.ColorBorderPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
                 ColorTextNormal = CloneColor(source.ColorTextNormal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
                 ColorTextPressed = CloneColor(source.ColorTextPressed, new float[] { 0.0f, 0.0f, 0.0f, 1.0f }),
+                BackgroundGradientNormal = CloneAxisGradient(source.BackgroundGradientNormal, source.ColorBgNormal, source.ColorBgNormal),
+                BackgroundGradientPressed = CloneAxisGradient(source.BackgroundGradientPressed, source.ColorBgPressed, source.ColorBgPressed),
+                BorderGradientNormal = CloneAxisGradient(source.BorderGradientNormal, source.ColorBorderNormal, source.ColorBorderNormal),
+                BorderGradientPressed = CloneAxisGradient(source.BorderGradientPressed, source.ColorBorderPressed, source.ColorBorderPressed),
+                TextGradientNormal = CloneAxisGradient(source.TextGradientNormal, source.ColorTextNormal, source.ColorTextNormal),
+                TextGradientPressed = CloneAxisGradient(source.TextGradientPressed, source.ColorTextPressed, source.ColorTextPressed),
                 RainRow = source.RainRow,
                 EnableKeyRain = source.EnableKeyRain,
                 UseCustomRain = source.UseCustomRain,
                 RainColor = CloneColor(source.RainColor, new float[] { 0.8f, 0.5f, 1.0f, 0.8f }),
+                RainGradientEnabled = source.RainGradientEnabled,
+                RainHorizontalGradientEnabled = source.RainHorizontalGradientEnabled,
+                RainGradientEndColor = CloneColor(source.RainGradientEndColor, new float[] { 1f, 0.25f, 0.8f, 0.8f }),
+                RainHorizontalGradientEndColor = CloneColor(source.RainHorizontalGradientEndColor, new float[] { 0.45f, 0.75f, 1f, 0.8f }),
+                RainGradientMode = source.RainGradientMode,
+                RainFadeHeight = source.RainFadeHeight,
+                RainFadePower = source.RainFadePower,
+                RainGradientHeight = source.RainGradientHeight,
+                RainGradientPower = source.RainGradientPower,
                 RainWidthRatio = source.RainWidthRatio,
                 RainYOffset = source.RainYOffset,
                 RainCornerRadius = source.RainCornerRadius,
@@ -790,6 +903,14 @@ namespace CheryTools
                 RainShadowOffset = ClonePair(source.RainShadowOffset, 0f, 0f),
                 RainShadowSoftness = source.RainShadowSoftness,
                 RainShadowStrength = source.RainShadowStrength,
+                UseCustomKeyPressAnimation = source.UseCustomKeyPressAnimation,
+                KeyPressAnimationEnabled = source.KeyPressAnimationEnabled,
+                KeyPressAnimationDuration = source.KeyPressAnimationDuration,
+                KeyPressAnimationEasing = source.KeyPressAnimationEasing,
+                KeyPressAnimationAffectColors = source.KeyPressAnimationAffectColors,
+                KeyPressAnimationScale = source.KeyPressAnimationScale,
+                KeyPressAnimationOffsetX = source.KeyPressAnimationOffsetX,
+                KeyPressAnimationOffsetY = source.KeyPressAnimationOffsetY,
                 HitCount = source.HitCount
             };
         }
@@ -879,6 +1000,12 @@ namespace CheryTools
                 ColorBorderPressed = CloneColor(source.ColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f }),
                 ColorTextNormal = CloneColor(source.ColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f }),
                 ColorTextPressed = CloneColor(source.ColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
+                BackgroundGradientNormal = CloneAxisGradient(source.BackgroundGradientNormal, source.ColorBgNormal, source.ColorBgNormal),
+                BackgroundGradientPressed = CloneAxisGradient(source.BackgroundGradientPressed, source.ColorBgPressed, source.ColorBgPressed),
+                BorderGradientNormal = CloneAxisGradient(source.BorderGradientNormal, source.ColorBorderNormal, source.ColorBorderNormal),
+                BorderGradientPressed = CloneAxisGradient(source.BorderGradientPressed, source.ColorBorderPressed, source.ColorBorderPressed),
+                TextGradientNormal = CloneAxisGradient(source.TextGradientNormal, source.ColorTextNormal, source.ColorTextNormal),
+                TextGradientPressed = CloneAxisGradient(source.TextGradientPressed, source.ColorTextPressed, source.ColorTextPressed),
                 ColorKps = CloneColor(source.ColorKps, new float[] { 1f, 1f, 1f, 1f }),
                 ColorTotal = CloneColor(source.ColorTotal, new float[] { 1f, 1f, 1f, 1f }),
                 KeyTextOutlineEnabled = source.KeyTextOutlineEnabled,
@@ -906,11 +1033,29 @@ namespace CheryTools
                 KeyRainCornerRadius = source.KeyRainCornerRadius,
                 KeyRainColorRow1 = CloneColor(source.KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1f, 0.8f }),
                 KeyRainColorRow2 = CloneColor(source.KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1f, 0.8f }),
+                KeyRainGradientEnabled = source.KeyRainGradientEnabled,
+                KeyRainHorizontalGradientEnabled = source.KeyRainHorizontalGradientEnabled,
+                KeyRainGradientEndColorRow1 = CloneColor(source.KeyRainGradientEndColorRow1, new float[] { 1f, 0.25f, 0.8f, 0.8f }),
+                KeyRainGradientEndColorRow2 = CloneColor(source.KeyRainGradientEndColorRow2, new float[] { 0.25f, 1f, 0.8f, 0.8f }),
+                KeyRainHorizontalGradientEndColorRow1 = CloneColor(source.KeyRainHorizontalGradientEndColorRow1, new float[] { 0.45f, 0.75f, 1f, 0.8f }),
+                KeyRainHorizontalGradientEndColorRow2 = CloneColor(source.KeyRainHorizontalGradientEndColorRow2, new float[] { 1f, 0.65f, 0.35f, 0.8f }),
+                KeyRainGradientMode = source.KeyRainGradientMode,
+                KeyRainFadeHeight = source.KeyRainFadeHeight,
+                KeyRainFadePower = source.KeyRainFadePower,
+                KeyRainGradientHeight = source.KeyRainGradientHeight,
+                KeyRainGradientPower = source.KeyRainGradientPower,
                 KeyRainShadowEnabled = source.KeyRainShadowEnabled,
                 KeyRainShadowColor = CloneColor(source.KeyRainShadowColor, new float[] { 0f, 0f, 0f, 0.35f }),
                 KeyRainShadowOffset = ClonePair(source.KeyRainShadowOffset, 0f, 0f),
                 KeyRainShadowSoftness = source.KeyRainShadowSoftness,
-                KeyRainShadowStrength = source.KeyRainShadowStrength
+                KeyRainShadowStrength = source.KeyRainShadowStrength,
+                KeyPressAnimationEnabled = source.KeyPressAnimationEnabled,
+                KeyPressAnimationDuration = source.KeyPressAnimationDuration,
+                KeyPressAnimationEasing = source.KeyPressAnimationEasing,
+                KeyPressAnimationAffectColors = source.KeyPressAnimationAffectColors,
+                KeyPressAnimationScale = source.KeyPressAnimationScale,
+                KeyPressAnimationOffsetX = source.KeyPressAnimationOffsetX,
+                KeyPressAnimationOffsetY = source.KeyPressAnimationOffsetY
             };
         }
 
@@ -1027,6 +1172,9 @@ namespace CheryTools
                 ClampValue = source.ClampValue,
                 BackgroundColor = CloneColor(source.BackgroundColor, new float[] { 0f, 0f, 0f, 0.45f }),
                 FillColor = CloneColor(source.FillColor, new float[] { 0.2f, 0.75f, 1f, 0.95f }),
+                EnableFillGradient = source.EnableFillGradient,
+                FillGradientStartColor = CloneColor(source.FillGradientStartColor, new float[] { 1f, 0.25f, 0.25f, 0.95f }),
+                FillGradientEndColor = CloneColor(source.FillGradientEndColor, new float[] { 0.25f, 1f, 0.35f, 0.95f }),
                 BorderColor = CloneColor(source.BorderColor, new float[] { 1f, 1f, 1f, 0.8f }),
                 BorderThickness = source.BorderThickness,
                 CornerRadius = source.CornerRadius,
@@ -1062,6 +1210,12 @@ namespace CheryTools
             config.ColorBorderPressed = CloneColor(KeyViewerColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f });
             config.ColorTextNormal = CloneColor(KeyViewerColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f });
             config.ColorTextPressed = CloneColor(KeyViewerColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.BackgroundGradientNormal = CloneAxisGradient(null, config.ColorBgNormal, config.ColorBgNormal);
+            config.BackgroundGradientPressed = CloneAxisGradient(null, config.ColorBgPressed, config.ColorBgPressed);
+            config.BorderGradientNormal = CloneAxisGradient(null, config.ColorBorderNormal, config.ColorBorderNormal);
+            config.BorderGradientPressed = CloneAxisGradient(null, config.ColorBorderPressed, config.ColorBorderPressed);
+            config.TextGradientNormal = CloneAxisGradient(null, config.ColorTextNormal, config.ColorTextNormal);
+            config.TextGradientPressed = CloneAxisGradient(null, config.ColorTextPressed, config.ColorTextPressed);
             config.ColorKps = CloneColor(KeyViewerColorKps, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             config.ColorTotal = CloneColor(KeyViewerColorTotal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             config.KeyTextOutlineEnabled = KeyViewerKeyTextOutlineEnabled;
@@ -1082,6 +1236,8 @@ namespace CheryTools
             config.KeyRainSpeed = KeyRainSpeed;
             config.KeyRainMaxHeight = KeyRainMaxHeight;
             config.KeyRainFadeMode = KeyRainFadeMode;
+            config.KeyRainFadeHeight = KeyRainFadeHeight;
+            config.KeyRainFadePower = KeyRainFadePower;
             config.KeyRainWidthRatio1 = KeyRainWidthRatio1;
             config.KeyRainWidthRatio2 = KeyRainWidthRatio2;
             config.KeyRainYOffsetRow1 = KeyRainYOffsetRow1;
@@ -1089,6 +1245,21 @@ namespace CheryTools
             config.KeyRainCornerRadius = KeyRainCornerRadius;
             config.KeyRainColorRow1 = CloneColor(KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
             config.KeyRainColorRow2 = CloneColor(KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
+            config.KeyRainGradientEnabled = false;
+            config.KeyRainHorizontalGradientEnabled = false;
+            config.KeyRainGradientEndColorRow1 = new float[] { 1.0f, 0.25f, 0.8f, 0.8f };
+            config.KeyRainGradientEndColorRow2 = new float[] { 0.25f, 1.0f, 0.8f, 0.8f };
+            config.KeyRainHorizontalGradientEndColorRow1 = CloneColor(config.KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
+            config.KeyRainHorizontalGradientEndColorRow2 = CloneColor(config.KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
+            config.KeyRainGradientHeight = KeyRainGradientHeight;
+            config.KeyRainGradientPower = KeyRainGradientPower;
+            config.KeyPressAnimationEnabled = false;
+            config.KeyPressAnimationDuration = 0.12f;
+            config.KeyPressAnimationEasing = "ease-out-quad";
+            config.KeyPressAnimationAffectColors = true;
+            config.KeyPressAnimationScale = 1.0f;
+            config.KeyPressAnimationOffsetX = 0f;
+            config.KeyPressAnimationOffsetY = 0f;
             config.AppearanceMigrated = true;
         }
 
@@ -1121,6 +1292,12 @@ namespace CheryTools
             config.ColorBorderPressed = CloneColor(config.ColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f });
             config.ColorTextNormal = CloneColor(config.ColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f });
             config.ColorTextPressed = CloneColor(config.ColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            config.BackgroundGradientNormal = CloneAxisGradient(config.BackgroundGradientNormal, config.ColorBgNormal, config.ColorBgNormal);
+            config.BackgroundGradientPressed = CloneAxisGradient(config.BackgroundGradientPressed, config.ColorBgPressed, config.ColorBgPressed);
+            config.BorderGradientNormal = CloneAxisGradient(config.BorderGradientNormal, config.ColorBorderNormal, config.ColorBorderNormal);
+            config.BorderGradientPressed = CloneAxisGradient(config.BorderGradientPressed, config.ColorBorderPressed, config.ColorBorderPressed);
+            config.TextGradientNormal = CloneAxisGradient(config.TextGradientNormal, config.ColorTextNormal, config.ColorTextNormal);
+            config.TextGradientPressed = CloneAxisGradient(config.TextGradientPressed, config.ColorTextPressed, config.ColorTextPressed);
             config.ColorKps = CloneColor(config.ColorKps, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             config.ColorTotal = CloneColor(config.ColorTotal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             config.KeyTextOutlineColor = CloneColor(config.KeyTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
@@ -1141,6 +1318,10 @@ namespace CheryTools
             config.KeyRainSpeed = Math.Max(100f, Math.Min(2000f, config.KeyRainSpeed));
             config.KeyRainMaxHeight = Math.Max(100f, Math.Min(1500f, config.KeyRainMaxHeight));
             config.KeyRainFadeMode = Math.Max(0, Math.Min(1, config.KeyRainFadeMode));
+            config.KeyRainFadeHeight = NormalizeRainCurveHeight(config.KeyRainFadeHeight);
+            config.KeyRainFadePower = NormalizeRainCurvePower(config.KeyRainFadePower);
+            config.KeyRainGradientHeight = NormalizeRainCurveHeight(config.KeyRainGradientHeight);
+            config.KeyRainGradientPower = NormalizeRainCurvePower(config.KeyRainGradientPower);
             config.KeyRainWidthRatio1 = Math.Max(0.05f, Math.Min(2.0f, config.KeyRainWidthRatio1));
             config.KeyRainWidthRatio2 = Math.Max(0.05f, Math.Min(2.0f, config.KeyRainWidthRatio2));
             if (float.IsNaN(config.KeyRainCornerRadius) || float.IsInfinity(config.KeyRainCornerRadius) || config.KeyRainCornerRadius < 0f)
@@ -1148,6 +1329,11 @@ namespace CheryTools
             config.KeyRainCornerRadius = Math.Max(0f, Math.Min(256f, config.KeyRainCornerRadius));
             config.KeyRainColorRow1 = CloneColor(config.KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
             config.KeyRainColorRow2 = CloneColor(config.KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
+            config.KeyRainGradientEndColorRow1 = CloneColor(config.KeyRainGradientEndColorRow1, new float[] { 1f, 0.25f, 0.8f, 0.8f });
+            config.KeyRainGradientEndColorRow2 = CloneColor(config.KeyRainGradientEndColorRow2, new float[] { 0.25f, 1f, 0.8f, 0.8f });
+            config.KeyRainHorizontalGradientEndColorRow1 = CloneColor(config.KeyRainHorizontalGradientEndColorRow1, config.KeyRainColorRow1);
+            config.KeyRainHorizontalGradientEndColorRow2 = CloneColor(config.KeyRainHorizontalGradientEndColorRow2, config.KeyRainColorRow2);
+            config.KeyRainGradientMode = Math.Max(0, Math.Min(1, config.KeyRainGradientMode));
             config.KeyRainShadowColor = CloneColor(config.KeyRainShadowColor, new float[] { 0f, 0f, 0f, 0.35f });
             config.KeyRainShadowOffset = ClonePair(config.KeyRainShadowOffset, 0f, 0f);
             NormalizeLegacyKeyRainShadowOffset(config.KeyRainShadowOffset);
@@ -1157,6 +1343,20 @@ namespace CheryTools
                 config.KeyRainShadowStrength = 1f;
             config.KeyRainShadowSoftness = Math.Max(0f, Math.Min(64f, config.KeyRainShadowSoftness));
             config.KeyRainShadowStrength = Math.Max(0f, Math.Min(1f, config.KeyRainShadowStrength));
+            if (float.IsNaN(config.KeyPressAnimationDuration) || float.IsInfinity(config.KeyPressAnimationDuration) || config.KeyPressAnimationDuration <= 0f)
+                config.KeyPressAnimationDuration = 0.12f;
+            config.KeyPressAnimationDuration = Math.Max(0.01f, Math.Min(2.0f, config.KeyPressAnimationDuration));
+            if (string.IsNullOrEmpty(config.KeyPressAnimationEasing))
+                config.KeyPressAnimationEasing = "ease-out-quad";
+            if (float.IsNaN(config.KeyPressAnimationScale) || float.IsInfinity(config.KeyPressAnimationScale))
+                config.KeyPressAnimationScale = 1.0f;
+            config.KeyPressAnimationScale = Math.Max(0.2f, Math.Min(3.0f, config.KeyPressAnimationScale));
+            if (float.IsNaN(config.KeyPressAnimationOffsetX) || float.IsInfinity(config.KeyPressAnimationOffsetX))
+                config.KeyPressAnimationOffsetX = 0f;
+            if (float.IsNaN(config.KeyPressAnimationOffsetY) || float.IsInfinity(config.KeyPressAnimationOffsetY))
+                config.KeyPressAnimationOffsetY = 0f;
+            config.KeyPressAnimationOffsetX = Math.Max(-200f, Math.Min(200f, config.KeyPressAnimationOffsetX));
+            config.KeyPressAnimationOffsetY = Math.Max(-200f, Math.Min(200f, config.KeyPressAnimationOffsetY));
         }
 
         private static void EnsureKeyViewerNodeDefaults(KVNode node)
@@ -1170,6 +1370,26 @@ namespace CheryTools
             if (float.IsNaN(node.RainCornerRadius) || float.IsInfinity(node.RainCornerRadius) || node.RainCornerRadius < 0f)
                 node.RainCornerRadius = 0f;
             node.RainCornerRadius = Math.Max(0f, Math.Min(256f, node.RainCornerRadius));
+            node.ColorBgNormal = CloneColor(node.ColorBgNormal, new float[] { 0.2f, 0.2f, 0.2f, 0.8f });
+            node.ColorBgPressed = CloneColor(node.ColorBgPressed, new float[] { 0.8f, 0.8f, 0.8f, 0.8f });
+            node.ColorBorderNormal = CloneColor(node.ColorBorderNormal, new float[] { 0.4f, 0.4f, 0.4f, 1.0f });
+            node.ColorBorderPressed = CloneColor(node.ColorBorderPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            node.ColorTextNormal = CloneColor(node.ColorTextNormal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
+            node.ColorTextPressed = CloneColor(node.ColorTextPressed, new float[] { 0.0f, 0.0f, 0.0f, 1.0f });
+            node.BackgroundGradientNormal = CloneAxisGradient(node.BackgroundGradientNormal, node.ColorBgNormal, node.ColorBgNormal);
+            node.BackgroundGradientPressed = CloneAxisGradient(node.BackgroundGradientPressed, node.ColorBgPressed, node.ColorBgPressed);
+            node.BorderGradientNormal = CloneAxisGradient(node.BorderGradientNormal, node.ColorBorderNormal, node.ColorBorderNormal);
+            node.BorderGradientPressed = CloneAxisGradient(node.BorderGradientPressed, node.ColorBorderPressed, node.ColorBorderPressed);
+            node.TextGradientNormal = CloneAxisGradient(node.TextGradientNormal, node.ColorTextNormal, node.ColorTextNormal);
+            node.TextGradientPressed = CloneAxisGradient(node.TextGradientPressed, node.ColorTextPressed, node.ColorTextPressed);
+            node.RainColor = CloneColor(node.RainColor, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
+            node.RainGradientEndColor = CloneColor(node.RainGradientEndColor, new float[] { 1f, 0.25f, 0.8f, 0.8f });
+            node.RainHorizontalGradientEndColor = CloneColor(node.RainHorizontalGradientEndColor, node.RainColor);
+            node.RainGradientMode = Math.Max(0, Math.Min(1, node.RainGradientMode));
+            node.RainFadeHeight = NormalizeRainCurveHeight(node.RainFadeHeight);
+            node.RainFadePower = NormalizeRainCurvePower(node.RainFadePower);
+            node.RainGradientHeight = NormalizeRainCurveHeight(node.RainGradientHeight);
+            node.RainGradientPower = NormalizeRainCurvePower(node.RainGradientPower);
             node.RainShadowColor = CloneColor(node.RainShadowColor, new float[] { 0f, 0f, 0f, 0.35f });
             node.RainShadowOffset = ClonePair(node.RainShadowOffset, 0f, 0f);
             NormalizeLegacyKeyRainShadowOffset(node.RainShadowOffset);
@@ -1179,6 +1399,20 @@ namespace CheryTools
                 node.RainShadowStrength = 1f;
             node.RainShadowSoftness = Math.Max(0f, Math.Min(64f, node.RainShadowSoftness));
             node.RainShadowStrength = Math.Max(0f, Math.Min(1f, node.RainShadowStrength));
+            if (float.IsNaN(node.KeyPressAnimationDuration) || float.IsInfinity(node.KeyPressAnimationDuration) || node.KeyPressAnimationDuration <= 0f)
+                node.KeyPressAnimationDuration = 0.12f;
+            node.KeyPressAnimationDuration = Math.Max(0.01f, Math.Min(2.0f, node.KeyPressAnimationDuration));
+            if (string.IsNullOrEmpty(node.KeyPressAnimationEasing))
+                node.KeyPressAnimationEasing = "ease-out-quad";
+            if (float.IsNaN(node.KeyPressAnimationScale) || float.IsInfinity(node.KeyPressAnimationScale))
+                node.KeyPressAnimationScale = 1.0f;
+            node.KeyPressAnimationScale = Math.Max(0.2f, Math.Min(3.0f, node.KeyPressAnimationScale));
+            if (float.IsNaN(node.KeyPressAnimationOffsetX) || float.IsInfinity(node.KeyPressAnimationOffsetX))
+                node.KeyPressAnimationOffsetX = 0f;
+            if (float.IsNaN(node.KeyPressAnimationOffsetY) || float.IsInfinity(node.KeyPressAnimationOffsetY))
+                node.KeyPressAnimationOffsetY = 0f;
+            node.KeyPressAnimationOffsetX = Math.Max(-200f, Math.Min(200f, node.KeyPressAnimationOffsetX));
+            node.KeyPressAnimationOffsetY = Math.Max(-200f, Math.Min(200f, node.KeyPressAnimationOffsetY));
             if (node.NodeType == 4)
                 node.VideoLoop = true;
             if (float.IsNaN(node.VideoContentScale) || float.IsInfinity(node.VideoContentScale) || node.VideoContentScale <= 0f)
@@ -1200,6 +1434,20 @@ namespace CheryTools
                 offset[0] = 0f;
                 offset[1] = 0f;
             }
+        }
+
+        private static float NormalizeRainCurveHeight(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f)
+                value = 1f;
+            return Math.Max(0.05f, Math.Min(3.0f, value));
+        }
+
+        private static float NormalizeRainCurvePower(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f)
+                value = 1f;
+            return Math.Max(0.1f, Math.Min(5.0f, value));
         }
 
         public void EnsureKeyViewerConfigurations()
@@ -1370,6 +1618,10 @@ namespace CheryTools
                 bar.BackgroundColor = new float[] { 0f, 0f, 0f, 0.45f };
             if (bar.FillColor == null || bar.FillColor.Length != 4)
                 bar.FillColor = new float[] { 0.2f, 0.75f, 1f, 0.95f };
+            if (bar.FillGradientStartColor == null || bar.FillGradientStartColor.Length != 4)
+                bar.FillGradientStartColor = new float[] { 1f, 0.25f, 0.25f, 0.95f };
+            if (bar.FillGradientEndColor == null || bar.FillGradientEndColor.Length != 4)
+                bar.FillGradientEndColor = new float[] { 0.25f, 1f, 0.35f, 0.95f };
             if (bar.BorderColor == null || bar.BorderColor.Length != 4)
                 bar.BorderColor = new float[] { 1f, 1f, 1f, 0.8f };
             if (bar.ShadowColor == null || bar.ShadowColor.Length != 4)
@@ -1585,9 +1837,11 @@ namespace CheryTools
             ModEntry = modEntry;
             Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
             Settings.InitNulls();
+            LocalizationManager.Initialize(Settings.Language);
             if (CheryToolsAssets.ImportSettingsAssets(Settings))
             {
                 Settings.Save(modEntry);
+                LocalizationManager.Reload(Settings.Language);
             }
             
             // Allow native DllImport to find cimgui.dll in the mod folder
