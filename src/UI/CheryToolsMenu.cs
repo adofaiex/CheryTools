@@ -1840,39 +1840,39 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private void DrawCloudSyncSection()
 	{
-		ImGui.Text(Tr("settings.cloudSync", "Steam 云存档"));
+		ImGui.Text(Tr("settings.cloudSync", "Steam 云端同步"));
 
 		if (!CloudSettingsManager.IsSteamAvailable)
 		{
-			ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), Tr("settings.cloudSync.steamUnavailable", "Steam 不可用，云存档功能已禁用。请通过 Steam 启动游戏。"));
+			ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), Tr("settings.cloudSync.steamUnavailable", "Steam 不可用，云端同步功能已禁用。请通过 Steam 启动游戏。"));
 			return;
 		}
 
-		if (ImGui.Button(Tr("settings.cloudSync.upload", "上传设置到 Steam 云端"), new Vector2(220f, 0f)))
+		if (ImGui.Button(Tr("settings.cloudSync.upload", "同步 Mod 设置至 Steam 云端"), new Vector2(220f, 0f)))
 		{
 			if (Main.Settings.UploadToCloud(Main.ModEntry))
 			{
-				_cloudSyncStatusMessage = Tr("settings.cloudSync.uploadSuccess", "设置已上传至 Steam 云端。");
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.uploadSuccess", "Mod 设置已同步至 Steam 云端。");
 				_cloudSyncStatusIsError = false;
 			}
 			else
 			{
-				_cloudSyncStatusMessage = Tr("settings.cloudSync.uploadFailed", "上传失败，请查看日志。");
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.uploadFailed", "同步失败，请查看日志。");
 				_cloudSyncStatusIsError = true;
 			}
 		}
 
 		ImGui.SameLine();
-		if (ImGui.Button(Tr("settings.cloudSync.download", "从 Steam 云端下载设置"), new Vector2(220f, 0f)))
+		if (ImGui.Button(Tr("settings.cloudSync.download", "从 Steam 云端同步设置并应用"), new Vector2(220f, 0f)))
 		{
 			if (!CloudSettingsManager.HasCloudFile())
 			{
-				_cloudSyncStatusMessage = Tr("settings.cloudSync.noCloudFile", "云端暂无存档。");
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.noCloudFile", "云端暂无 Mod 设置。");
 				_cloudSyncStatusIsError = true;
 			}
 			else if (Main.Settings.DownloadFromCloud(Main.ModEntry))
 			{
-				_cloudSyncStatusMessage = Tr("settings.cloudSync.downloadSuccess", "已从 Steam 云端下载设置。");
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.downloadSuccess", "已从 Steam 云端同步设置并应用。");
 				_cloudSyncStatusIsError = false;
 
 				if ((Object)KeyViewerManager.Instance != (Object)null)
@@ -1885,7 +1885,7 @@ public class CheryToolsMenu : MonoBehaviour
 			}
 			else
 			{
-				_cloudSyncStatusMessage = Tr("settings.cloudSync.downloadFailed", "下载失败，请查看日志。");
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.downloadFailed", "同步失败，请查看日志。");
 				_cloudSyncStatusIsError = true;
 			}
 		}
