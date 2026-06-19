@@ -579,6 +579,32 @@ namespace CheryTools
             }
         }
 
+        public bool UploadToCloud(UnityModManager.ModEntry modEntry)
+        {
+            if (!CloudSettingsManager.IsSteamAvailable)
+                return false;
+
+            Save(modEntry);
+            return CloudSettingsManager.WriteToCloud(this, modEntry);
+        }
+
+        public bool DownloadFromCloud(UnityModManager.ModEntry modEntry)
+        {
+            if (!CloudSettingsManager.IsSteamAvailable)
+                return false;
+
+            if (!CloudSettingsManager.HasCloudFile())
+                return false;
+
+            if (CloudSettingsManager.TryReadFromCloud(this, modEntry))
+            {
+                InitNulls();
+                Save(modEntry);
+                return true;
+            }
+            return false;
+        }
+
         public void InitNulls()
         {
             if (ToolsLimitedKeys == null)

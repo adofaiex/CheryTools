@@ -1131,6 +1131,9 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private string _languageConfigMessage = "";
 
+	private string _cloudSyncStatusMessage = "";
+	private bool _cloudSyncStatusIsError = false;
+
 	
 
 	private int _selectedKVSidebarTab = -1;
@@ -1832,6 +1835,68 @@ public class CheryToolsMenu : MonoBehaviour
 		if (!string.IsNullOrEmpty(status))
 		{
 			ImGui.TextWrapped(status);
+		}
+	}
+
+	private void DrawCloudSyncSection()
+	{
+		ImGui.Text(Tr("settings.cloudSync", "Steam 云存档"));
+
+		if (!CloudSettingsManager.IsSteamAvailable)
+		{
+			ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), Tr("settings.cloudSync.steamUnavailable", "Steam 不可用，云存档功能已禁用。请通过 Steam 启动游戏。"));
+			return;
+		}
+
+		if (ImGui.Button(Tr("settings.cloudSync.upload", "上传设置到 Steam 云端"), new Vector2(220f, 0f)))
+		{
+			if (Main.Settings.UploadToCloud(Main.ModEntry))
+			{
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.uploadSuccess", "设置已上传至 Steam 云端。");
+				_cloudSyncStatusIsError = false;
+			}
+			else
+			{
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.uploadFailed", "上传失败，请查看日志。");
+				_cloudSyncStatusIsError = true;
+			}
+		}
+
+		ImGui.SameLine();
+		if (ImGui.Button(Tr("settings.cloudSync.download", "从 Steam 云端下载设置"), new Vector2(220f, 0f)))
+		{
+			if (!CloudSettingsManager.HasCloudFile())
+			{
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.noCloudFile", "云端暂无存档。");
+				_cloudSyncStatusIsError = true;
+			}
+			else if (Main.Settings.DownloadFromCloud(Main.ModEntry))
+			{
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.downloadSuccess", "已从 Steam 云端下载设置。");
+				_cloudSyncStatusIsError = false;
+
+				if ((Object)KeyViewerManager.Instance != (Object)null)
+				{
+					KeyViewerManager.Instance.RefreshKeys();
+				}
+				InputInterceptor.UpdateAllowedKeys();
+				VideoTextureManager.Shutdown();
+				ImGuiController.NeedsFontAtlasRebuild = true;
+			}
+			else
+			{
+				_cloudSyncStatusMessage = Tr("settings.cloudSync.downloadFailed", "下载失败，请查看日志。");
+				_cloudSyncStatusIsError = true;
+			}
+		}
+
+		if (!string.IsNullOrEmpty(_cloudSyncStatusMessage))
+		{
+			ImGui.PushStyleColor(ImGuiCol.Text, _cloudSyncStatusIsError
+				? new Vector4(1f, 0.35f, 0.35f, 1f)
+				: new Vector4(0.3f, 1f, 0.45f, 1f));
+			ImGui.TextWrapped(_cloudSyncStatusMessage);
+			ImGui.PopStyleColor();
 		}
 	}
 
@@ -4460,6 +4525,8 @@ public class CheryToolsMenu : MonoBehaviour
 			DrawLocalizationSettings();
 			ImGui.Separator();
 			DrawUpdateSettings();
+			ImGui.Separator();
+			DrawCloudSyncSection();
 			ImGui.Separator();
 			if (!_editingImGuiPanelScale)
 			{
