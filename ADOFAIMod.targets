@@ -1,0 +1,70 @@
+<Project>
+
+    <!-- 根据 GameExePath 计算托管程序集路径 -->
+    <PropertyGroup>
+        <GameDir>$([System.IO.Path]::GetDirectoryName($(GameExePath)))</GameDir>
+        <GameFileName>$([System.IO.Path]::GetFileNameWithoutExtension($(GameExePath)))</GameFileName>
+        <IsWindows>true</IsWindows>
+        <PathSeparator Condition="'$(IsWindows)' == 'true'">\</PathSeparator>
+        <PathSeparator Condition="'$(IsUnix)' == 'true'">/</PathSeparator>
+        <ManagedAssembliesDir>$(GameDir)$(PathSeparator)$(GameFileName)_Data$(PathSeparator)Managed</ManagedAssembliesDir>
+    </PropertyGroup>
+
+    <!-- 验证 GameExePath -->
+    <Target Name="ValidateGameExePath" BeforeTargets="Build">
+        <Error Text="游戏可执行文件不存在：$(GameExePath)。请检查路径是否正确。"
+               Condition="'$(GameExePath)' != '' AND !Exists('$(GameExePath)')" />
+    </Target>
+
+    <!-- 复制文件到 out 文件夹 -->
+    <Target Name="CopyToOut" AfterTargets="Build">
+        <PropertyGroup>
+            <OutDir>$(ProjectDir)out\</OutDir>
+        </PropertyGroup>
+        <RemoveDir Directories="$(OutDir)" Condition="Exists('$(OutDir)')" />
+        <MakeDir Directories="$(OutDir)" />
+        <MakeDir Directories="$(OutDir)Resources" />
+        <ItemGroup>
+            <OutFiles Include="$(OutputPath)$(AssemblyName).dll" />
+            <OutFiles Include="$(OutputPath)$(AssemblyName).pdb" Condition="Exists('$(OutputPath)$(AssemblyName).pdb')" />
+            <OutFiles Include="$(OutputPath)cimgui.dll" Condition="Exists('$(OutputPath)cimgui.dll')" />
+            <OutFiles Include="$(OutputPath)ImGui.NET.dll" Condition="Exists('$(OutputPath)ImGui.NET.dll')" />
+            <OutFiles Include="$(OutputPath)System.Buffers.dll" Condition="Exists('$(OutputPath)System.Buffers.dll')" />
+            <OutFiles Include="$(OutputPath)System.Numerics.Vectors.dll" Condition="Exists('$(OutputPath)System.Numerics.Vectors.dll')" />
+            <OutFiles Include="$(OutputPath)System.Runtime.CompilerServices.Unsafe.dll" Condition="Exists('$(OutputPath)System.Runtime.CompilerServices.Unsafe.dll')" />
+            <OutFiles Include="$(ProjectDir)Info.json" />
+            <OutFiles Include="$(ProjectDir)strings.json" />
+            <OutResourceFiles Include="$(ProjectDir)Resources\**\*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(OutFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+        <Copy SourceFiles="@(OutResourceFiles)" DestinationFolder="$(OutDir)Resources\%(RecursiveDir)" SkipUnchangedFiles="true" />
+        <Message Text="Files copied to out folder: $(OutDir)" Importance="high" />
+    </Target>
+
+    <!-- 部署到游戏 Mods 目录 -->
+    <Target Name="DeployAndLaunch" AfterTargets="CopyToOut" Condition="'$(GameExePath)' != '' AND Exists('$(GameExePath)')">
+        <PropertyGroup>
+            <ModsDir>$(GameDir)$(PathSeparator)Mods$(PathSeparator)$(AssemblyName)$(PathSeparator)</ModsDir>
+        </PropertyGroup>
+
+        <Message Text="Game Directory: $(GameDir)" Importance="high" />
+        <Message Text="Managed Assemblies Path: $(ManagedAssembliesDir)" Importance="high" />
+        <Message Text="Deploying to: $(ModsDir)" Importance="high" />
+
+        <MakeDir Directories="$(ModsDir)" />
+        <MakeDir Directories="$(ModsDir)Resources" />
+        <ItemGroup>
+            <ModFiles Include="$(ProjectDir)out\*.*" Exclude="$(ProjectDir)out\Resources\**\*" />
+            <ModResourceFiles Include="$(ProjectDir)out\Resources\**\*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(ModFiles)" DestinationFolder="$(ModsDir)" SkipUnchangedFiles="true" />
+        <Copy SourceFiles="@(ModResourceFiles)" DestinationFolder="$(ModsDir)Resources\%(RecursiveDir)" SkipUnchangedFiles="true" />
+        <Message Text="Mod deployed to game directory: $(ModsDir)" Importance="high" />
+
+        <!-- Windows 启动命令 -->
+        <Exec Command="start &quot;&quot; &quot;$(GameExePath)&quot;"
+              IgnoreExitCode="true"
+              Condition="'$(AutoLaunchGame)' == 'true' AND '$(IsWindows)' == 'true'" />
+    </Target>
+
+</Project>

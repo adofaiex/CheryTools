@@ -4,6 +4,7 @@
 [Ll]og/
 [Ll]ogs/
 .vs/
+out/
 
 # User/local files
 *.user

@@ -53,8 +53,8 @@ namespace CheryTools
         public static ImFontPtr DefaultLargeFont;      // 128px - for text sizes >72px
         public static bool NeedsFontAtlasRebuild = false;
         private static List<GCHandle> _pinnedHandles = new List<GCHandle>();
-        private const string ChineseDefaultFontFile = "MiSans-Bold.ttf";
-        private const string LatinKoreanDefaultFontFile = "Maplestory OTF Bold.otf";
+        private const string ChineseDefaultFontFile = "Resources/MiSans-Bold.ttf";
+        private const string LatinKoreanDefaultFontFile = "Resources/Maplestory OTF Bold.otf";
 
         void Awake()
         {
