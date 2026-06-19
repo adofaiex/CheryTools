@@ -1828,8 +1828,10 @@ namespace CheryTools
         
         private static UnityEngine.GameObject _imguiGameObject;
 
-        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto, SetLastError = true)]
-        private static extern bool SetDllDirectory(string lpPathName);
+        private static IntPtr _cimguiHandle = IntPtr.Zero;
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr LoadLibrary(string lpFileName);
 
         static bool Load(UnityModManager.ModEntry modEntry)
         {
@@ -1844,8 +1846,7 @@ namespace CheryTools
                 LocalizationManager.Reload(Settings.Language);
             }
             
-            // Allow native DllImport to find cimgui.dll in the mod folder
-            SetDllDirectory(modEntry.Path);
+            EnsureNativeDependenciesLoaded(modEntry);
 
             harmony = new Harmony(modEntry.Info.Id);
 
@@ -1933,6 +1934,28 @@ namespace CheryTools
                 VideoTextureManager.Shutdown();
             }
             return true;
+        }
+
+        private static void EnsureNativeDependenciesLoaded(UnityModManager.ModEntry modEntry)
+        {
+            if (_cimguiHandle != IntPtr.Zero || modEntry == null)
+            {
+                return;
+            }
+
+            string cimguiPath = System.IO.Path.Combine(modEntry.Path, "cimgui.dll");
+            if (!System.IO.File.Exists(cimguiPath))
+            {
+                Logger?.Log("[CheryTools] cimgui.dll not found: " + cimguiPath);
+                return;
+            }
+
+            _cimguiHandle = LoadLibrary(cimguiPath);
+            if (_cimguiHandle == IntPtr.Zero)
+            {
+                int error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                Logger?.Log("[CheryTools] Failed to load cimgui.dll from mod folder. Win32Error=" + error);
+            }
         }
 
         [HarmonyPatch(typeof(scrPlayer), "CountValidKeysPressed")]

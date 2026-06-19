@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
@@ -12,6 +13,7 @@ namespace CheryTools
         private static HashSet<string> _allowedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, float> _lastWentDownTimes = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, int> _lastWentDownFrames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> _loggedWarnings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static bool _filteringEnabled;
         private static bool _inputPatchesApplied;
 
@@ -24,6 +26,7 @@ namespace CheryTools
             bool shouldAntiBounce = Main.IsEnabled
                 && Main.Settings != null
                 && Main.Settings.ToolsAntiBounceKeys;
+            int explicitAllowedKeyCount = 0;
             
             // Default whitelist
             _allowedKeys.Add("Escape");
@@ -32,9 +35,13 @@ namespace CheryTools
             _allowedKeys.Add("RightControl");
             _allowedKeys.Add("F10");
 
-            Action<string> addKeyWithAliases = (k) => {
+            Action<string, bool> addKeyWithAliases = (k, countAsGameplay) => {
                 if (string.IsNullOrEmpty(k)) return;
                 _allowedKeys.Add(k);
+                if (countAsGameplay && IsConfiguredGameplayKeyName(k))
+                {
+                    explicitAllowedKeyCount++;
+                }
 
                 if (k.Equals("Escape", StringComparison.OrdinalIgnoreCase)) _allowedKeys.Add("Esc");
                 if (k.Equals("Esc", StringComparison.OrdinalIgnoreCase)) _allowedKeys.Add("Escape");
@@ -118,7 +125,7 @@ namespace CheryTools
             // Whitelist toggle menu key
             if (Main.Settings != null)
             {
-                addKeyWithAliases(Main.Settings.ToggleMenuKey.ToString());
+                addKeyWithAliases(Main.Settings.ToggleMenuKey.ToString(), false);
 
                 if (Main.Settings.ToolsLimitInput)
                 {
@@ -127,20 +134,20 @@ namespace CheryTools
                         int count = Math.Min(30, Main.Settings.ToolsLimitedKeys.Count);
                         for (int i = 0; i < count; i++)
                         {
-                            addKeyWithAliases(Main.Settings.ToolsLimitedKeys[i].ToString());
+                            addKeyWithAliases(Main.Settings.ToolsLimitedKeys[i].ToString(), true);
                         }
                     }
                 }
                 else if (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput && Main.Settings.KeyViewerConfigurations != null)
                 {
-                    addKeyWithAliases("Space");
+                    addKeyWithAliases("Space", true);
                     foreach (KVConfiguration config in Main.Settings.KeyViewerConfigurations)
                     {
                         if (config == null || !config.IsEnabled || config.Nodes == null) continue;
                         foreach (KVNode node in config.Nodes)
                         {
                             if (node == null || node.NodeType != 0) continue;
-                            addKeyWithAliases(node.KeyBind);
+                            addKeyWithAliases(node.KeyBind, true);
                         }
                     }
                 }
@@ -148,6 +155,14 @@ namespace CheryTools
             else
             {
                 _allowedKeys.Add("Insert");
+            }
+
+            if (shouldLimitInput && explicitAllowedKeyCount <= 0)
+            {
+                shouldLimitInput = false;
+                LogOnce(
+                    "input-limit-no-keys",
+                    "[CheryTools] Input limit was requested, but no playable keys were registered. Falling back to pass-through input.");
             }
 
             _filteringEnabled = shouldLimitInput;
@@ -199,13 +214,33 @@ namespace CheryTools
         public static bool IsKeyAllowed(AnyKeyCode anyKey)
         {
             string keyName = GetKeyName(anyKey);
-            if (string.IsNullOrEmpty(keyName)) return false;
+            if (string.IsNullOrEmpty(keyName) || IsUnknownKeyName(keyName))
+            {
+                LogOnce(
+                    "input-limit-unknown-key",
+                    "[CheryTools] Encountered an unknown keyboard key while input limiting is active. Passing it through to avoid blocking game input.");
+                return true;
+            }
             return _allowedKeys.Contains(keyName);
         }
 
         public static void FilterInputState(RDInputType instance, ButtonState state, ref int result)
         {
-            if (!Main.IsEnabled || Main.Settings == null) return;
+            try
+            {
+                FilterInputStateCore(instance, state, ref result);
+            }
+            catch (Exception ex)
+            {
+                LogOnce(
+                    "input-filter-exception",
+                    "[CheryTools] Input filter failed and was skipped to preserve game input: " + ex.Message);
+            }
+        }
+
+        private static void FilterInputStateCore(RDInputType instance, ButtonState state, ref int result)
+        {
+            if (!Main.IsEnabled || Main.Settings == null || instance == null) return;
 
             bool shouldLimitInput = _filteringEnabled
                 && (Main.Settings.ToolsLimitInput || (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput));
@@ -242,7 +277,7 @@ namespace CheryTools
         private static bool IsBouncedWentDown(AnyKeyCode anyKey)
         {
             string keyName = GetKeyName(anyKey);
-            if (string.IsNullOrEmpty(keyName)) return false;
+            if (string.IsNullOrEmpty(keyName) || IsUnknownKeyName(keyName)) return false;
 
             float now = Time.unscaledTime;
             int frame = Time.frameCount;
@@ -285,9 +320,36 @@ namespace CheryTools
             }
             if (anyKey.value is AsyncKeyCode akc)
             {
+                string label = akc.label.ToString();
+                if (string.Equals(label, "Unknown", StringComparison.OrdinalIgnoreCase) && akc.key != ushort.MaxValue)
+                {
+                    return "AsyncRaw:" + akc.key.ToString(CultureInfo.InvariantCulture);
+                }
                 return akc.label.ToString();
             }
             return null;
+        }
+
+        private static bool IsConfiguredGameplayKeyName(string keyName)
+        {
+            if (string.IsNullOrWhiteSpace(keyName)) return false;
+            if (keyName.Equals("None", StringComparison.OrdinalIgnoreCase)) return false;
+            if (keyName.Equals("Unknown", StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
+        }
+
+        private static bool IsUnknownKeyName(string keyName)
+        {
+            return keyName.Equals("Unknown", StringComparison.OrdinalIgnoreCase)
+                || keyName.StartsWith("AsyncRaw:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void LogOnce(string key, string message)
+        {
+            if (_loggedWarnings.Add(key))
+            {
+                Main.Logger?.Log(message);
+            }
         }
     }
 
