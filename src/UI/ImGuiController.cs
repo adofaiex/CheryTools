@@ -20,6 +20,7 @@ namespace CheryTools
         private float _nextOverlayUpdateTime = 0f;
         private long _lastOverlayRevision = -1;
         private int _lastOverlayStateHash = 0;
+        private readonly HashSet<string> _loggedLayoutExceptions = new HashSet<string>(StringComparer.Ordinal);
 
         private Vector3[] _vertices = new Vector3[0];
         private Vector2[] _uvs = new Vector2[0];
@@ -60,6 +61,7 @@ namespace CheryTools
         {
             _context = ImGui.CreateContext();
             ImGui.SetCurrentContext(_context);
+            ImGuiImeBridge.Initialize();
 
             RebuildFontAtlas();
             ClampPanelStyle();
@@ -122,9 +124,6 @@ namespace CheryTools
             if (!string.IsNullOrEmpty(path) && CustomFonts.TryGetValue(path, out var f1)) return f1;
             string resolvedPath = CheryToolsAssets.ResolveAssetPath(path);
             if (!string.IsNullOrEmpty(resolvedPath) && CustomFonts.TryGetValue(resolvedPath, out var fResolved)) return fResolved;
-            if (Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.KeyViewerFontPath) && CustomFonts.TryGetValue(Main.Settings.KeyViewerFontPath, out var f2)) return f2;
-            string resolvedGlobalPath = Main.Settings != null ? CheryToolsAssets.ResolveAssetPath(Main.Settings.KeyViewerFontPath) : string.Empty;
-            if (!string.IsNullOrEmpty(resolvedGlobalPath) && CustomFonts.TryGetValue(resolvedGlobalPath, out var f3)) return f3;
             return DefaultHighResFont;
         }
 
@@ -200,7 +199,7 @@ namespace CheryTools
                     ? io.Fonts.AddFontFromFileTTF(defaultFontPath, 128.0f, null, largeFontRanges)
                     : DefaultHighResFont;
 
-                string chineseFontPath = System.IO.Path.Combine(Main.ModEntry.Path, ChineseDefaultFontFile);
+                string chineseFontPath = ResolveBundledFontPath(ChineseDefaultFontFile);
                 if (!string.Equals(defaultFontPath, chineseFontPath, StringComparison.OrdinalIgnoreCase)
                     && System.IO.File.Exists(chineseFontPath))
                 {
@@ -274,21 +273,6 @@ namespace CheryTools
                 }
             }
 
-            if (loadCustomFonts && Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.KeyViewerFontPath))
-            {
-                string fontKey = Main.Settings.KeyViewerFontPath;
-                string resolvedFontPath = CheryToolsAssets.ResolveAssetPath(fontKey);
-                if (!CustomFonts.ContainsKey(fontKey) && !CustomFonts.ContainsKey(resolvedFontPath) && System.IO.File.Exists(resolvedFontPath))
-                {
-                    try {
-                        var ptr = io.Fonts.AddFontFromFileTTF(resolvedFontPath, 48.0f, null, customChineseCommon);
-                        StoreFont(CustomFonts, fontKey, resolvedFontPath, ptr);
-                    } catch (Exception e) {
-                        Main.Logger.Log($"Failed to load font {resolvedFontPath}: {e.Message}");
-                    }
-                }
-            }
-
             if (loadCustomFonts && Main.Settings != null)
             {
                 var allNodes = Main.Settings.GetAllKeyViewerNodes();
@@ -358,14 +342,56 @@ namespace CheryTools
             if (string.Equals(language, "English", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(language, "Korean", StringComparison.OrdinalIgnoreCase))
             {
-                string localizedFont = System.IO.Path.Combine(Main.ModEntry.Path, LatinKoreanDefaultFontFile);
+                string localizedFont = ResolveBundledFontPath(LatinKoreanDefaultFontFile);
                 if (System.IO.File.Exists(localizedFont))
                 {
                     return localizedFont;
                 }
             }
 
-            return System.IO.Path.Combine(Main.ModEntry.Path, ChineseDefaultFontFile);
+            return ResolveBundledFontPath(ChineseDefaultFontFile);
+        }
+
+        private static string ResolveBundledFontPath(string relativePath)
+        {
+            if (string.IsNullOrEmpty(relativePath))
+            {
+                return string.Empty;
+            }
+
+            string normalized = relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar);
+            var roots = new List<string>();
+            if (Main.ModEntry != null && !string.IsNullOrEmpty(Main.ModEntry.Path))
+            {
+                roots.Add(Main.ModEntry.Path);
+            }
+            roots.Add(AppDomain.CurrentDomain.BaseDirectory);
+            roots.Add(System.IO.Directory.GetCurrentDirectory());
+
+            for (int i = 0; i < roots.Count; i++)
+            {
+                string root = roots[i];
+                if (string.IsNullOrEmpty(root))
+                {
+                    continue;
+                }
+
+                string candidate = System.IO.Path.Combine(root, normalized);
+                if (System.IO.File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            string resolvedAssetPath = CheryToolsAssets.ResolveAssetPath(relativePath);
+            if (System.IO.File.Exists(resolvedAssetPath))
+            {
+                return resolvedAssetPath;
+            }
+
+            return Main.ModEntry != null && !string.IsNullOrEmpty(Main.ModEntry.Path)
+                ? System.IO.Path.Combine(Main.ModEntry.Path, normalized)
+                : normalized;
         }
 
         private static IntPtr GetLargeFontGlyphRanges()
@@ -463,6 +489,7 @@ namespace CheryTools
 
         void OnDestroy()
         {
+            ImGuiImeBridge.Shutdown();
             if (_context != IntPtr.Zero)
             {
                 ImGui.DestroyContext(_context);
@@ -504,6 +531,7 @@ namespace CheryTools
 
             if (!ShouldRenderImGui())
             {
+                ImGuiImeBridge.Suspend();
                 ClearImGuiCanvasOnce();
                 return;
             }
@@ -514,6 +542,7 @@ namespace CheryTools
             io.DisplaySize = new System.Numerics.Vector2(Screen.width / panelScale, Screen.height / panelScale);
             io.DisplayFramebufferScale = System.Numerics.Vector2.One;
             io.DeltaTime = Mathf.Max(Time.unscaledDeltaTime, 0.001f); // Fix assert when paused
+            ImGuiImeBridge.BeginFrame();
 
             io.AddMousePosEvent(Input.mousePosition.x / panelScale, (Screen.height - Input.mousePosition.y) / panelScale);
             io.AddMouseButtonEvent(0, Input.GetMouseButton(0));
@@ -521,16 +550,7 @@ namespace CheryTools
             io.AddMouseButtonEvent(2, Input.GetMouseButton(2));
             io.AddMouseWheelEvent(0f, Input.mouseScrollDelta.y);
 
-            if (!string.IsNullOrEmpty(Input.inputString))
-            {
-                foreach (char c in Input.inputString)
-                {
-                    if (c != '\b' && c != '\r' && c != '\n')
-                    {
-                        io.AddInputCharacter(c);
-                    }
-                }
-            }
+            ImGuiImeBridge.AddInputCharacters(io, Input.inputString);
 
             io.AddKeyEvent(ImGuiKey.Backspace, Input.GetKey(KeyCode.Backspace));
             io.AddKeyEvent(ImGuiKey.Delete, Input.GetKey(KeyCode.Delete));
@@ -561,23 +581,37 @@ namespace CheryTools
             }
             catch (Exception ex)
             {
-                Main.Logger?.Log("[CheryTools] ImGui layout exception: " + ex);
+                // A broken widget can throw every frame. Keep the first full report for
+                // diagnostics without turning the UMM logger into a per-frame hot path.
+                string signature = ex.GetType().FullName + ": " + ex.Message;
+                if (_loggedLayoutExceptions.Add(signature))
+                {
+                    Main.Logger?.Log("[CheryTools] ImGui layout exception: " + ex);
+                }
             }
             finally
             {
-                ImGui.Render();
+                ImGuiImeBridge.DrawCompositionPreview();
+                try
+                {
+                    ImGui.Render();
+                }
+                finally
+                {
+                    ImGuiImeBridge.EndFrame();
+                }
             }
             UpdateCanvas();
         }
 
         private static bool ShouldRenderImGui()
         {
-            return CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen;
+            return CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen || OvTokenNodeEditor.IsOpen;
         }
 
         private bool ShouldUpdateOverlay()
         {
-            if (CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen)
+            if (CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen || OvTokenNodeEditor.IsOpen)
             {
                 _nextOverlayUpdateTime = Time.unscaledTime;
                 return true;
@@ -607,6 +641,12 @@ namespace CheryTools
                 return true;
             }
 
+            // Check visibility AFTER state hash to ensure state changes are detected
+            if (!HasAnyVisibleOverlay())
+            {
+                return false;
+            }
+
             bool keyViewerNeedsUpdate = KeyViewerManager.Instance != null && KeyViewerManager.Instance.ShouldUpdateOverlay(now, rate);
             bool overlayerNeedsUpdate = OverlayerManager.Instance != null && OverlayerManager.Instance.ShouldUpdateOverlay(now, rate);
             if (!keyViewerNeedsUpdate && !overlayerNeedsUpdate)
@@ -623,6 +663,18 @@ namespace CheryTools
             return true;
         }
 
+        private static bool HasAnyVisibleOverlay()
+        {
+            // Preserve short-circuiting here: visibility checks run from Update(), so
+            // there is no reason to scan OV collections when KV is already visible.
+            if (KeyViewerOverlay.Instance != null && KeyViewerOverlay.Instance.ShouldRenderOverlayNow())
+            {
+                return true;
+            }
+
+            return OverlayerManager.Instance != null && OverlayerManager.Instance.ShouldRenderOverlayNow();
+        }
+
         private int BuildOverlayStateHash()
         {
             unchecked
@@ -634,6 +686,7 @@ namespace CheryTools
                 hash = hash * 31 + (Main.IsGamePlaying() ? 1 : 0);
                 hash = hash * 31 + (CheryToolsMenu.IsMenuOpen ? 1 : 0);
                 hash = hash * 31 + (FreeMakeEditor.IsOpen ? 1 : 0);
+                hash = hash * 31 + (OvTokenNodeEditor.IsOpen ? 1 : 0);
                 if (Main.Settings != null)
                 {
                     hash = hash * 31 + (Main.Settings.EnableKeyViewer ? 1 : 0);

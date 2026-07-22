@@ -34,11 +34,11 @@
   <Import Project="ADOFAIMod.targets" />
 
   <ItemGroup>
-    <Compile Remove="CheryToolsUpdater\**\*.cs" />
+    <Compile Remove="Backups\**\*.cs" />
+    <None Remove="Backups\**\*" />
+    <Content Remove="Backups\**\*" />
     <Compile Remove="src\Features\Overlayer\ExternalOverlayBridge.cs" />
     <Compile Remove="src\Features\Overlayer\ExternalOverlayStateBuilder.cs" />
-    <EmbeddedResource Remove="CheryToolsUpdater\**\*" />
-    <None Remove="CheryToolsUpdater\**\*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -118,8 +118,8 @@
       <HintPath>$(ManagedAssembliesDir)\UnityEngine.JSONSerializeModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="com.rlabrecque.steamworks.net">
-      <HintPath>$(ManagedAssembliesDir)\com.rlabrecque.steamworks.net.dll</HintPath>
+    <Reference Include="Facepunch.Steamworks.Win64">
+      <HintPath>$(ManagedAssembliesDir)\Facepunch.Steamworks.Win64.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="System.IO.Compression" />

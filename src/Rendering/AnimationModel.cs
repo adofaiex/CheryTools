@@ -113,13 +113,19 @@ namespace CheryTools
 
     public static class EasingUtil
     {
+        private static readonly Dictionary<string, string> NormalizedNames = new Dictionary<string, string>(StringComparer.Ordinal);
+
         // 缓动函数工具
         public static float EvaluateEasing(float t, string easingName)
         {
             if (string.IsNullOrEmpty(easingName)) return t;
             
             t = Math.Max(0f, Math.Min(1f, t));
-            string easeLower = easingName.ToLowerInvariant().Replace("-", "").Replace(" ", "");
+            if (!NormalizedNames.TryGetValue(easingName, out string easeLower))
+            {
+                easeLower = easingName.ToLowerInvariant().Replace("-", "").Replace(" ", "");
+                if (NormalizedNames.Count < 128) NormalizedNames[easingName] = easeLower;
+            }
             
             if (easeLower.Contains("linear")) return t;
             

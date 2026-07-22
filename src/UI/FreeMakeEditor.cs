@@ -23,6 +23,8 @@ public static class FreeMakeEditor
 	private static int _editMode = 0;
 
 	private static List<KVNode> _selectedNodes = new List<KVNode>();
+	private static readonly List<KVNode> _nodeClipboard = new List<KVNode>();
+	private static int _pasteSerial = 0;
 
 	private static bool _isDraggingCanvas = false;
 
@@ -40,6 +42,7 @@ public static class FreeMakeEditor
 	private static readonly List<KVNode> _drawNodesBuffer = new List<KVNode>();
 	private static readonly List<KVNode> _hitNodesBuffer = new List<KVNode>();
 	private static readonly string[] NodeTypeItems = new string[5] { "普通按键", "KPS面板", "Total面板", "背景贴图", "循环视频" };
+	private static readonly string[] TextAlignmentItems = new string[3] { "左对齐", "居中对齐", "右对齐" };
 	private static float _lastCanvasClickTime = -10f;
 	private static Vector2 _lastCanvasClickPos = new Vector2(float.MinValue, float.MinValue);
 	private static bool _dragMoved = false;
@@ -141,52 +144,6 @@ public static class FreeMakeEditor
 		Array.Copy(source, target, 4);
 	}
 
-	private static void CopyAxisGradient(KVAxisGradient source, ref KVAxisGradient target)
-	{
-		if (source == null) return;
-		if (target == null) target = new KVAxisGradient();
-		target.VerticalEnabled = source.VerticalEnabled;
-		target.HorizontalEnabled = source.HorizontalEnabled;
-		CopyColor(source.VerticalEndColor, ref target.VerticalEndColor);
-		CopyColor(source.HorizontalEndColor, ref target.HorizontalEndColor);
-	}
-
-	private static bool DrawAxisGradientSettings(string label, string id, KVAxisGradient gradient)
-	{
-		if (gradient == null) return false;
-		bool changed = false;
-		ImGui.Text(label);
-		ImGui.Indent();
-		bool verticalEnabled = gradient.VerticalEnabled;
-		if (ImGui.Checkbox("纵向渐变##" + id + "_v_enable", ref verticalEnabled))
-		{
-			gradient.VerticalEnabled = verticalEnabled;
-			changed = true;
-		}
-		if (verticalEnabled)
-		{
-			if (DrawColorPicker("底部颜色##" + id + "_v_color", gradient.VerticalEndColor))
-			{
-				changed = true;
-			}
-		}
-		bool horizontalEnabled = gradient.HorizontalEnabled;
-		if (ImGui.Checkbox("横向渐变##" + id + "_h_enable", ref horizontalEnabled))
-		{
-			gradient.HorizontalEnabled = horizontalEnabled;
-			changed = true;
-		}
-		if (horizontalEnabled)
-		{
-			if (DrawColorPicker("右侧颜色##" + id + "_h_color", gradient.HorizontalEndColor))
-			{
-				changed = true;
-			}
-		}
-		ImGui.Unindent();
-		return changed;
-	}
-
 	private static bool ImportResourcePath(ref string path, string category, bool rebuildFonts)
 	{
 		string imported = CheryToolsAssets.ImportExternalAsset(path, category);
@@ -224,6 +181,130 @@ public static class FreeMakeEditor
 			}
 		}
 		return false;
+	}
+
+	private static bool ShouldHandleEditorShortcuts(List<KVNode> nodes)
+	{
+		if (nodes == null || !IsOpen || _keyBindCaptureNode != null)
+		{
+			return false;
+		}
+
+		ImGuiIOPtr io = ImGui.GetIO();
+		return !io.WantTextInput && ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
+	}
+
+	private static void DeleteSelectedNodes(List<KVNode> nodes)
+	{
+		if (nodes == null || _selectedNodes.Count == 0)
+		{
+			return;
+		}
+
+		bool removed = false;
+		foreach (KVNode selectedNode in _selectedNodes.ToArray())
+		{
+			removed |= nodes.Remove(selectedNode);
+		}
+
+		if (!removed)
+		{
+			return;
+		}
+
+		_selectedNodes.Clear();
+		InputInterceptor.UpdateAllowedKeys();
+		Main.RequestSave();
+	}
+
+	private static void CopySelectedNodes()
+	{
+		_nodeClipboard.Clear();
+		foreach (KVNode selectedNode in _selectedNodes)
+		{
+			if (selectedNode == null)
+			{
+				continue;
+			}
+
+			_nodeClipboard.Add((Main.Settings != null ? Main.Settings.CloneKeyViewerNodeForEditor(selectedNode) : new KVNode()));
+		}
+		_pasteSerial = 0;
+	}
+
+	private static void PasteClipboardNodes(List<KVNode> nodes)
+	{
+		if (nodes == null || _nodeClipboard.Count == 0)
+		{
+			return;
+		}
+
+		_pasteSerial++;
+		float offset = 20f * _pasteSerial;
+		bool alreadyHasVideo = nodes.Any(node => node != null && node.NodeType == 4);
+		var pasted = new List<KVNode>();
+
+		foreach (KVNode template in _nodeClipboard)
+		{
+			if (template == null)
+			{
+				continue;
+			}
+
+			if (template.NodeType == 4 && alreadyHasVideo)
+			{
+				continue;
+			}
+
+			KVNode clone = Main.Settings != null ? Main.Settings.CloneKeyViewerNodeForEditor(template) : new KVNode();
+			clone.PositionX += offset;
+			clone.PositionY += offset;
+			nodes.Add(clone);
+			pasted.Add(clone);
+			if (clone.NodeType == 4)
+			{
+				alreadyHasVideo = true;
+			}
+		}
+
+		if (pasted.Count == 0)
+		{
+			return;
+		}
+
+		_selectedNodes.Clear();
+		_selectedNodes.AddRange(pasted);
+		InputInterceptor.UpdateAllowedKeys();
+		Main.RequestSave();
+	}
+
+	private static void HandleEditorShortcuts(List<KVNode> nodes)
+	{
+		if (!ShouldHandleEditorShortcuts(nodes))
+		{
+			return;
+		}
+
+		bool ctrl = UnityEngine.Input.GetKey(UnityEngine.KeyCode.LeftControl) || UnityEngine.Input.GetKey(UnityEngine.KeyCode.RightControl);
+		if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Delete))
+		{
+			DeleteSelectedNodes(nodes);
+			return;
+		}
+
+		if (!ctrl)
+		{
+			return;
+		}
+
+		if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.C))
+		{
+			CopySelectedNodes();
+		}
+		else if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.V))
+		{
+			PasteClipboardNodes(nodes);
+		}
 	}
 
 	private static string GetPropertyPanelScopeId()
@@ -580,6 +661,7 @@ public static class FreeMakeEditor
 			{
 				StopKeyBindCapture();
 			}
+			HandleEditorShortcuts(list);
 			ImGui.BeginChild("FM_Sidebar", new Vector2(120f, 0f), ImGuiChildFlags.Borders);
 			if (ImGui.Selectable(Tr("freemake.mode.keys", "按键模式"), _editMode == 0))
 			{
@@ -623,13 +705,7 @@ public static class FreeMakeEditor
 			}
 			if (ImGui.Button(Tr("freemake.deleteSelected", "删除选中节点")))
 			{
-				foreach (KVNode selectedNode in _selectedNodes)
-				{
-					list.Remove(selectedNode);
-				}
-				_selectedNodes.Clear();
-				InputInterceptor.UpdateAllowedKeys();
-				Main.RequestSave();
+				DeleteSelectedNodes(list);
 			}
 			ImGui.EndChild();
 			ImGui.SameLine();
@@ -692,8 +768,8 @@ public static class FreeMakeEditor
 			windowDrawList.AddRect(screenBoundsMin, screenBoundsMax, 1728053247u, 0f, ImDrawFlags.None, 2f);
 			string boundsLabel = $"游戏屏幕范围 ({displaySize.X:F0} x {displaySize.Y:F0})";
 			windowDrawList.AddText(ImGui.GetFont(), 14f * _canvasZoom, new Vector2(screenBoundsMin.X + 8f * _canvasZoom, screenBoundsMin.Y + 8f * _canvasZoom), 1728053247u, boundsLabel);
-			float keyViewerScale = editingConfig != null ? editingConfig.Scale : Main.Settings.KeyViewerScale;
-			float configBorderThickness = editingConfig != null ? editingConfig.BorderThickness : Main.Settings.KeyViewerBorderThickness;
+			float keyViewerScale = editingConfig != null ? editingConfig.Scale : 1f;
+			float configBorderThickness = editingConfig != null ? editingConfig.BorderThickness : 2f;
 			bool flag2 = false;
 			_hitNodesBuffer.Clear();
 			BuildDrawNodes(list);
@@ -1075,68 +1151,6 @@ public static class FreeMakeEditor
 								Array.Copy(_selectedNodes[0].ColorTextPressed, selectedNode16.ColorTextPressed, 4);
 							}
 							Main.RequestSave();
-						}
-						bool useCustomColorGradient = _selectedNodes[0].UseCustomColorGradient;
-						if (ImGui.Checkbox("启用独立颜色渐变##fm_use_custom_color_gradient", ref useCustomColorGradient))
-						{
-							foreach (KVNode selectedNode in _selectedNodes)
-							{
-								selectedNode.UseCustomColorGradient = useCustomColorGradient;
-							}
-							Main.RequestSave();
-						}
-						if (useCustomColorGradient)
-						{
-							ImGui.Indent();
-							if (DrawAxisGradientSettings("常规背景渐变", "fm_bg_norm_grad", _selectedNodes[0].BackgroundGradientNormal))
-							{
-								foreach (KVNode selectedNode in _selectedNodes)
-								{
-									CopyAxisGradient(_selectedNodes[0].BackgroundGradientNormal, ref selectedNode.BackgroundGradientNormal);
-								}
-								Main.RequestSave();
-							}
-							if (DrawAxisGradientSettings("触发背景渐变", "fm_bg_press_grad", _selectedNodes[0].BackgroundGradientPressed))
-							{
-								foreach (KVNode selectedNode in _selectedNodes)
-								{
-									CopyAxisGradient(_selectedNodes[0].BackgroundGradientPressed, ref selectedNode.BackgroundGradientPressed);
-								}
-								Main.RequestSave();
-							}
-							if (DrawAxisGradientSettings("常规边框渐变", "fm_border_norm_grad", _selectedNodes[0].BorderGradientNormal))
-							{
-								foreach (KVNode selectedNode in _selectedNodes)
-								{
-									CopyAxisGradient(_selectedNodes[0].BorderGradientNormal, ref selectedNode.BorderGradientNormal);
-								}
-								Main.RequestSave();
-							}
-							if (DrawAxisGradientSettings("触发边框渐变", "fm_border_press_grad", _selectedNodes[0].BorderGradientPressed))
-							{
-								foreach (KVNode selectedNode in _selectedNodes)
-								{
-									CopyAxisGradient(_selectedNodes[0].BorderGradientPressed, ref selectedNode.BorderGradientPressed);
-								}
-								Main.RequestSave();
-							}
-							if (DrawAxisGradientSettings("常规文字渐变", "fm_text_norm_grad", _selectedNodes[0].TextGradientNormal))
-							{
-								foreach (KVNode selectedNode in _selectedNodes)
-								{
-									CopyAxisGradient(_selectedNodes[0].TextGradientNormal, ref selectedNode.TextGradientNormal);
-								}
-								Main.RequestSave();
-							}
-							if (DrawAxisGradientSettings("触发文字渐变", "fm_text_press_grad", _selectedNodes[0].TextGradientPressed))
-							{
-								foreach (KVNode selectedNode in _selectedNodes)
-								{
-									CopyAxisGradient(_selectedNodes[0].TextGradientPressed, ref selectedNode.TextGradientPressed);
-								}
-								Main.RequestSave();
-							}
-							ImGui.Unindent();
 						}
 					}
 					}
@@ -1531,23 +1545,15 @@ public static class FreeMakeEditor
 								{
 									ImGui.OpenPopup("fm_keypress_anim_easing_popup");
 								}
-								if (ImGui.BeginPopup("fm_keypress_anim_easing_popup"))
+								string selectedEasing = _selectedNodes[0].KeyPressAnimationEasing ?? "ease-out-quad";
+								if (CheryToolsMenu.DrawEasingSelectorPopup("fm_keypress_anim_easing_popup", ref selectedEasing))
 								{
-									string[] easingNames = new string[] { "linear", "ease-out-quad", "ease-in-out-quad", "ease-out-cubic", "ease-out-back", "ease-in-out-sine" };
-									for (int i = 0; i < easingNames.Length; i++)
+									foreach (KVNode selectedNode in _selectedNodes)
 									{
-										string easingName = easingNames[i];
-										if (ImGui.Selectable(easingName, string.Equals(_selectedNodes[0].KeyPressAnimationEasing, easingName, StringComparison.OrdinalIgnoreCase)))
-										{
-											foreach (KVNode selectedNode in _selectedNodes)
-											{
-												if (selectedNode.NodeType != 0) continue;
-												selectedNode.KeyPressAnimationEasing = easingName;
-											}
-											Main.RequestSave();
-										}
+										if (selectedNode.NodeType != 0) continue;
+										selectedNode.KeyPressAnimationEasing = selectedEasing;
 									}
-									ImGui.EndPopup();
+									Main.RequestSave();
 								}
 								ImGui.Unindent();
 							}
@@ -1644,6 +1650,21 @@ public static class FreeMakeEditor
 							selectedNode20.CountScale = v13;
 						}
 						Main.RequestSave();
+					}
+					KVNode countAlignmentSource = _selectedNodes.FirstOrDefault(n => n != null && (n.NodeType == 0 || n.NodeType == 1 || n.NodeType == 2));
+					if (countAlignmentSource != null)
+					{
+						int countTextAlignment = Math.Max(0, Math.Min(2, countAlignmentSource.CountTextAlignment));
+						if (ImGui.Combo("计数数字对齐##fm_count_text_alignment", ref countTextAlignment, TextAlignmentItems, TextAlignmentItems.Length))
+						{
+							countTextAlignment = Math.Max(0, Math.Min(2, countTextAlignment));
+							foreach (KVNode selectedNode in _selectedNodes)
+							{
+								if (selectedNode == null || (selectedNode.NodeType != 0 && selectedNode.NodeType != 1 && selectedNode.NodeType != 2)) continue;
+								selectedNode.CountTextAlignment = countTextAlignment;
+							}
+							Main.RequestSave();
+						}
 					}
 					float v14 = _selectedNodes[0].CountOffsetX;
 					if (ImGui.DragFloat("计数文字X偏移", ref v14, 1f))

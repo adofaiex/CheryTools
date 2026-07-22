@@ -42,10 +42,10 @@ namespace CheryTools
         private static readonly Regex RichTagRegex = new Regex(@"</?(color|size)(=[^>]+)?>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly HashSet<string> KnownTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "{fps}", "{kps}", "{tot}", "{combo}", "{combo:p}", "{music}", "{ttile}", "{atile}",
+            "{fps}", "{combo}", "{combo:p}", "{score}", "{music}", "{artist}", "{title}", "{ttile}", "{atile}",
             "{level}", "{x}", "{xperfect:xpp}", "{xperfect:epp}", "{xperfect:lpp}", "{bpm}", "{tbpm}",
             "{cbpm}", "{cur}", "{maptime}", "{maptime:p}", "{musictime}", "{musictime:p}", "{datey}",
-            "{datem}", "{dated}", "{wtime}", "{wtime12}", "{judge}", "{interval}", "{acc}", "{xacc}",
+            "{datem}", "{dated}", "{wtime}", "{wtime12}", "{judge}", "{interval}", "{timing}", "{acc}", "{xacc}",
             "{progress}", "{te}", "{ve}", "{ep}", "{p}", "{lp}", "{vl}", "{tl}", "{fm}", "{fo}",
             "{miss}"
         };
@@ -155,6 +155,17 @@ namespace CheryTools
                 lineStarts = BuildLineStarts(text);
                 contentWidth = Math.Max(ImGui.GetContentRegionAvail().X, GetContentWidth(text, lineStarts) + 24f);
                 totalHeight = Math.Max(lineHeight, lineStarts.Count * lineHeight);
+            }
+
+            if (state.Active)
+            {
+                CursorToLineColumn(text, lineStarts, state.Cursor, out int imeLine, out int imeColumn);
+                int imeLineStart = lineStarts[Math.Max(0, Math.Min(imeLine, lineStarts.Count - 1))];
+                int imeLineEnd = GetLineEndByIndex(text, lineStarts, imeLine);
+                string imeLineText = text.Substring(imeLineStart, Math.Max(0, imeLineEnd - imeLineStart));
+                float imeX = start.X + 38f + CalcWidth(imeLineText, 0, Math.Min(imeColumn, imeLineText.Length));
+                float imeY = start.Y + imeLine * lineHeight;
+                ImGuiImeBridge.RequestCustomTextInput(new Vector2(imeX, imeY), lineHeight);
             }
 
             DrawEditor(text, state, lineStarts, start, lineHeight, state.Active);
@@ -371,8 +382,6 @@ namespace CheryTools
             uint gutterColor = ImGui.GetColorU32(new Vector4(0.42f, 0.48f, 0.56f, 1f));
             uint selectionColor = ImGui.GetColorU32(new Vector4(0.18f, 0.44f, 0.85f, 0.42f));
             uint cursorColor = ImGui.GetColorU32(new Vector4(0.95f, 0.97f, 1f, 1f));
-            uint importColor = ImGui.GetColorU32(new Vector4(0.95f, 0.68f, 0.30f, 1f));
-            uint commentColor = ImGui.GetColorU32(new Vector4(0.45f, 0.52f, 0.58f, 1f));
             uint knownTagColor = ImGui.GetColorU32(new Vector4(0.42f, 0.82f, 1f, 1f));
             uint unknownTagColor = ImGui.GetColorU32(new Vector4(1f, 0.42f, 0.42f, 1f));
             uint richTagColor = ImGui.GetColorU32(new Vector4(0.82f, 0.58f, 1f, 1f));
@@ -400,7 +409,7 @@ namespace CheryTools
                     drawList.AddRectFilled(new Vector2(x1, textPos.Y - 1f), new Vector2(Math.Max(x2, x1 + 2f), textPos.Y + lineHeight - 1f), selectionColor);
                 }
 
-                DrawHighlightedLine(drawList, lineText, lineStart, textPos, fontSize, defaultColor, importColor, commentColor, knownTagColor, unknownTagColor, richTagColor);
+                DrawHighlightedLine(drawList, lineText, textPos, fontSize, defaultColor, knownTagColor, unknownTagColor, richTagColor);
             }
 
             if (active)
@@ -425,9 +434,10 @@ namespace CheryTools
             }
         }
 
-        private static void DrawHighlightedLine(ImDrawListPtr drawList, string lineText, int lineGlobalStart, Vector2 pos, float fontSize, uint defaultColor, uint importColor, uint commentColor, uint knownTagColor, uint unknownTagColor, uint richTagColor)
+        private static void DrawHighlightedLine(ImDrawListPtr drawList, string lineText, Vector2 pos, float fontSize,
+            uint defaultColor, uint knownTagColor, uint unknownTagColor, uint richTagColor)
         {
-            List<HighlightSegment> segments = BuildHighlights(lineText, lineGlobalStart, defaultColor, importColor, commentColor, knownTagColor, unknownTagColor, richTagColor);
+            List<HighlightSegment> segments = BuildHighlights(lineText, defaultColor, knownTagColor, unknownTagColor, richTagColor);
             float x = pos.X;
             foreach (HighlightSegment segment in segments)
             {
@@ -442,25 +452,10 @@ namespace CheryTools
             }
         }
 
-        private static List<HighlightSegment> BuildHighlights(string lineText, int lineGlobalStart, uint defaultColor, uint importColor, uint commentColor, uint knownTagColor, uint unknownTagColor, uint richTagColor)
+        private static List<HighlightSegment> BuildHighlights(string lineText, uint defaultColor,
+            uint knownTagColor, uint unknownTagColor, uint richTagColor)
         {
             var marks = new List<HighlightSegment>();
-            string trimmed = lineText.TrimStart();
-            if (trimmed.StartsWith("##", StringComparison.Ordinal))
-            {
-                marks.Add(new HighlightSegment(0, lineText.Length, commentColor));
-                return marks;
-            }
-            if (trimmed.StartsWith("#import regex", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("#enable regex", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("#regex", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("#replace", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("#substitute", StringComparison.OrdinalIgnoreCase))
-            {
-                marks.Add(new HighlightSegment(0, lineText.Length, importColor));
-                return marks;
-            }
-
             foreach (Match match in RichTagRegex.Matches(lineText))
             {
                 marks.Add(new HighlightSegment(match.Index, match.Length, richTagColor));

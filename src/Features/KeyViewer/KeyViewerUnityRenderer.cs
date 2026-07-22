@@ -8,6 +8,7 @@ namespace CheryTools
     internal static class KeyViewerUnityRenderer
     {
         private const int CanvasSortingOrder = RenderDepth.EditOverlaySortingOrder;
+        private const int UnusedImageRetentionFrames = 600;
 
         private static GameObject _root;
         private static RectTransform _rootRect;
@@ -53,7 +54,7 @@ namespace CheryTools
             {
                 if (pair.Value != null) pair.Value.EndFrame();
             }
-            HideUnused(_images);
+            CleanupUnusedImages();
         }
 
         public static void HideAll()
@@ -407,17 +408,42 @@ namespace CheryTools
             _frameMarks[go] = _frameId;
         }
 
-        private static void HideUnused<T>(Dictionary<string, T> items) where T : Component
+        private static void CleanupUnusedImages()
         {
-            foreach (var pair in items)
+            List<string> staleIds = null;
+            foreach (var pair in _images)
             {
-                T item = pair.Value;
+                KeyViewerImageGraphic item = pair.Value;
                 if (item == null) continue;
                 GameObject go = item.gameObject;
-                if (go.activeSelf && (!_frameMarks.TryGetValue(go, out int mark) || mark != _frameId))
+                bool usedThisFrame = _frameMarks.TryGetValue(go, out int mark) && mark == _frameId;
+                if (usedThisFrame) continue;
+
+                if (go.activeSelf)
                 {
                     go.SetActive(false);
                 }
+
+                int lastUsedFrame = _frameMarks.TryGetValue(go, out mark) ? mark : _frameId;
+                if (_frameId - lastUsedFrame > UnusedImageRetentionFrames)
+                {
+                    if (staleIds == null) staleIds = new List<string>();
+                    staleIds.Add(pair.Key);
+                }
+            }
+
+            if (staleIds == null) return;
+            for (int i = 0; i < staleIds.Count; i++)
+            {
+                string id = staleIds[i];
+                if (!_images.TryGetValue(id, out KeyViewerImageGraphic image)) continue;
+                if (image != null)
+                {
+                    _frameMarks.Remove(image.gameObject);
+                    UnityEngine.Object.Destroy(image.gameObject);
+                }
+                _images.Remove(id);
+                _imageSortingOrders.Remove(id);
             }
         }
 

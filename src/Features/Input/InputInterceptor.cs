@@ -131,7 +131,7 @@ namespace CheryTools
                 {
                     if (Main.Settings.ToolsLimitedKeys != null)
                     {
-                        int count = Math.Min(30, Main.Settings.ToolsLimitedKeys.Count);
+                        int count = Math.Min(Settings.MaxToolsLimitedKeys, Main.Settings.ToolsLimitedKeys.Count);
                         for (int i = 0; i < count; i++)
                         {
                             addKeyWithAliases(Main.Settings.ToolsLimitedKeys[i].ToString(), true);

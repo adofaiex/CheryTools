@@ -13,65 +13,20 @@ namespace CheryTools
     [Serializable]
     public class KeyViewerPackage
     {
-        public int FormatVersion = 2;
+        public int FormatVersion = 3;
         public string ExportedAt = "";
         public int ExportScreenWidth = 0;
         public int ExportScreenHeight = 0;
-        public bool EnableKeyViewer = true;
-        public bool KeyViewerOnlyShowPlaying = false;
-        public bool LimitInput = false;
-        public bool KeyViewerHideCountText = false;
-        public int KeyViewerSelectedConfigIndex = 0;
-        public float KeyViewerScale = 1.0f;
-        public float KeyViewerBorderThickness = 2.0f;
-        public string KeyViewerFontPath = "";
-        public float GlobalTextOffsetX = 0f;
-        public float GlobalTextOffsetY = 0f;
-        public float GlobalCountOffsetX = 0f;
-        public float GlobalCountOffsetY = 0f;
-        public float KeyViewerDefaultWidth = 50f;
-        public float KeyViewerDefaultHeight = 50f;
-        public float[] KeyViewerColorBgNormal = new float[] { 0.2f, 0.1f, 0.3f, 0.8f };
-        public float[] KeyViewerColorBgPressed = new float[] { 0.5f, 0.2f, 0.8f, 1.0f };
-        public float[] KeyViewerColorBorderNormal = new float[] { 0.6f, 0.3f, 0.9f, 0.8f };
-        public float[] KeyViewerColorBorderPressed = new float[] { 0.8f, 0.4f, 1.0f, 1.0f };
-        public float[] KeyViewerColorTextNormal = new float[] { 0.8f, 0.8f, 0.8f, 1.0f };
-        public float[] KeyViewerColorTextPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public float[] KeyViewerColorKps = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public float[] KeyViewerColorTotal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public bool KeyViewerKeyTextOutlineEnabled = false;
-        public float[] KeyViewerKeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
-        public float KeyViewerKeyTextOutlineThickness = 1f;
-        public bool KeyViewerCountTextOutlineEnabled = false;
-        public float[] KeyViewerCountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
-        public float KeyViewerCountTextOutlineThickness = 1f;
-        public bool EnableKeyRain = false;
-        public float KeyRainSpeed = 800.0f;
-        public float KeyRainMaxHeight = 400.0f;
-        public int KeyRainFadeMode = 1;
-        public float KeyRainFadeHeight = 1.0f;
-        public float KeyRainFadePower = 1.0f;
-        public float KeyRainWidthRatio1 = 0.8f;
-        public float KeyRainWidthRatio2 = 0.4f;
-        public float KeyRainYOffsetRow1 = 0.0f;
-        public float KeyRainYOffsetRow2 = 0.0f;
-        public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
-        public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
-        public float KeyRainGradientHeight = 1.0f;
-        public float KeyRainGradientPower = 1.0f;
         public List<KVConfiguration> KeyViewerConfigurations = new List<KVConfiguration>();
     }
 
     [Serializable]
     public class OverlayerPackage
     {
-        public int FormatVersion = 2;
+        public int FormatVersion = 4;
         public string ExportedAt = "";
         public int ExportScreenWidth = 0;
         public int ExportScreenHeight = 0;
-        public bool OverlayerSystemEnabled = true;
-        public bool OverlayerOnlyShowPlaying = false;
-        public bool OverlayerEditMode = false;
         public List<OverlayerText> OverlayerTexts = new List<OverlayerText>();
         public List<OverlayerImage> OverlayerImages = new List<OverlayerImage>();
         public List<OverlayerVideo> OverlayerVideos = new List<OverlayerVideo>();
@@ -88,6 +43,9 @@ namespace CheryTools
         public float ScaleX = 1f;
         public float ScaleY = 1f;
         public float UniformScale = 1f;
+        public int ImportedItemCount = 0;
+        public string ImportedComponentKind = "";
+        public int FirstImportedIndex = -1;
 
         public bool HasSourceResolution
         {
@@ -96,12 +54,13 @@ namespace CheryTools
 
         public string ToSummary()
         {
+            string imported = "已追加 " + ImportedItemCount.ToString() + " 个组件";
             if (!AppliedResolutionAdaptation)
             {
-                return HasSourceResolution ? "未进行分辨率适配" : "包内没有分辨率信息";
+                return imported + "；" + (HasSourceResolution ? "未进行分辨率适配" : "包内没有分辨率信息");
             }
 
-            return string.Format(
+            return imported + "；" + string.Format(
                 "已按分辨率适配: {0}x{1} -> {2}x{3} (X {4:0.###}, Y {5:0.###})",
                 SourceScreenWidth,
                 SourceScreenHeight,
@@ -230,7 +189,9 @@ namespace CheryTools
             if (settings == null) return false;
 
             bool changed = false;
-            changed |= ImportPath(ref settings.KeyViewerFontPath, "Fonts");
+            changed |= ImportPath(ref settings.RedPlanetTexturePath, "Images");
+            changed |= ImportPath(ref settings.BluePlanetTexturePath, "Images");
+            changed |= ImportPath(ref settings.GreenPlanetTexturePath, "Images");
             if (settings.KeyViewerConfigurations != null)
             {
                 foreach (KVConfiguration config in settings.KeyViewerConfigurations)
@@ -318,6 +279,18 @@ namespace CheryTools
             return outputPath;
         }
 
+        public static string ExportKeyViewerPackage(Settings settings, KVConfiguration configuration, string outputPath)
+        {
+            if (settings == null) throw new InvalidOperationException("Settings is null.");
+            if (configuration == null) throw new InvalidOperationException("KeyViewer configuration is null.");
+
+            Directory.CreateDirectory(AssetsRoot);
+            KeyViewerPackage package = CreateKeyViewerPackage(settings, new List<KVConfiguration> { configuration });
+            RewriteKeyViewerPackageAssetPaths(package);
+            WritePackage(outputPath, "KeyViewer.xml", package, CollectKeyViewerAssetPaths(package));
+            return outputPath;
+        }
+
         public static string ExportOverlayerPackage(Settings settings, string outputPath)
         {
             if (settings == null) throw new InvalidOperationException("Settings is null.");
@@ -326,6 +299,18 @@ namespace CheryTools
             OverlayerPackage package = CreateOverlayerPackage(settings);
             RewriteOverlayerPackageAssetPaths(package);
 
+            WritePackage(outputPath, "Overlayer.xml", package, CollectOverlayerAssetPaths(package));
+            return outputPath;
+        }
+
+        public static string ExportOverlayerComponentPackage(Settings settings, string componentKind, int componentIndex,
+            string outputPath)
+        {
+            if (settings == null) throw new InvalidOperationException("Settings is null.");
+
+            Directory.CreateDirectory(AssetsRoot);
+            OverlayerPackage package = CreateOverlayerPackage(settings, componentKind, componentIndex);
+            RewriteOverlayerPackageAssetPaths(package);
             WritePackage(outputPath, "Overlayer.xml", package, CollectOverlayerAssetPaths(package));
             return outputPath;
         }
@@ -343,6 +328,9 @@ namespace CheryTools
                 KeyViewerPackage package = ReadPackageManifest<KeyViewerPackage>(archive, "KeyViewer.xml");
                 ExtractAssetsFromArchive(archive);
                 PackageImportResult result = AdaptKeyViewerPackageToCurrentResolution(package);
+                result.ImportedItemCount = package.KeyViewerConfigurations != null ? package.KeyViewerConfigurations.Count : 0;
+                result.ImportedComponentKind = "kv";
+                result.FirstImportedIndex = settings.KeyViewerConfigurations != null ? settings.KeyViewerConfigurations.Count : 0;
                 ApplyKeyViewerPackage(settings, package);
                 return result;
             }
@@ -361,59 +349,44 @@ namespace CheryTools
                 OverlayerPackage package = ReadPackageManifest<OverlayerPackage>(archive, "Overlayer.xml");
                 ExtractAssetsFromArchive(archive);
                 PackageImportResult result = AdaptOverlayerPackageToCurrentResolution(package);
+                result.ImportedItemCount = (package.OverlayerTexts != null ? package.OverlayerTexts.Count : 0)
+                    + (package.OverlayerImages != null ? package.OverlayerImages.Count : 0)
+                    + (package.OverlayerVideos != null ? package.OverlayerVideos.Count : 0)
+                    + (package.OverlayerProgressBars != null ? package.OverlayerProgressBars.Count : 0);
+                if (package.OverlayerTexts != null && package.OverlayerTexts.Count > 0)
+                {
+                    result.ImportedComponentKind = "text";
+                    result.FirstImportedIndex = settings.OverlayerTexts != null ? settings.OverlayerTexts.Count : 0;
+                }
+                else if (package.OverlayerImages != null && package.OverlayerImages.Count > 0)
+                {
+                    result.ImportedComponentKind = "image";
+                    result.FirstImportedIndex = settings.OverlayerImages != null ? settings.OverlayerImages.Count : 0;
+                }
+                else if (package.OverlayerVideos != null && package.OverlayerVideos.Count > 0)
+                {
+                    result.ImportedComponentKind = "video";
+                    result.FirstImportedIndex = settings.OverlayerVideos != null ? settings.OverlayerVideos.Count : 0;
+                }
+                else if (package.OverlayerProgressBars != null && package.OverlayerProgressBars.Count > 0)
+                {
+                    result.ImportedComponentKind = "progress";
+                    result.FirstImportedIndex = settings.OverlayerProgressBars != null ? settings.OverlayerProgressBars.Count : 0;
+                }
                 ApplyOverlayerPackage(settings, package);
                 return result;
             }
         }
 
-        private static KeyViewerPackage CreateKeyViewerPackage(Settings settings)
+        private static KeyViewerPackage CreateKeyViewerPackage(Settings settings,
+            List<KVConfiguration> configurations = null)
         {
             KeyViewerPackage package = new KeyViewerPackage();
             package.ExportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             StampExportScreenSize(package);
-            package.EnableKeyViewer = settings.EnableKeyViewer;
-            package.KeyViewerOnlyShowPlaying = settings.KeyViewerOnlyShowPlaying;
-            package.LimitInput = settings.LimitInput;
-            package.KeyViewerHideCountText = settings.KeyViewerHideCountText;
-            package.KeyViewerSelectedConfigIndex = settings.KeyViewerSelectedConfigIndex;
-            package.KeyViewerScale = settings.KeyViewerScale;
-            package.KeyViewerBorderThickness = settings.KeyViewerBorderThickness;
-            package.KeyViewerFontPath = settings.KeyViewerFontPath;
-            package.GlobalTextOffsetX = settings.GlobalTextOffsetX;
-            package.GlobalTextOffsetY = settings.GlobalTextOffsetY;
-            package.GlobalCountOffsetX = settings.GlobalCountOffsetX;
-            package.GlobalCountOffsetY = settings.GlobalCountOffsetY;
-            package.KeyViewerDefaultWidth = settings.KeyViewerDefaultWidth;
-            package.KeyViewerDefaultHeight = settings.KeyViewerDefaultHeight;
-            package.KeyViewerColorBgNormal = CloneByXml(settings.KeyViewerColorBgNormal);
-            package.KeyViewerColorBgPressed = CloneByXml(settings.KeyViewerColorBgPressed);
-            package.KeyViewerColorBorderNormal = CloneByXml(settings.KeyViewerColorBorderNormal);
-            package.KeyViewerColorBorderPressed = CloneByXml(settings.KeyViewerColorBorderPressed);
-            package.KeyViewerColorTextNormal = CloneByXml(settings.KeyViewerColorTextNormal);
-            package.KeyViewerColorTextPressed = CloneByXml(settings.KeyViewerColorTextPressed);
-            package.KeyViewerColorKps = CloneByXml(settings.KeyViewerColorKps);
-            package.KeyViewerColorTotal = CloneByXml(settings.KeyViewerColorTotal);
-            package.KeyViewerKeyTextOutlineEnabled = settings.KeyViewerKeyTextOutlineEnabled;
-            package.KeyViewerKeyTextOutlineColor = CloneByXml(settings.KeyViewerKeyTextOutlineColor);
-            package.KeyViewerKeyTextOutlineThickness = settings.KeyViewerKeyTextOutlineThickness;
-            package.KeyViewerCountTextOutlineEnabled = settings.KeyViewerCountTextOutlineEnabled;
-            package.KeyViewerCountTextOutlineColor = CloneByXml(settings.KeyViewerCountTextOutlineColor);
-            package.KeyViewerCountTextOutlineThickness = settings.KeyViewerCountTextOutlineThickness;
-            package.EnableKeyRain = settings.EnableKeyRain;
-            package.KeyRainSpeed = settings.KeyRainSpeed;
-            package.KeyRainMaxHeight = settings.KeyRainMaxHeight;
-            package.KeyRainFadeMode = settings.KeyRainFadeMode;
-            package.KeyRainFadeHeight = settings.KeyRainFadeHeight;
-            package.KeyRainFadePower = settings.KeyRainFadePower;
-            package.KeyRainWidthRatio1 = settings.KeyRainWidthRatio1;
-            package.KeyRainWidthRatio2 = settings.KeyRainWidthRatio2;
-            package.KeyRainYOffsetRow1 = settings.KeyRainYOffsetRow1;
-            package.KeyRainYOffsetRow2 = settings.KeyRainYOffsetRow2;
-            package.KeyRainColorRow1 = CloneByXml(settings.KeyRainColorRow1);
-            package.KeyRainColorRow2 = CloneByXml(settings.KeyRainColorRow2);
-            package.KeyRainGradientHeight = settings.KeyRainGradientHeight;
-            package.KeyRainGradientPower = settings.KeyRainGradientPower;
-            package.KeyViewerConfigurations = CloneByXml(settings.KeyViewerConfigurations) ?? new List<KVConfiguration>();
+            package.KeyViewerConfigurations = CloneByXml(configurations ?? settings.KeyViewerConfigurations)
+                ?? new List<KVConfiguration>();
+            ResetPackageKeyViewerStatistics(package.KeyViewerConfigurations);
             return package;
         }
 
@@ -422,9 +395,6 @@ namespace CheryTools
             OverlayerPackage package = new OverlayerPackage();
             package.ExportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             StampExportScreenSize(package);
-            package.OverlayerSystemEnabled = settings.OverlayerSystemEnabled;
-            package.OverlayerOnlyShowPlaying = settings.OverlayerOnlyShowPlaying;
-            package.OverlayerEditMode = settings.OverlayerEditMode;
             package.OverlayerTexts = CloneByXml(settings.OverlayerTexts) ?? new List<OverlayerText>();
             package.OverlayerImages = CloneByXml(settings.OverlayerImages) ?? new List<OverlayerImage>();
             package.OverlayerVideos = CloneByXml(settings.OverlayerVideos) ?? new List<OverlayerVideo>();
@@ -432,9 +402,43 @@ namespace CheryTools
             return package;
         }
 
+        private static OverlayerPackage CreateOverlayerPackage(Settings settings, string componentKind,
+            int componentIndex)
+        {
+            var package = new OverlayerPackage { ExportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
+            StampExportScreenSize(package);
+            string kind = (componentKind ?? string.Empty).Trim().ToLowerInvariant();
+            if (kind == "text" && settings.OverlayerTexts != null
+                && componentIndex >= 0 && componentIndex < settings.OverlayerTexts.Count)
+                package.OverlayerTexts.Add(CloneByXml(settings.OverlayerTexts[componentIndex]));
+            else if (kind == "image" && settings.OverlayerImages != null
+                && componentIndex >= 0 && componentIndex < settings.OverlayerImages.Count)
+                package.OverlayerImages.Add(CloneByXml(settings.OverlayerImages[componentIndex]));
+            else if (kind == "video" && settings.OverlayerVideos != null
+                && componentIndex >= 0 && componentIndex < settings.OverlayerVideos.Count)
+                package.OverlayerVideos.Add(CloneByXml(settings.OverlayerVideos[componentIndex]));
+            else if (kind == "progress" && settings.OverlayerProgressBars != null
+                && componentIndex >= 0 && componentIndex < settings.OverlayerProgressBars.Count)
+                package.OverlayerProgressBars.Add(CloneByXml(settings.OverlayerProgressBars[componentIndex]));
+            else
+                throw new ArgumentOutOfRangeException(nameof(componentIndex), "Overlayer component was not found.");
+            return package;
+        }
+
+        private static void ResetPackageKeyViewerStatistics(List<KVConfiguration> configurations)
+        {
+            if (configurations == null) return;
+            foreach (KVConfiguration config in configurations)
+            {
+                if (config == null) continue;
+                config.TotalHits = 0;
+                if (config.Nodes == null) continue;
+                foreach (KVNode node in config.Nodes) if (node != null) node.HitCount = 0;
+            }
+        }
+
         private static void RewriteKeyViewerPackageAssetPaths(KeyViewerPackage package)
         {
-            package.KeyViewerFontPath = PreparePathForExport(package.KeyViewerFontPath, "Fonts");
             if (package.KeyViewerConfigurations == null) return;
 
             foreach (KVConfiguration config in package.KeyViewerConfigurations)
@@ -478,7 +482,6 @@ namespace CheryTools
         private static List<string> CollectKeyViewerAssetPaths(KeyViewerPackage package)
         {
             List<string> paths = new List<string>();
-            AddAssetPath(paths, package.KeyViewerFontPath);
             if (package.KeyViewerConfigurations == null) return paths;
 
             foreach (KVConfiguration config in package.KeyViewerConfigurations)
@@ -533,7 +536,9 @@ namespace CheryTools
             List<string> paths = new List<string>();
             if (settings == null) return paths;
 
-            AddAssetPath(paths, settings.KeyViewerFontPath);
+            AddAssetPath(paths, settings.RedPlanetTexturePath);
+            AddAssetPath(paths, settings.BluePlanetTexturePath);
+            AddAssetPath(paths, settings.GreenPlanetTexturePath);
             if (settings.KeyViewerConfigurations != null)
             {
                 foreach (KVConfiguration config in settings.KeyViewerConfigurations)
@@ -608,6 +613,20 @@ namespace CheryTools
 
         private static void GetCurrentScreenSize(out int width, out int height)
         {
+            try
+            {
+                ReadUnityScreenSize(out width, out height);
+            }
+            catch (Exception)
+            {
+                // Package logic is also exercised outside Unity by the regression harness.
+                width = 0;
+                height = 0;
+            }
+        }
+
+        private static void ReadUnityScreenSize(out int width, out int height)
+        {
             width = Mathf.RoundToInt(Mathf.Max(1f, Screen.width));
             height = Mathf.RoundToInt(Mathf.Max(1f, Screen.height));
         }
@@ -659,7 +678,6 @@ namespace CheryTools
             {
                 if (config == null) continue;
 
-                config.AppearanceMigrated = true;
                 config.Scale = ScaleValue(config.Scale, scale);
                 config.BorderThickness = ScaleValue(config.BorderThickness, scale);
                 config.KeyRainSpeed = ScaleValue(config.KeyRainSpeed, scale);
@@ -715,6 +733,7 @@ namespace CheryTools
                 text.LetterSpacing = ScaleValue(text.LetterSpacing, uniformScale);
                 text.LineHeightOffset = ScaleValue(text.LineHeightOffset, uniformScale);
                 ScaleOverlayerAnimations(text.Animations, scaleX, scaleY);
+                ScaleTokenAnimationGraph(text.TokenAnimation, scaleX, scaleY);
             }
         }
 
@@ -758,8 +777,8 @@ namespace CheryTools
 
                 bar.PositionX = ScaleValue(bar.PositionX, scaleX);
                 bar.PositionY = ScaleValue(bar.PositionY, scaleY);
-                bar.Width = ScaleValue(bar.Width, uniformScale);
-                bar.Height = ScaleValue(bar.Height, uniformScale);
+                bar.Width = ScaleValue(bar.Width, scaleX);
+                bar.Height = ScaleValue(bar.Height, scaleY);
                 bar.BorderThickness = ScaleValue(bar.BorderThickness, uniformScale);
                 bar.CornerRadius = ScaleValue(bar.CornerRadius, uniformScale);
                 ScalePair(bar.ShadowOffset, scaleX, scaleY);
@@ -781,6 +800,20 @@ namespace CheryTools
                 animation.EndY = ScaleValue(animation.EndY, scaleY);
                 ScaleAnimationJsonOffsets(animation, scaleX, scaleY);
                 animation.ParseJson();
+            }
+        }
+
+        private static void ScaleTokenAnimationGraph(OvAnimationGraph graph, float scaleX, float scaleY)
+        {
+            if (graph == null || graph.Nodes == null) return;
+            for (int i = 0; i < graph.Nodes.Count; i++)
+            {
+                OvAnimationNode node = graph.Nodes[i];
+                if (node == null || node.Kind != OvAnimationNodeKind.Tween || node.TweenProperty != OvTokenTweenProperty.Position) continue;
+                node.FromX = ScaleValue(node.FromX, scaleX);
+                node.FromY = ScaleValue(node.FromY, scaleY);
+                node.ToX = ScaleValue(node.ToX, scaleX);
+                node.ToY = ScaleValue(node.ToY, scaleY);
             }
         }
 
@@ -960,53 +993,19 @@ namespace CheryTools
             if (package == null)
                 throw new InvalidDataException("KeyViewer package manifest is empty.");
 
-            bool localEnableKeyViewer = settings.EnableKeyViewer;
-            bool localKeyViewerOnlyShowPlaying = settings.KeyViewerOnlyShowPlaying;
-            bool localLimitInput = settings.LimitInput;
-
-            settings.EnableKeyViewer = localEnableKeyViewer;
-            settings.KeyViewerOnlyShowPlaying = localKeyViewerOnlyShowPlaying;
-            settings.LimitInput = localLimitInput;
-            settings.KeyViewerHideCountText = package.KeyViewerHideCountText;
-            settings.KeyViewerSelectedConfigIndex = package.KeyViewerSelectedConfigIndex;
-            settings.KeyViewerScale = package.KeyViewerScale;
-            settings.KeyViewerBorderThickness = package.KeyViewerBorderThickness;
-            settings.KeyViewerFontPath = package.KeyViewerFontPath ?? "";
-            settings.GlobalTextOffsetX = package.GlobalTextOffsetX;
-            settings.GlobalTextOffsetY = package.GlobalTextOffsetY;
-            settings.GlobalCountOffsetX = package.GlobalCountOffsetX;
-            settings.GlobalCountOffsetY = package.GlobalCountOffsetY;
-            settings.KeyViewerDefaultWidth = package.KeyViewerDefaultWidth;
-            settings.KeyViewerDefaultHeight = package.KeyViewerDefaultHeight;
-            settings.KeyViewerColorBgNormal = package.KeyViewerColorBgNormal;
-            settings.KeyViewerColorBgPressed = package.KeyViewerColorBgPressed;
-            settings.KeyViewerColorBorderNormal = package.KeyViewerColorBorderNormal;
-            settings.KeyViewerColorBorderPressed = package.KeyViewerColorBorderPressed;
-            settings.KeyViewerColorTextNormal = package.KeyViewerColorTextNormal;
-            settings.KeyViewerColorTextPressed = package.KeyViewerColorTextPressed;
-            settings.KeyViewerColorKps = package.KeyViewerColorKps;
-            settings.KeyViewerColorTotal = package.KeyViewerColorTotal;
-            settings.KeyViewerKeyTextOutlineEnabled = package.KeyViewerKeyTextOutlineEnabled;
-            settings.KeyViewerKeyTextOutlineColor = package.KeyViewerKeyTextOutlineColor;
-            settings.KeyViewerKeyTextOutlineThickness = package.KeyViewerKeyTextOutlineThickness;
-            settings.KeyViewerCountTextOutlineEnabled = package.KeyViewerCountTextOutlineEnabled;
-            settings.KeyViewerCountTextOutlineColor = package.KeyViewerCountTextOutlineColor;
-            settings.KeyViewerCountTextOutlineThickness = package.KeyViewerCountTextOutlineThickness;
-            settings.EnableKeyRain = package.EnableKeyRain;
-            settings.KeyRainSpeed = package.KeyRainSpeed;
-            settings.KeyRainMaxHeight = package.KeyRainMaxHeight;
-            settings.KeyRainFadeMode = package.KeyRainFadeMode;
-            settings.KeyRainFadeHeight = package.KeyRainFadeHeight;
-            settings.KeyRainFadePower = package.KeyRainFadePower;
-            settings.KeyRainWidthRatio1 = package.KeyRainWidthRatio1;
-            settings.KeyRainWidthRatio2 = package.KeyRainWidthRatio2;
-            settings.KeyRainYOffsetRow1 = package.KeyRainYOffsetRow1;
-            settings.KeyRainYOffsetRow2 = package.KeyRainYOffsetRow2;
-            settings.KeyRainColorRow1 = package.KeyRainColorRow1;
-            settings.KeyRainColorRow2 = package.KeyRainColorRow2;
-            settings.KeyRainGradientHeight = package.KeyRainGradientHeight;
-            settings.KeyRainGradientPower = package.KeyRainGradientPower;
-            settings.KeyViewerConfigurations = package.KeyViewerConfigurations ?? new List<KVConfiguration>();
+            settings.EnsureKeyViewerConfigurations();
+            int firstImportedIndex = settings.KeyViewerConfigurations.Count;
+            List<KVConfiguration> imported = package.KeyViewerConfigurations ?? new List<KVConfiguration>();
+            ResetPackageKeyViewerStatistics(imported);
+            foreach (KVConfiguration config in imported)
+            {
+                if (config == null) continue;
+                config.Name = MakeUniqueName(config.Name, "导入配置",
+                    settings.KeyViewerConfigurations.ConvertAll(item => item != null ? item.Name : string.Empty));
+                settings.KeyViewerConfigurations.Add(config);
+            }
+            if (settings.KeyViewerConfigurations.Count > firstImportedIndex)
+                settings.KeyViewerSelectedConfigIndex = firstImportedIndex;
             settings.EnsureKeyViewerConfigurations();
         }
 
@@ -1015,13 +1014,44 @@ namespace CheryTools
             if (package == null)
                 throw new InvalidDataException("Overlayer package manifest is empty.");
 
-            settings.OverlayerSystemEnabled = package.OverlayerSystemEnabled;
-            settings.OverlayerOnlyShowPlaying = package.OverlayerOnlyShowPlaying;
-            settings.OverlayerEditMode = package.OverlayerEditMode;
-            settings.OverlayerTexts = package.OverlayerTexts ?? new List<OverlayerText>();
-            settings.OverlayerImages = package.OverlayerImages ?? new List<OverlayerImage>();
-            settings.OverlayerVideos = package.OverlayerVideos ?? new List<OverlayerVideo>();
-            settings.OverlayerProgressBars = package.OverlayerProgressBars ?? new List<OverlayerProgressBar>();
+            if (settings.OverlayerTexts == null) settings.OverlayerTexts = new List<OverlayerText>();
+            if (settings.OverlayerImages == null) settings.OverlayerImages = new List<OverlayerImage>();
+            if (settings.OverlayerVideos == null) settings.OverlayerVideos = new List<OverlayerVideo>();
+            if (settings.OverlayerProgressBars == null) settings.OverlayerProgressBars = new List<OverlayerProgressBar>();
+
+            AppendNamedItems(settings.OverlayerTexts, package.OverlayerTexts, "导入文本", item => item.Name, (item, name) => item.Name = name);
+            if (package.OverlayerImages != null)
+                foreach (OverlayerImage item in package.OverlayerImages) if (item != null) settings.OverlayerImages.Add(item);
+            AppendNamedItems(settings.OverlayerVideos, package.OverlayerVideos, "导入视频", item => item.Name, (item, name) => item.Name = name);
+            AppendNamedItems(settings.OverlayerProgressBars, package.OverlayerProgressBars, "导入进度条", item => item.Name, (item, name) => item.Name = name);
+        }
+
+        private static void AppendNamedItems<T>(List<T> target, List<T> imported, string fallback,
+            Func<T, string> getName, Action<T, string> setName) where T : class
+        {
+            if (target == null || imported == null) return;
+            var names = target.ConvertAll(item => item != null ? getName(item) : string.Empty);
+            foreach (T item in imported)
+            {
+                if (item == null) continue;
+                string unique = MakeUniqueName(getName(item), fallback, names);
+                setName(item, unique);
+                names.Add(unique);
+                target.Add(item);
+            }
+        }
+
+        private static string MakeUniqueName(string requested, string fallback, List<string> existing)
+        {
+            string baseName = string.IsNullOrWhiteSpace(requested) ? fallback : requested.Trim();
+            var used = new HashSet<string>(existing ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            if (!used.Contains(baseName)) return baseName;
+            for (int suffix = 2; suffix < int.MaxValue; suffix++)
+            {
+                string candidate = baseName + " (" + suffix.ToString() + ")";
+                if (!used.Contains(candidate)) return candidate;
+            }
+            return baseName + " (导入)";
         }
 
         public static void ImportCytPackage(string packagePath, string settingsPath)
@@ -1093,7 +1123,9 @@ namespace CheryTools
 
         private static void RewriteAssetPathsForExport(Settings settings)
         {
-            settings.KeyViewerFontPath = PreparePathForExport(settings.KeyViewerFontPath, "Fonts");
+            settings.RedPlanetTexturePath = PreparePathForExport(settings.RedPlanetTexturePath, "Images");
+            settings.BluePlanetTexturePath = PreparePathForExport(settings.BluePlanetTexturePath, "Images");
+            settings.GreenPlanetTexturePath = PreparePathForExport(settings.GreenPlanetTexturePath, "Images");
             if (settings.KeyViewerConfigurations != null)
             {
                 foreach (KVConfiguration config in settings.KeyViewerConfigurations)

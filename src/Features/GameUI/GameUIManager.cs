@@ -44,17 +44,22 @@ namespace CheryTools
             new GameUITargetDefinition("noFailSwitch", "\u4E0D\u4F1A\u5931\u8D25\u6A21\u5F0F\u5F00\u5173", ResolveNoFailSwitch),
             new GameUITargetDefinition("autoplaySwitch", "\u81EA\u52A8\u6F14\u594F\u5F00\u5173", ResolveAutoplaySwitch),
             new GameUITargetDefinition("autoplayText", "\u81EA\u52A8\u64AD\u653E\u6587\u5B57", ResolveAutoplayText),
-            new GameUITargetDefinition("buildWatermark", "\u6D4B\u8BD5\u7248\u672C\u6C34\u5370", ResolveBuildWatermarks)
+            new GameUITargetDefinition("buildWatermark", "\u6D4B\u8BD5\u7248\u672C\u6C34\u5370", ResolveBuildWatermarks),
+            new GameUITargetDefinition("resultScreen", "\u7ED3\u7B97\u9875\u9762 UI", ResolveResultScreen)
         };
 
         private readonly Dictionary<string, ElementState> _states = new Dictionary<string, ElementState>();
         private static readonly List<scrShowIfDebug> _autoplayStatusTexts = new List<scrShowIfDebug>();
         private static readonly List<scrEnableIfBeta> _buildWatermarkTexts = new List<scrEnableIfBeta>();
         private static readonly List<RectTransform> _buildWatermarkRectsBuffer = new List<RectTransform>();
+        private static readonly List<RectTransform> _resultScreenRectsBuffer = new List<RectTransform>();
         private static bool _didInitialTargetScan;
         private readonly List<RectTransform> _resolvedRectsBuffer = new List<RectTransform>(4);
         private readonly HashSet<string> _activeStateIdsBuffer = new HashSet<string>();
         private bool _wasApplying = false;
+        private int _lastSettingsHash = 0;
+        private float _nextRefreshTime = 0f;
+        private const float RefreshInterval = 0.1f;
 
         private sealed class ElementState
         {
@@ -102,6 +107,28 @@ namespace CheryTools
                 return;
             }
 
+            if (!HasEnabledTargets())
+            {
+                if (_wasApplying)
+                {
+                    RestoreAll();
+                    _wasApplying = false;
+                }
+                return;
+            }
+
+            int settingsHash = BuildSettingsHash();
+            if (!_wasApplying || settingsHash != _lastSettingsHash)
+            {
+                _nextRefreshTime = 0f;
+            }
+            else if (Time.unscaledTime < _nextRefreshTime)
+            {
+                return;
+            }
+
+            _lastSettingsHash = settingsHash;
+            _nextRefreshTime = Time.unscaledTime + RefreshInterval;
             _wasApplying = true;
 
             foreach (var target in Targets)
@@ -136,6 +163,56 @@ namespace CheryTools
             }
         }
 
+        private static int BuildSettingsHash()
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 31 + (Main.IsEnabled ? 1 : 0);
+                hash = hash * 31 + (Main.Settings != null && Main.Settings.GameUIControlEnabled ? 1 : 0);
+                hash = hash * 31 + (Main.Settings != null && Main.Settings.GameUIDeveloperUnlocked ? 1 : 0);
+                var elements = Main.Settings != null ? Main.Settings.GameUIElements : null;
+                if (elements == null)
+                    return hash;
+
+                for (int i = 0; i < elements.Count; i++)
+                {
+                    GameUIElementSetting setting = elements[i];
+                    if (setting == null) continue;
+                    hash = hash * 31 + (setting.Id != null ? setting.Id.GetHashCode() : 0);
+                    hash = hash * 31 + (setting.Enabled ? 1 : 0);
+                    hash = hash * 31 + (setting.Visible ? 1 : 0);
+                    hash = hash * 31 + Quantize(setting.OffsetX);
+                    hash = hash * 31 + Quantize(setting.OffsetY);
+                    hash = hash * 31 + Quantize(setting.Scale);
+                    hash = hash * 31 + Quantize(setting.Alpha);
+                }
+                return hash;
+            }
+        }
+
+        private static bool HasEnabledTargets()
+        {
+            var elements = Main.Settings != null ? Main.Settings.GameUIElements : null;
+            if (elements == null)
+                return false;
+
+            for (int i = 0; i < elements.Count; i++)
+            {
+                GameUIElementSetting setting = elements[i];
+                if (setting != null && setting.Enabled)
+                    return true;
+            }
+            return false;
+        }
+
+        private static int Quantize(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                return 0;
+            return Mathf.RoundToInt(value * 1000f);
+        }
+
         public void RestoreAll()
         {
             foreach (var key in new List<string>(_states.Keys))
@@ -153,7 +230,8 @@ namespace CheryTools
         {
             return string.Equals(id, "difficultySwitch", StringComparison.Ordinal)
                 || string.Equals(id, "noFailSwitch", StringComparison.Ordinal)
-                || string.Equals(id, "autoplaySwitch", StringComparison.Ordinal);
+                || string.Equals(id, "autoplaySwitch", StringComparison.Ordinal)
+                || string.Equals(id, "resultScreen", StringComparison.Ordinal);
         }
 
         public static bool AreRestrictedAdvancedControlsUnlocked()
@@ -319,6 +397,70 @@ namespace CheryTools
             }
 
             return _buildWatermarkRectsBuffer;
+        }
+
+        private static List<RectTransform> ResolveResultScreen()
+        {
+            _resultScreenRectsBuffer.Clear();
+
+            scrUIController ui = scrUIController.instance;
+            if (ui != null)
+            {
+                if (ui.txtCongrats != null)
+                    TryAddRect(_resultScreenRectsBuffer, ui.txtCongrats.rectTransform);
+                if (ui.txtAprilCongrats != null)
+                    TryAddRect(_resultScreenRectsBuffer, ui.txtAprilCongrats.rectTransform);
+                if (ui.txtAllStrictClear != null)
+                    TryAddRect(_resultScreenRectsBuffer, ui.txtAllStrictClear.rectTransform);
+
+                AddDetailedResultsRect(ui.txtResults, _resultScreenRectsBuffer);
+
+                EndscreenLanterns[] lanterns = ui.endscreenLanternsSets;
+                if (lanterns != null)
+                {
+                    for (int i = 0; i < lanterns.Length; i++)
+                    {
+                        EndscreenLanterns lantern = lanterns[i];
+                        if (lantern == null)
+                            continue;
+
+                        TryAddRect(_resultScreenRectsBuffer, lantern.GetComponent<RectTransform>());
+                    }
+                }
+            }
+
+            scrController controller = scrController.instance;
+            if (controller != null)
+            {
+                if (controller.txtCongrats != null)
+                    TryAddRect(_resultScreenRectsBuffer, controller.txtCongrats.rectTransform);
+                if (controller.txtAprilCongrats != null)
+                    TryAddRect(_resultScreenRectsBuffer, controller.txtAprilCongrats.rectTransform);
+                if (controller.txtAllStrictClear != null)
+                    TryAddRect(_resultScreenRectsBuffer, controller.txtAllStrictClear.rectTransform);
+
+                AddDetailedResultsRect(controller.detailedResults, _resultScreenRectsBuffer);
+            }
+
+            return _resultScreenRectsBuffer;
+        }
+
+        private static void AddDetailedResultsRect(DetailedResults detailedResults, List<RectTransform> results)
+        {
+            if (detailedResults == null || results == null)
+                return;
+
+            RectTransform root = detailedResults.GetComponent<RectTransform>();
+            if (root != null)
+            {
+                TryAddRect(results, root);
+                return;
+            }
+
+            if (detailedResults.textComponent != null)
+            {
+                TryAddRect(results, detailedResults.textComponent.rectTransform);
+            }
         }
 
         private static bool IsValidSceneRect(RectTransform rect)

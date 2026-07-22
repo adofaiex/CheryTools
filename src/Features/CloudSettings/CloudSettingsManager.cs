@@ -13,17 +13,17 @@ namespace CheryTools
     {
         private const string CloudFileName = "cherytools_settings";
 
-        public static bool IsSteamAvailable => SteamManager.Initialized;
+        public static bool IsSteamAvailable => SteamClient.IsValid;
 
         public static bool HasCloudFile()
         {
-            return SteamManager.Initialized
+            return SteamClient.IsValid
                 && SteamRemoteStorage.FileExists(CloudFileName);
         }
 
         public static bool TryReadFromCloud(Settings settings, UnityModManager.ModEntry modEntry)
         {
-            if (!SteamManager.Initialized)
+            if (!SteamClient.IsValid)
             {
                 Main.Logger.Log("[CloudSync] Steam not initialized, cannot read from cloud.");
                 return false;
@@ -37,22 +37,21 @@ namespace CheryTools
 
             try
             {
-                int fileSize = SteamRemoteStorage.GetFileSize(CloudFileName);
+                int fileSize = SteamRemoteStorage.FileSize(CloudFileName);
                 if (fileSize <= 0)
                 {
                     Main.Logger.Log("[CloudSync] Cloud file is empty.");
                     return false;
                 }
 
-                byte[] data = new byte[fileSize];
-                int bytesRead = SteamRemoteStorage.FileRead(CloudFileName, data, fileSize);
-                if (bytesRead <= 0)
+                byte[] data = SteamRemoteStorage.FileRead(CloudFileName);
+                if (data == null || data.Length == 0)
                 {
                     Main.Logger.Log("[CloudSync] Failed to read cloud file.");
                     return false;
                 }
 
-                string json = Encoding.UTF8.GetString(data, 0, bytesRead);
+                string json = Encoding.UTF8.GetString(data);
                 JObject root = JObject.Parse(json);
 
                 string cloudVersion = root.Value<string>("version") ?? "unknown";
@@ -87,7 +86,7 @@ namespace CheryTools
 
         public static bool WriteToCloud(Settings settings, UnityModManager.ModEntry modEntry)
         {
-            if (!SteamManager.Initialized)
+            if (!SteamClient.IsValid)
             {
                 Main.Logger.Log("[CloudSync] Steam not initialized, cannot write to cloud.");
                 return false;
@@ -113,7 +112,7 @@ namespace CheryTools
                 string json = root.ToString(Formatting.None);
                 byte[] data = Encoding.UTF8.GetBytes(json);
 
-                bool success = SteamRemoteStorage.FileWrite(CloudFileName, data, data.Length);
+                bool success = SteamRemoteStorage.FileWrite(CloudFileName, data);
                 if (success)
                 {
                     Main.Logger.Log($"[CloudSync] Uploaded to cloud ({data.Length} bytes).");

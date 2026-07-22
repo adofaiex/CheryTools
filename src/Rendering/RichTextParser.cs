@@ -104,32 +104,18 @@ namespace CheryTools
                 bool hasNewline = newline >= 0;
                 int lineEnd = hasNewline ? newline : end;
                 int segmentEnd = hasNewline ? newline + 1 : lineEnd;
-                string lineText = input.Substring(lineStart, lineEnd - lineStart).TrimStart();
-                if (!IsDirectiveOrCommentLine(lineText))
+                segments.Add(new ParsedSegment
                 {
-                    segments.Add(new ParsedSegment
-                    {
-                        RenderText = input.Substring(lineStart, segmentEnd - lineStart),
-                        Color = color,
-                        SizeValue = size,
-                        HasColorTag = hasColorTag,
-                        HasSizeTag = hasSizeTag,
-                        SourceStart = lineStart,
-                        SourceLength = segmentEnd - lineStart
-                    });
-                }
+                    RenderText = input.Substring(lineStart, segmentEnd - lineStart),
+                    Color = color,
+                    SizeValue = size,
+                    HasColorTag = hasColorTag,
+                    HasSizeTag = hasSizeTag,
+                    SourceStart = lineStart,
+                    SourceLength = segmentEnd - lineStart
+                });
                 lineStart = segmentEnd;
             }
-        }
-
-        private static bool IsDirectiveOrCommentLine(string trimmedLine)
-        {
-            return trimmedLine.StartsWith("##", StringComparison.Ordinal)
-                || trimmedLine.StartsWith("#import regex", StringComparison.OrdinalIgnoreCase)
-                || trimmedLine.StartsWith("#enable regex", StringComparison.OrdinalIgnoreCase)
-                || trimmedLine.StartsWith("#regex", StringComparison.OrdinalIgnoreCase)
-                || trimmedLine.StartsWith("#replace", StringComparison.OrdinalIgnoreCase)
-                || trimmedLine.StartsWith("#substitute", StringComparison.OrdinalIgnoreCase);
         }
 
         public static System.Numerics.Vector4 ParseHexColor(string hex, System.Numerics.Vector4 fallback)

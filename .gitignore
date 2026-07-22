@@ -5,6 +5,25 @@
 [Ll]ogs/
 .vs/
 out/
+output/
+Backups/
+
+# Local agent/tooling state
+.agents/
+.codex/
+
+# Local runtime and packaged releases
+imgui.ini
+*.zip
+
+# Local release notes and investigation reports
+/CheryTools_*_更新公告.md
+/KV_OV_*.md
+/KV_OV_Issue.txt
+/Performance_*.md
+/tiptoken-fixed.md
+/优化效果评估.md
+/性能*.md
 
 # User/local files
 *.user

@@ -17,28 +17,30 @@ namespace CheryTools
     {
         public static KeyViewerManager Instance;
 
-        public int CurrentKPS = 0;
-        
         public Dictionary<KVNode, bool> IsNodePressed = new Dictionary<KVNode, bool>();
         public Dictionary<KVNode, float> KeyPressAnimationProgress = new Dictionary<KVNode, float>();
 
-        private Queue<float> _hitTimestamps = new Queue<float>();
+        private readonly Dictionary<KVConfiguration, Queue<float>> _hitTimestampsByConfig = new Dictionary<KVConfiguration, Queue<float>>();
+        private readonly Dictionary<KVConfiguration, int> _currentKpsByConfig = new Dictionary<KVConfiguration, int>();
         public List<KeyDrop> ActiveDrops = new List<KeyDrop>();
         private readonly Dictionary<KVNode, string> _cachedKeyBindValues = new Dictionary<KVNode, string>();
         private readonly Dictionary<KVNode, KeyCode> _cachedKeyCodes = new Dictionary<KVNode, KeyCode>();
         private readonly List<KVNode> _activeNodesBuffer = new List<KVNode>();
         private readonly HashSet<KVNode> _activeNodeSet = new HashSet<KVNode>();
         private readonly Dictionary<KVNode, KVConfiguration> _activeNodeConfigMap = new Dictionary<KVNode, KVConfiguration>();
-        private readonly HashSet<KeyCode> _countedKeyDowns = new HashSet<KeyCode>();
+        private readonly Dictionary<KVConfiguration, HashSet<KeyCode>> _countedKeyDownsByConfig = new Dictionary<KVConfiguration, HashSet<KeyCode>>();
         private readonly HashSet<KVNode> _pressedNodes = new HashSet<KVNode>();
         private readonly HashSet<KeyCode> _keysToPoll = new HashSet<KeyCode>();
         private readonly Dictionary<KeyCode, KeyPollState> _polledKeys = new Dictionary<KeyCode, KeyPollState>();
+        private readonly Dictionary<KVNode, float> _visualPressedUntil = new Dictionary<KVNode, float>();
         private readonly Dictionary<KVNode, KVConfiguration> _animationNodeConfigMap = new Dictionary<KVNode, KVConfiguration>();
         private readonly List<KVNode> _animationKeysBuffer = new List<KVNode>();
+        private readonly List<KVNode> _visualPressedKeysBuffer = new List<KVNode>();
         private int _nextDropRenderId = 1;
         private bool _renderDirty = true;
         private long _activeNodesRevision = -1;
         private long _lastRenderedRevision = -1;
+        private float _nextKpsUpdateTime = 0f;
 
         private float _saveTimer = 0f;
 
@@ -71,33 +73,63 @@ namespace CheryTools
             _polledKeys.Clear();
             _animationNodeConfigMap.Clear();
             KeyPressAnimationProgress.Clear();
+            _visualPressedUntil.Clear();
             _pressedNodes.RemoveWhere(node => node == null);
             MarkRenderDirty();
         }
 
-        public void ResetCounts()
+        public int GetCurrentKps(KVConfiguration config)
         {
-            if (Main.Settings != null)
+            return config != null && _currentKpsByConfig.TryGetValue(config, out int value) ? value : 0;
+        }
+
+        public void ResetCounts(KVConfiguration config)
+        {
+            if (config != null)
             {
-                foreach (var n in Main.Settings.GetAllKeyViewerNodes())
+                if (config.Nodes != null)
                 {
-                    if (n != null) n.HitCount = 0;
+                    foreach (KVNode node in config.Nodes) if (node != null) node.HitCount = 0;
                 }
+                config.TotalHits = 0;
+                _hitTimestampsByConfig.Remove(config);
+                _currentKpsByConfig.Remove(config);
+                _countedKeyDownsByConfig.Remove(config);
             }
-            
-            if (Main.Settings != null)
-            {
-                Main.Settings.TotalHits = 0;
-            }
-            _hitTimestamps.Clear();
-            CurrentKPS = 0;
             ActiveDrops.Clear();
             _pressedNodes.Clear();
             KeyPressAnimationProgress.Clear();
+            _visualPressedUntil.Clear();
             _animationNodeConfigMap.Clear();
+            _nextKpsUpdateTime = 0f;
             MarkRenderDirty();
             if (Main.ModEntry != null && Main.Settings != null)
                 Main.RequestSave();
+        }
+
+        public void ResetAllCounts()
+        {
+            if (Main.Settings != null && Main.Settings.KeyViewerConfigurations != null)
+            {
+                foreach (KVConfiguration config in Main.Settings.KeyViewerConfigurations)
+                {
+                    if (config == null) continue;
+                    if (config.Nodes != null)
+                        foreach (KVNode node in config.Nodes) if (node != null) node.HitCount = 0;
+                    config.TotalHits = 0;
+                }
+            }
+            _hitTimestampsByConfig.Clear();
+            _currentKpsByConfig.Clear();
+            _countedKeyDownsByConfig.Clear();
+            ActiveDrops.Clear();
+            _pressedNodes.Clear();
+            KeyPressAnimationProgress.Clear();
+            _visualPressedUntil.Clear();
+            _animationNodeConfigMap.Clear();
+            _nextKpsUpdateTime = 0f;
+            MarkRenderDirty();
+            if (Main.ModEntry != null && Main.Settings != null) Main.RequestSave();
         }
 
         public List<KVNode> GetActiveNodes()
@@ -149,6 +181,26 @@ namespace CheryTools
         private void MarkRenderDirty()
         {
             _renderDirty = true;
+        }
+
+        private static float GetKpsRefreshInterval()
+        {
+            if (Main.Settings == null)
+            {
+                return 0.25f;
+            }
+
+            float interval = Main.Settings.KeyViewerKpsRefreshInterval;
+            if (interval <= 0f || float.IsNaN(interval) || float.IsInfinity(interval))
+            {
+                interval = 0.25f;
+            }
+            return Math.Max(0.05f, Math.Min(2.0f, interval));
+        }
+
+        private static float GetPressedVisualHoldDuration()
+        {
+            return 0.05f;
         }
 
         private bool HasActiveKeyRain()
@@ -394,20 +446,16 @@ namespace CheryTools
 
             float currentTime = Time.unscaledTime;
             bool hasInputActivity = Input.anyKey || Input.anyKeyDown;
-            if (!hasInputActivity && _pressedNodes.Count == 0 && ActiveDrops.Count == 0 && _hitTimestamps.Count == 0 && KeyPressAnimationProgress.Count == 0)
+            if (!hasInputActivity && _pressedNodes.Count == 0 && ActiveDrops.Count == 0
+                && !HasPendingKpsSamples() && KeyPressAnimationProgress.Count == 0 && _visualPressedUntil.Count == 0)
             {
-                if (CurrentKPS != 0)
-                {
-                    CurrentKPS = 0;
-                    MarkRenderDirty();
-                }
                 return;
             }
 
             var activeNodes = GetActiveNodes();
             if (activeNodes != null)
             {
-                if (ActiveDrops.Count > 0 || _pressedNodes.Count > 0)
+                if (ActiveDrops.Count > 0 || _pressedNodes.Count > 0 || _visualPressedUntil.Count > 0)
                 {
                     _activeNodeSet.Clear();
                     foreach (var node in activeNodes)
@@ -424,6 +472,25 @@ namespace CheryTools
                         }
                     }
 
+                    if (_visualPressedUntil.Count > 0)
+                    {
+                        _visualPressedKeysBuffer.Clear();
+                        foreach (var pair in _visualPressedUntil)
+                        {
+                            _visualPressedKeysBuffer.Add(pair.Key);
+                        }
+
+                        for (int i = 0; i < _visualPressedKeysBuffer.Count; i++)
+                        {
+                            KVNode node = _visualPressedKeysBuffer[i];
+                            if (node == null || !_activeNodeSet.Contains(node))
+                            {
+                                _visualPressedUntil.Remove(node);
+                                MarkRenderDirty();
+                            }
+                        }
+                    }
+
                     for (int j = ActiveDrops.Count - 1; j >= 0; j--)
                     {
                         if (ActiveDrops[j].EndTime == null && (ActiveDrops[j].Node == null || !_activeNodeSet.Contains(ActiveDrops[j].Node)))
@@ -435,7 +502,7 @@ namespace CheryTools
                 }
 
                 PollActiveKeyStates(activeNodes);
-                _countedKeyDowns.Clear();
+                foreach (HashSet<KeyCode> counted in _countedKeyDownsByConfig.Values) counted.Clear();
                 foreach (var node in activeNodes)
                 {
                     if (node == null) continue;
@@ -445,7 +512,23 @@ namespace CheryTools
                     if (TryGetNodeKeyCode(node, out KeyCode kc))
                     {
                         TryGetPolledKeyState(kc, out KeyPollState keyState);
-                        bool isPressed = keyState.IsPressed;
+                        bool physicallyPressed = keyState.IsPressed;
+                        if (keyState.IsDown)
+                        {
+                            float holdUntil = currentTime + GetPressedVisualHoldDuration();
+                            if (!_visualPressedUntil.TryGetValue(node, out float existingHoldUntil) || holdUntil > existingHoldUntil)
+                            {
+                                _visualPressedUntil[node] = holdUntil;
+                            }
+                        }
+
+                        bool heldByVisualWindow = _visualPressedUntil.TryGetValue(node, out float visualPressedUntil) && currentTime < visualPressedUntil;
+                        if (!physicallyPressed && !heldByVisualWindow)
+                        {
+                            _visualPressedUntil.Remove(node);
+                        }
+
+                        bool isPressed = physicallyPressed || heldByVisualWindow;
                         if (!IsNodePressed.TryGetValue(node, out bool wasPressed) || wasPressed != isPressed)
                         {
                             MarkRenderDirty();
@@ -473,10 +556,10 @@ namespace CheryTools
                             }
                             
                             node.HitCount++;
-                            if (_countedKeyDowns.Add(kc))
+                            if (ownerConfig != null && GetCountedKeys(ownerConfig).Add(kc))
                             {
-                                Main.Settings.TotalHits++;
-                                _hitTimestamps.Enqueue(currentTime);
+                                ownerConfig.TotalHits++;
+                                GetHitTimestamps(ownerConfig).Enqueue(currentTime);
                             }
                             if (IsKeyRainEnabled(ownerConfig, node))
                             {
@@ -486,7 +569,7 @@ namespace CheryTools
                         }
 
                         // 使用 !isPressed 替代 GetKeyUp，无视丢帧卡顿，只要按键处于松开状态就强制切断雨滴
-                        if (!isPressed)
+                        if (!physicallyPressed)
                         {
                             for (int j = ActiveDrops.Count - 1; j >= 0; j--)
                             {
@@ -507,6 +590,7 @@ namespace CheryTools
                         }
                         IsNodePressed[node] = false;
                         _pressedNodes.Remove(node);
+                        _visualPressedUntil.Remove(node);
                     }
                 }
                 AdvanceKeyPressAnimations(activeNodes);
@@ -529,16 +613,50 @@ namespace CheryTools
                 }
             }
 
-            while (_hitTimestamps.Count > 0 && currentTime - _hitTimestamps.Peek() > 1f)
+            if (currentTime >= _nextKpsUpdateTime)
             {
-                _hitTimestamps.Dequeue();
+                bool kpsChanged = false;
+                foreach (KeyValuePair<KVConfiguration, Queue<float>> pair in _hitTimestampsByConfig)
+                {
+                    Queue<float> timestamps = pair.Value;
+                    while (timestamps.Count > 0 && currentTime - timestamps.Peek() > 1f) timestamps.Dequeue();
+                    int previous = GetCurrentKps(pair.Key);
+                    if (previous != timestamps.Count)
+                    {
+                        _currentKpsByConfig[pair.Key] = timestamps.Count;
+                        kpsChanged = true;
+                    }
+                }
+                if (kpsChanged) MarkRenderDirty();
+                _nextKpsUpdateTime = currentTime + GetKpsRefreshInterval();
             }
-            int currentKps = _hitTimestamps.Count;
-            if (CurrentKPS != currentKps)
+        }
+
+        private Queue<float> GetHitTimestamps(KVConfiguration config)
+        {
+            if (!_hitTimestampsByConfig.TryGetValue(config, out Queue<float> queue))
             {
-                CurrentKPS = currentKps;
-                MarkRenderDirty();
+                queue = new Queue<float>();
+                _hitTimestampsByConfig[config] = queue;
             }
+            return queue;
+        }
+
+        private HashSet<KeyCode> GetCountedKeys(KVConfiguration config)
+        {
+            if (!_countedKeyDownsByConfig.TryGetValue(config, out HashSet<KeyCode> keys))
+            {
+                keys = new HashSet<KeyCode>();
+                _countedKeyDownsByConfig[config] = keys;
+            }
+            return keys;
+        }
+
+        private bool HasPendingKpsSamples()
+        {
+            foreach (Queue<float> queue in _hitTimestampsByConfig.Values)
+                if (queue != null && queue.Count > 0) return true;
+            return false;
         }
     }
 }

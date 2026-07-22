@@ -24,6 +24,7 @@ namespace CheryTools
         public float PivotX = 0f;
         public float PivotY = 0f;
 
+        public OvAnimationGraph NodeAnimation = OvImageNodeAnimation.CreateDefault();
         public System.Collections.Generic.List<OverlayerAnimation> Animations = new System.Collections.Generic.List<OverlayerAnimation>();
 
         [System.Xml.Serialization.XmlIgnore]
@@ -66,17 +67,16 @@ namespace CheryTools
         Progress = 1,
         Accuracy = 2,
         XAccuracy = 3,
-        Kps = 4,
-        CurrentClicksPerSecond = 5,
-        MapPlayedTime = 6,
-        MapTotalTime = 7,
-        MusicPlayedTime = 8,
-        MusicTotalTime = 9,
-        PureCombo = 10,
-        PerfectCombo = 11,
-        Miss = 12,
-        FailMiss = 13,
-        FailOverload = 14
+        CurrentClicksPerSecond = 4,
+        MapPlayedTime = 5,
+        MapTotalTime = 6,
+        MusicPlayedTime = 7,
+        MusicTotalTime = 8,
+        PureCombo = 9,
+        PerfectCombo = 10,
+        Miss = 11,
+        FailMiss = 12,
+        FailOverload = 13
     }
 
     public enum OverlayerProgressFillDirection
@@ -150,15 +150,6 @@ namespace CheryTools
     }
 
     [Serializable]
-    public class KVAxisGradient
-    {
-        public bool VerticalEnabled = false;
-        public bool HorizontalEnabled = false;
-        public float[] VerticalEndColor = new float[] { 1f, 1f, 1f, 1f };
-        public float[] HorizontalEndColor = new float[] { 1f, 1f, 1f, 1f };
-    }
-
-    [Serializable]
     public class KVNode
     {
         public int NodeType = 0; // 0 = Normal Key, 1 = KPS Box, 2 = Total Box, 3 = Background Image Key, 4 = Video Key
@@ -189,6 +180,7 @@ namespace CheryTools
         public float CountOffsetY = 0f;
         public float CountOffsetX = 0f;
         public float CountScale = 1f;
+        public int CountTextAlignment = 1; // 0: Left, 1: Center, 2: Right
         public string KeyFontPath = "";
         public string CountFontPath = "";
         public bool HideCountText = false;
@@ -212,19 +204,12 @@ namespace CheryTools
         public float CountTextShadowSoftness = 0f;
         
         public bool UseCustomColor = false;
-        public bool UseCustomColorGradient = false;
         public float[] ColorBgNormal = new float[] { 0.2f, 0.2f, 0.2f, 0.8f };
         public float[] ColorBgPressed = new float[] { 0.8f, 0.8f, 0.8f, 0.8f };
         public float[] ColorBorderNormal = new float[] { 0.4f, 0.4f, 0.4f, 1.0f };
         public float[] ColorBorderPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
         public float[] ColorTextNormal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
         public float[] ColorTextPressed = new float[] { 0.0f, 0.0f, 0.0f, 1.0f };
-        public KVAxisGradient BackgroundGradientNormal = new KVAxisGradient();
-        public KVAxisGradient BackgroundGradientPressed = new KVAxisGradient();
-        public KVAxisGradient BorderGradientNormal = new KVAxisGradient();
-        public KVAxisGradient BorderGradientPressed = new KVAxisGradient();
-        public KVAxisGradient TextGradientNormal = new KVAxisGradient();
-        public KVAxisGradient TextGradientPressed = new KVAxisGradient();
 
         public int RainRow = 0;
         public bool EnableKeyRain = true;
@@ -281,19 +266,13 @@ namespace CheryTools
         public string Name = "新配置";
         public bool IsEnabled = true;
         public bool ShowInGame = true;
+        public int TotalHits = 0;
         public System.Collections.Generic.List<KVNode> Nodes = new System.Collections.Generic.List<KVNode>();
 
-        public bool AppearanceMigrated = false;
         public string FontPath = "";
         public float Scale = 1.0f;
         public float BorderThickness = 2.0f;
         public bool HideCountText = false;
-        public float GlobalTextOffsetX = 0f;
-        public float GlobalTextOffsetY = 0f;
-        public float GlobalCountOffsetX = 0f;
-        public float GlobalCountOffsetY = 0f;
-        public float DefaultWidth = 50f;
-        public float DefaultHeight = 50f;
 
         public float[] ColorBgNormal = new float[] { 0.2f, 0.1f, 0.3f, 0.8f };
         public float[] ColorBgPressed = new float[] { 0.5f, 0.2f, 0.8f, 1.0f };
@@ -301,12 +280,6 @@ namespace CheryTools
         public float[] ColorBorderPressed = new float[] { 0.8f, 0.4f, 1.0f, 1.0f };
         public float[] ColorTextNormal = new float[] { 0.8f, 0.8f, 0.8f, 1.0f };
         public float[] ColorTextPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public KVAxisGradient BackgroundGradientNormal = new KVAxisGradient();
-        public KVAxisGradient BackgroundGradientPressed = new KVAxisGradient();
-        public KVAxisGradient BorderGradientNormal = new KVAxisGradient();
-        public KVAxisGradient BorderGradientPressed = new KVAxisGradient();
-        public KVAxisGradient TextGradientNormal = new KVAxisGradient();
-        public KVAxisGradient TextGradientPressed = new KVAxisGradient();
         public float[] ColorKps = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
         public float[] ColorTotal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
 
@@ -388,6 +361,10 @@ namespace CheryTools
         public float OutlineThickness = 1f;
         public float LineHeightOffset = 0f;
         public float LetterSpacing = 0f;
+
+        public string TokenSourceSnapshot = "";
+        public System.Collections.Generic.List<OvTextTokenBinding> TokenBindings = new System.Collections.Generic.List<OvTextTokenBinding>();
+        public OvAnimationGraph TokenAnimation = OvAnimationGraph.CreateDefault();
         
         public System.Collections.Generic.List<OverlayerAnimation> Animations = new System.Collections.Generic.List<OverlayerAnimation>();
 
@@ -423,6 +400,8 @@ namespace CheryTools
 
     public class Settings : UnityModManager.ModSettings
     {
+        public const int MaxToolsLimitedKeys = 128;
+
         public bool OverlayerSystemEnabled = false;
         public bool OverlayerEditMode = false;
         public bool OverlayerOnlyShowPlaying = false;
@@ -432,18 +411,22 @@ namespace CheryTools
         public System.Collections.Generic.List<OverlayerProgressBar> OverlayerProgressBars = new System.Collections.Generic.List<OverlayerProgressBar>();
         // Visual Settings
         public bool EnableCustomPlanetColors = false;
+        public bool EnableCustomPlanetTextures = false;
 
         public float[] RedPlanetColor = new float[] { 1f, 0f, 0f, 1f };
         public float[] RedRingColor = new float[] { 1f, 0f, 0f, 0.4f };
         public float[] RedTailColor = new float[] { 1f, 0f, 0f, 1f };
+        public string RedPlanetTexturePath = "";
 
         public float[] BluePlanetColor = new float[] { 0f, 0f, 1f, 1f };
         public float[] BlueRingColor = new float[] { 0f, 0f, 1f, 0.4f };
         public float[] BlueTailColor = new float[] { 0f, 0f, 1f, 1f };
+        public string BluePlanetTexturePath = "";
 
         public float[] GreenPlanetColor = new float[] { 0f, 1f, 0f, 1f };
         public float[] GreenRingColor = new float[] { 0f, 1f, 0f, 0.4f };
         public float[] GreenTailColor = new float[] { 0f, 1f, 0f, 1f };
+        public string GreenPlanetTexturePath = "";
 
         public float[] ComboColor = new float[4] { 1f, 1f, 1f, 1f };
         public float[] AccuracyColor = new float[4] { 1f, 1f, 1f, 1f };
@@ -467,6 +450,8 @@ namespace CheryTools
         public string Language = LocalizationManager.DefaultLanguage;
         public float ImGuiPanelScale = 1.0f;
         public float OverlayUpdateRate = 240.0f;
+        public float KeyViewerKpsRefreshInterval = 0.25f;
+        public float OverlayerFpsTagRefreshInterval = 0.25f;
         public float ImageRenderScale = 1.0f;
 
         // Gameplay UI Settings
@@ -481,6 +466,11 @@ namespace CheryTools
         public float ToolsAntiBounceIntervalMs = 50f;
         public bool ToolsLimitInput = false;
         public System.Collections.Generic.List<KeyCode> ToolsLimitedKeys = new System.Collections.Generic.List<KeyCode>();
+        public bool EnableOfficialLevelEditorExperimental = false;
+        public bool EnableEditorLevelLibrary = false;
+
+        // Level editor library
+        public System.Collections.Generic.List<EditorLevelLibraryEntry> EditorLevelLibraryEntries = new System.Collections.Generic.List<EditorLevelLibraryEntry>();
 
         // Integration Settings
         public bool XPerfectIntegrationEnabled = false;
@@ -489,57 +479,7 @@ namespace CheryTools
         public bool EnableKeyViewer = true;
         public bool LimitInput = false;
         public bool KeyViewerOnlyShowPlaying = false;
-        public bool KeyViewerHideCountText = false;
-        
         public int KeyViewerSelectedConfigIndex = 0;
-        public float KeyViewerScale = 1.0f;
-        public float KeyViewerBorderThickness = 2.0f;
-
-        // Colors
-        public float[] KeyViewerColorBgNormal = new float[] { 0.2f, 0.1f, 0.3f, 0.8f }; 
-        public float[] KeyViewerColorBgPressed = new float[] { 0.5f, 0.2f, 0.8f, 1.0f }; 
-        
-        public float[] KeyViewerColorBorderNormal = new float[] { 0.6f, 0.3f, 0.9f, 0.8f }; 
-        public float[] KeyViewerColorBorderPressed = new float[] { 0.8f, 0.4f, 1.0f, 1.0f }; 
-        
-        public float[] KeyViewerColorTextNormal = new float[] { 0.8f, 0.8f, 0.8f, 1.0f }; 
-        public float[] KeyViewerColorTextPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f }; 
-
-        public float[] KeyViewerColorKps = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public float[] KeyViewerColorTotal = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-
-        public bool KeyViewerKeyTextOutlineEnabled = false;
-        public float[] KeyViewerKeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
-        public float KeyViewerKeyTextOutlineThickness = 1f;
-        public bool KeyViewerCountTextOutlineEnabled = false;
-        public float[] KeyViewerCountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
-        public float KeyViewerCountTextOutlineThickness = 1f;
-
-        public bool KeyViewerKeyTextShadowEnabled = false;
-        public float[] KeyViewerKeyTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
-        public float[] KeyViewerKeyTextShadowOffset = new float[] { 2f, 2f };
-        public float KeyViewerKeyTextShadowSoftness = 0f;
-        public bool KeyViewerCountTextShadowEnabled = false;
-        public float[] KeyViewerCountTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
-        public float[] KeyViewerCountTextShadowOffset = new float[] { 2f, 2f };
-        public float KeyViewerCountTextShadowSoftness = 0f;
-
-        // KeyRain Settings
-        public bool EnableKeyRain = false;
-        public float KeyRainSpeed = 800.0f;
-        public float KeyRainMaxHeight = 400.0f;
-        public int KeyRainFadeMode = 1; // 0=Clip, 1=Fade
-        public float KeyRainFadeHeight = 1.0f;
-        public float KeyRainFadePower = 1.0f;
-        public float KeyRainWidthRatio1 = 0.8f;
-        public float KeyRainWidthRatio2 = 0.4f;
-        public float KeyRainYOffsetRow1 = 0.0f;
-        public float KeyRainYOffsetRow2 = 0.0f;
-        public float KeyRainCornerRadius = 0f;
-        public float[] KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
-        public float[] KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
-        public float KeyRainGradientHeight = 1.0f;
-        public float KeyRainGradientPower = 1.0f;
 
         private static readonly string[] DefaultKeyBindings = new string[16] {
             "Tab", "Alpha1", "Alpha2", "E", "P", "Equals", "Backspace", "Backslash",
@@ -548,18 +488,6 @@ namespace CheryTools
 
         
 
-        public int TotalHits = 0;
-
-        public string KeyViewerFontPath = "";
-        
-        public float GlobalTextOffsetX = 0f;
-        public float GlobalTextOffsetY = 0f;
-        public float GlobalCountOffsetX = 0f;
-        public float GlobalCountOffsetY = 0f;
-        
-        public float KeyViewerDefaultWidth = 50f;
-        public float KeyViewerDefaultHeight = 50f;
-        
         public System.Collections.Generic.List<KVConfiguration> KeyViewerConfigurations = new System.Collections.Generic.List<KVConfiguration>();
 
         public override void Save(UnityModManager.ModEntry modEntry)
@@ -609,8 +537,11 @@ namespace CheryTools
         {
             if (ToolsLimitedKeys == null)
                 ToolsLimitedKeys = new System.Collections.Generic.List<KeyCode>();
-            if (ToolsLimitedKeys.Count > 30)
-                ToolsLimitedKeys.RemoveRange(30, ToolsLimitedKeys.Count - 30);
+            if (ToolsLimitedKeys.Count > MaxToolsLimitedKeys)
+                ToolsLimitedKeys.RemoveRange(MaxToolsLimitedKeys, ToolsLimitedKeys.Count - MaxToolsLimitedKeys);
+            if (EditorLevelLibraryEntries == null)
+                EditorLevelLibraryEntries = new System.Collections.Generic.List<EditorLevelLibraryEntry>();
+            EditorLevelLibraryStore.NormalizeEntries(EditorLevelLibraryEntries);
             if (ToolsAntiBounceIntervalMs <= 0f || float.IsNaN(ToolsAntiBounceIntervalMs) || float.IsInfinity(ToolsAntiBounceIntervalMs))
                 ToolsAntiBounceIntervalMs = 50f;
             ToolsAntiBounceIntervalMs = Math.Max(1f, Math.Min(500f, ToolsAntiBounceIntervalMs));
@@ -621,6 +552,12 @@ namespace CheryTools
             if (OverlayUpdateRate <= 0f || float.IsNaN(OverlayUpdateRate) || float.IsInfinity(OverlayUpdateRate))
                 OverlayUpdateRate = 240.0f;
             OverlayUpdateRate = Math.Max(30.0f, Math.Min(360.0f, OverlayUpdateRate));
+            if (KeyViewerKpsRefreshInterval <= 0f || float.IsNaN(KeyViewerKpsRefreshInterval) || float.IsInfinity(KeyViewerKpsRefreshInterval))
+                KeyViewerKpsRefreshInterval = 0.25f;
+            KeyViewerKpsRefreshInterval = Math.Max(0.05f, Math.Min(2.0f, KeyViewerKpsRefreshInterval));
+            if (OverlayerFpsTagRefreshInterval <= 0f || float.IsNaN(OverlayerFpsTagRefreshInterval) || float.IsInfinity(OverlayerFpsTagRefreshInterval))
+                OverlayerFpsTagRefreshInterval = 0.25f;
+            OverlayerFpsTagRefreshInterval = Math.Max(0.05f, Math.Min(2.0f, OverlayerFpsTagRefreshInterval));
             if (ImageRenderScale <= 0f || float.IsNaN(ImageRenderScale) || float.IsInfinity(ImageRenderScale))
                 ImageRenderScale = 1.0f;
             ImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, ImageRenderScale));
@@ -635,21 +572,9 @@ namespace CheryTools
             if (GreenPlanetColor == null || GreenPlanetColor.Length != 4) GreenPlanetColor = new float[] { 0f, 1f, 0f, 1f };
             if (GreenRingColor == null || GreenRingColor.Length != 4) GreenRingColor = new float[] { 0f, 1f, 0f, 0.4f };
             if (GreenTailColor == null || GreenTailColor.Length != 4) GreenTailColor = new float[] { 0f, 1f, 0f, 1f };
-            if (KeyViewerColorBgNormal == null || KeyViewerColorBgNormal.Length != 4) KeyViewerColorBgNormal = new float[] { 0.0f, 0.0f, 0.0f, 0.6f };
-            if (KeyViewerColorBgPressed == null || KeyViewerColorBgPressed.Length != 4) KeyViewerColorBgPressed = new float[] { 0.2f, 0.6f, 1.0f, 0.8f };
-            if (KeyViewerColorBorderNormal == null || KeyViewerColorBorderNormal.Length != 4) KeyViewerColorBorderNormal = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
-            if (KeyViewerColorBorderPressed == null || KeyViewerColorBorderPressed.Length != 4) KeyViewerColorBorderPressed = new float[] { 0.8f, 0.9f, 1.0f, 0.8f };
-            if (KeyViewerColorTextNormal == null || KeyViewerColorTextNormal.Length != 4) KeyViewerColorTextNormal = new float[] { 1.0f, 1.0f, 1.0f, 0.8f };
-            if (KeyViewerKeyTextOutlineColor == null || KeyViewerKeyTextOutlineColor.Length != 4) KeyViewerKeyTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
-            if (KeyViewerCountTextOutlineColor == null || KeyViewerCountTextOutlineColor.Length != 4) KeyViewerCountTextOutlineColor = new float[] { 0f, 0f, 0f, 1f };
-            if (KeyViewerKeyTextOutlineThickness < 0f) KeyViewerKeyTextOutlineThickness = 1f;
-            if (KeyViewerCountTextOutlineThickness < 0f) KeyViewerCountTextOutlineThickness = 1f;
-            if (KeyViewerKeyTextShadowColor == null || KeyViewerKeyTextShadowColor.Length != 4) KeyViewerKeyTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
-            if (KeyViewerKeyTextShadowOffset == null || KeyViewerKeyTextShadowOffset.Length != 2) KeyViewerKeyTextShadowOffset = new float[] { 2f, 2f };
-            if (float.IsNaN(KeyViewerKeyTextShadowSoftness) || float.IsInfinity(KeyViewerKeyTextShadowSoftness) || KeyViewerKeyTextShadowSoftness < 0f) KeyViewerKeyTextShadowSoftness = 0f;
-            if (KeyViewerCountTextShadowColor == null || KeyViewerCountTextShadowColor.Length != 4) KeyViewerCountTextShadowColor = new float[] { 0f, 0f, 0f, 0.7f };
-            if (KeyViewerCountTextShadowOffset == null || KeyViewerCountTextShadowOffset.Length != 2) KeyViewerCountTextShadowOffset = new float[] { 2f, 2f };
-            if (float.IsNaN(KeyViewerCountTextShadowSoftness) || float.IsInfinity(KeyViewerCountTextShadowSoftness) || KeyViewerCountTextShadowSoftness < 0f) KeyViewerCountTextShadowSoftness = 0f;
+            if (RedPlanetTexturePath == null) RedPlanetTexturePath = "";
+            if (BluePlanetTexturePath == null) BluePlanetTexturePath = "";
+            if (GreenPlanetTexturePath == null) GreenPlanetTexturePath = "";
             
             if (OverlayerTexts != null)
             {
@@ -663,6 +588,11 @@ namespace CheryTools
                     if (float.IsNaN(t.ShadowSoftness) || float.IsInfinity(t.ShadowSoftness) || t.ShadowSoftness < 0f) t.ShadowSoftness = 0f;
                     if (t.OutlineColor == null || t.OutlineColor.Length != 4) t.OutlineColor = new float[] { 0f, 0f, 0f, 1f };
                     if (t.OutlineThickness < 0f) t.OutlineThickness = 1f;
+                    if (t.TokenAnimation == null) t.TokenAnimation = OvAnimationGraph.CreateDefault();
+                    t.TokenAnimation.Normalize();
+                    if (t.TokenBindings == null) t.TokenBindings = new System.Collections.Generic.List<OvTextTokenBinding>();
+                    OvTextTokenService.EnsureBindings(t);
+                    OvLegacyTokenAnimationMigration.Migrate(t);
                     if (t.Animations != null)
                     {
                         foreach (var anim in t.Animations)
@@ -678,6 +608,8 @@ namespace CheryTools
                 {
                     if (img == null) continue;
                     img.Depth = RenderDepth.ClampDepth(img.Depth);
+                    if (img.NodeAnimation == null) img.NodeAnimation = OvImageNodeAnimation.CreateDefault();
+                    OvImageNodeAnimation.EnsureImageTarget(img.NodeAnimation);
                     if (img.Animations != null)
                     {
                         foreach (var anim in img.Animations)
@@ -689,8 +621,6 @@ namespace CheryTools
             }
             if (OverlayerVideos == null)
                 OverlayerVideos = new System.Collections.Generic.List<OverlayerVideo>();
-            if (OverlayerVideos.Count > 2)
-                OverlayerVideos.RemoveRange(2, OverlayerVideos.Count - 2);
             for (int i = 0; i < OverlayerVideos.Count; i++)
             {
                 if (OverlayerVideos[i] == null)
@@ -705,9 +635,6 @@ namespace CheryTools
                     OverlayerProgressBars[i] = new OverlayerProgressBar();
                 EnsureOverlayerProgressBarDefaults(OverlayerProgressBars[i]);
             }
-            if (KeyViewerColorTextPressed == null || KeyViewerColorTextPressed.Length != 4) KeyViewerColorTextPressed = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-            if (KeyRainColorRow1 == null || KeyRainColorRow1.Length != 4) KeyRainColorRow1 = new float[] { 0.8f, 0.5f, 1.0f, 0.8f };
-            if (KeyRainColorRow2 == null || KeyRainColorRow2.Length != 4) KeyRainColorRow2 = new float[] { 0.5f, 0.8f, 1.0f, 0.8f };
 
             EnsureKeyViewerConfigurations();
 
@@ -799,6 +726,10 @@ namespace CheryTools
                 {
                     node.CountTextShadowSoftness = 0f;
                 }
+                if (node.CountTextAlignment < 0 || node.CountTextAlignment > 2)
+                {
+                    node.CountTextAlignment = 1;
+                }
             }
         }
 
@@ -823,27 +754,7 @@ namespace CheryTools
             };
         }
 
-        private static KVAxisGradient CloneAxisGradient(KVAxisGradient source, float[] fallbackVertical, float[] fallbackHorizontal)
-        {
-            if (source == null)
-            {
-                return new KVAxisGradient
-                {
-                    VerticalEndColor = CloneColor(fallbackVertical, new float[] { 1f, 1f, 1f, 1f }),
-                    HorizontalEndColor = CloneColor(fallbackHorizontal, new float[] { 1f, 1f, 1f, 1f })
-                };
-            }
-
-            return new KVAxisGradient
-            {
-                VerticalEnabled = source.VerticalEnabled,
-                HorizontalEnabled = source.HorizontalEnabled,
-                VerticalEndColor = CloneColor(source.VerticalEndColor, fallbackVertical),
-                HorizontalEndColor = CloneColor(source.HorizontalEndColor, fallbackHorizontal)
-            };
-        }
-
-        private static KVNode CloneKeyViewerNode(KVNode source)
+        internal static KVNode CloneKeyViewerNode(KVNode source)
         {
             if (source == null) return new KVNode();
 
@@ -874,6 +785,7 @@ namespace CheryTools
                 CountOffsetY = source.CountOffsetY,
                 CountOffsetX = source.CountOffsetX,
                 CountScale = source.CountScale,
+                CountTextAlignment = source.CountTextAlignment,
                 KeyFontPath = source.KeyFontPath,
                 CountFontPath = source.CountFontPath,
                 HideCountText = source.HideCountText,
@@ -894,19 +806,12 @@ namespace CheryTools
                 CountTextShadowOffset = ClonePair(source.CountTextShadowOffset, 2f, 2f),
                 CountTextShadowSoftness = source.CountTextShadowSoftness,
                 UseCustomColor = source.UseCustomColor,
-                UseCustomColorGradient = source.UseCustomColorGradient,
                 ColorBgNormal = CloneColor(source.ColorBgNormal, new float[] { 0.2f, 0.2f, 0.2f, 0.8f }),
                 ColorBgPressed = CloneColor(source.ColorBgPressed, new float[] { 0.8f, 0.8f, 0.8f, 0.8f }),
                 ColorBorderNormal = CloneColor(source.ColorBorderNormal, new float[] { 0.4f, 0.4f, 0.4f, 1.0f }),
                 ColorBorderPressed = CloneColor(source.ColorBorderPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
                 ColorTextNormal = CloneColor(source.ColorTextNormal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
                 ColorTextPressed = CloneColor(source.ColorTextPressed, new float[] { 0.0f, 0.0f, 0.0f, 1.0f }),
-                BackgroundGradientNormal = CloneAxisGradient(source.BackgroundGradientNormal, source.ColorBgNormal, source.ColorBgNormal),
-                BackgroundGradientPressed = CloneAxisGradient(source.BackgroundGradientPressed, source.ColorBgPressed, source.ColorBgPressed),
-                BorderGradientNormal = CloneAxisGradient(source.BorderGradientNormal, source.ColorBorderNormal, source.ColorBorderNormal),
-                BorderGradientPressed = CloneAxisGradient(source.BorderGradientPressed, source.ColorBorderPressed, source.ColorBorderPressed),
-                TextGradientNormal = CloneAxisGradient(source.TextGradientNormal, source.ColorTextNormal, source.ColorTextNormal),
-                TextGradientPressed = CloneAxisGradient(source.TextGradientPressed, source.ColorTextPressed, source.ColorTextPressed),
                 RainRow = source.RainRow,
                 EnableKeyRain = source.EnableKeyRain,
                 UseCustomRain = source.UseCustomRain,
@@ -939,6 +844,11 @@ namespace CheryTools
                 KeyPressAnimationOffsetY = source.KeyPressAnimationOffsetY,
                 HitCount = source.HitCount
             };
+        }
+
+        internal KVNode CloneKeyViewerNodeForEditor(KVNode source)
+        {
+            return CloneKeyViewerNode(source);
         }
 
         private static System.Collections.Generic.List<KVNode> CloneKeyViewerNodes(System.Collections.Generic.List<KVNode> nodes)
@@ -1003,35 +913,23 @@ namespace CheryTools
         {
             if (source == null) return new KVConfiguration();
 
-            return new KVConfiguration
+            KVConfiguration clone = new KVConfiguration
             {
                 Name = string.IsNullOrEmpty(source.Name) ? "KV 配置 副本" : source.Name + " 副本",
                 IsEnabled = source.IsEnabled,
                 ShowInGame = source.ShowInGame,
+                TotalHits = 0,
                 Nodes = CloneKeyViewerNodes(source.Nodes),
-                AppearanceMigrated = source.AppearanceMigrated,
                 FontPath = source.FontPath,
                 Scale = source.Scale,
                 BorderThickness = source.BorderThickness,
                 HideCountText = source.HideCountText,
-                GlobalTextOffsetX = source.GlobalTextOffsetX,
-                GlobalTextOffsetY = source.GlobalTextOffsetY,
-                GlobalCountOffsetX = source.GlobalCountOffsetX,
-                GlobalCountOffsetY = source.GlobalCountOffsetY,
-                DefaultWidth = source.DefaultWidth,
-                DefaultHeight = source.DefaultHeight,
                 ColorBgNormal = CloneColor(source.ColorBgNormal, new float[] { 0.2f, 0.1f, 0.3f, 0.8f }),
                 ColorBgPressed = CloneColor(source.ColorBgPressed, new float[] { 0.5f, 0.2f, 0.8f, 1.0f }),
                 ColorBorderNormal = CloneColor(source.ColorBorderNormal, new float[] { 0.6f, 0.3f, 0.9f, 0.8f }),
                 ColorBorderPressed = CloneColor(source.ColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f }),
                 ColorTextNormal = CloneColor(source.ColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f }),
                 ColorTextPressed = CloneColor(source.ColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f }),
-                BackgroundGradientNormal = CloneAxisGradient(source.BackgroundGradientNormal, source.ColorBgNormal, source.ColorBgNormal),
-                BackgroundGradientPressed = CloneAxisGradient(source.BackgroundGradientPressed, source.ColorBgPressed, source.ColorBgPressed),
-                BorderGradientNormal = CloneAxisGradient(source.BorderGradientNormal, source.ColorBorderNormal, source.ColorBorderNormal),
-                BorderGradientPressed = CloneAxisGradient(source.BorderGradientPressed, source.ColorBorderPressed, source.ColorBorderPressed),
-                TextGradientNormal = CloneAxisGradient(source.TextGradientNormal, source.ColorTextNormal, source.ColorTextNormal),
-                TextGradientPressed = CloneAxisGradient(source.TextGradientPressed, source.ColorTextPressed, source.ColorTextPressed),
                 ColorKps = CloneColor(source.ColorKps, new float[] { 1f, 1f, 1f, 1f }),
                 ColorTotal = CloneColor(source.ColorTotal, new float[] { 1f, 1f, 1f, 1f }),
                 KeyTextOutlineEnabled = source.KeyTextOutlineEnabled,
@@ -1083,6 +981,11 @@ namespace CheryTools
                 KeyPressAnimationOffsetX = source.KeyPressAnimationOffsetX,
                 KeyPressAnimationOffsetY = source.KeyPressAnimationOffsetY
             };
+            if (clone.Nodes != null)
+            {
+                foreach (KVNode node in clone.Nodes) if (node != null) node.HitCount = 0;
+            }
+            return clone;
         }
 
         public OverlayerText CloneOverlayerText(OverlayerText source)
@@ -1114,6 +1017,9 @@ namespace CheryTools
                 OutlineThickness = source.OutlineThickness,
                 LineHeightOffset = source.LineHeightOffset,
                 LetterSpacing = source.LetterSpacing,
+                TokenSourceSnapshot = source.TokenSourceSnapshot,
+                TokenBindings = OvTextTokenBinding.CloneList(source.TokenBindings),
+                TokenAnimation = OvAnimationGraph.Clone(source.TokenAnimation),
                 Animations = CloneOverlayerAnimations(source.Animations),
                 PivotX = source.PivotX,
                 PivotY = source.PivotY,
@@ -1139,6 +1045,7 @@ namespace CheryTools
                 Depth = source.Depth,
                 PivotX = source.PivotX,
                 PivotY = source.PivotY,
+                NodeAnimation = OvAnimationGraph.Clone(source.NodeAnimation),
                 Animations = CloneOverlayerAnimations(source.Animations),
                 LastWidth = source.LastWidth,
                 LastHeight = source.LastHeight
@@ -1216,87 +1123,9 @@ namespace CheryTools
             };
         }
 
-        private void CopyGlobalKeyViewerAppearanceTo(KVConfiguration config)
-        {
-            if (config == null) return;
-
-            config.FontPath = KeyViewerFontPath ?? "";
-            config.Scale = KeyViewerScale;
-            config.BorderThickness = KeyViewerBorderThickness;
-            config.HideCountText = KeyViewerHideCountText;
-            config.GlobalTextOffsetX = GlobalTextOffsetX;
-            config.GlobalTextOffsetY = GlobalTextOffsetY;
-            config.GlobalCountOffsetX = GlobalCountOffsetX;
-            config.GlobalCountOffsetY = GlobalCountOffsetY;
-            config.DefaultWidth = KeyViewerDefaultWidth;
-            config.DefaultHeight = KeyViewerDefaultHeight;
-            config.ColorBgNormal = CloneColor(KeyViewerColorBgNormal, new float[] { 0.2f, 0.1f, 0.3f, 0.8f });
-            config.ColorBgPressed = CloneColor(KeyViewerColorBgPressed, new float[] { 0.5f, 0.2f, 0.8f, 1.0f });
-            config.ColorBorderNormal = CloneColor(KeyViewerColorBorderNormal, new float[] { 0.6f, 0.3f, 0.9f, 0.8f });
-            config.ColorBorderPressed = CloneColor(KeyViewerColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f });
-            config.ColorTextNormal = CloneColor(KeyViewerColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f });
-            config.ColorTextPressed = CloneColor(KeyViewerColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
-            config.BackgroundGradientNormal = CloneAxisGradient(null, config.ColorBgNormal, config.ColorBgNormal);
-            config.BackgroundGradientPressed = CloneAxisGradient(null, config.ColorBgPressed, config.ColorBgPressed);
-            config.BorderGradientNormal = CloneAxisGradient(null, config.ColorBorderNormal, config.ColorBorderNormal);
-            config.BorderGradientPressed = CloneAxisGradient(null, config.ColorBorderPressed, config.ColorBorderPressed);
-            config.TextGradientNormal = CloneAxisGradient(null, config.ColorTextNormal, config.ColorTextNormal);
-            config.TextGradientPressed = CloneAxisGradient(null, config.ColorTextPressed, config.ColorTextPressed);
-            config.ColorKps = CloneColor(KeyViewerColorKps, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
-            config.ColorTotal = CloneColor(KeyViewerColorTotal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
-            config.KeyTextOutlineEnabled = KeyViewerKeyTextOutlineEnabled;
-            config.KeyTextOutlineColor = CloneColor(KeyViewerKeyTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
-            config.KeyTextOutlineThickness = KeyViewerKeyTextOutlineThickness;
-            config.CountTextOutlineEnabled = KeyViewerCountTextOutlineEnabled;
-            config.CountTextOutlineColor = CloneColor(KeyViewerCountTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
-            config.CountTextOutlineThickness = KeyViewerCountTextOutlineThickness;
-            config.KeyTextShadowEnabled = KeyViewerKeyTextShadowEnabled;
-            config.KeyTextShadowColor = CloneColor(KeyViewerKeyTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f });
-            config.KeyTextShadowOffset = ClonePair(KeyViewerKeyTextShadowOffset, 2f, 2f);
-            config.KeyTextShadowSoftness = KeyViewerKeyTextShadowSoftness;
-            config.CountTextShadowEnabled = KeyViewerCountTextShadowEnabled;
-            config.CountTextShadowColor = CloneColor(KeyViewerCountTextShadowColor, new float[] { 0f, 0f, 0f, 0.7f });
-            config.CountTextShadowOffset = ClonePair(KeyViewerCountTextShadowOffset, 2f, 2f);
-            config.CountTextShadowSoftness = KeyViewerCountTextShadowSoftness;
-            config.EnableKeyRain = EnableKeyRain;
-            config.KeyRainSpeed = KeyRainSpeed;
-            config.KeyRainMaxHeight = KeyRainMaxHeight;
-            config.KeyRainFadeMode = KeyRainFadeMode;
-            config.KeyRainFadeHeight = KeyRainFadeHeight;
-            config.KeyRainFadePower = KeyRainFadePower;
-            config.KeyRainWidthRatio1 = KeyRainWidthRatio1;
-            config.KeyRainWidthRatio2 = KeyRainWidthRatio2;
-            config.KeyRainYOffsetRow1 = KeyRainYOffsetRow1;
-            config.KeyRainYOffsetRow2 = KeyRainYOffsetRow2;
-            config.KeyRainCornerRadius = KeyRainCornerRadius;
-            config.KeyRainColorRow1 = CloneColor(KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
-            config.KeyRainColorRow2 = CloneColor(KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
-            config.KeyRainGradientEnabled = false;
-            config.KeyRainHorizontalGradientEnabled = false;
-            config.KeyRainGradientEndColorRow1 = new float[] { 1.0f, 0.25f, 0.8f, 0.8f };
-            config.KeyRainGradientEndColorRow2 = new float[] { 0.25f, 1.0f, 0.8f, 0.8f };
-            config.KeyRainHorizontalGradientEndColorRow1 = CloneColor(config.KeyRainColorRow1, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
-            config.KeyRainHorizontalGradientEndColorRow2 = CloneColor(config.KeyRainColorRow2, new float[] { 0.5f, 0.8f, 1.0f, 0.8f });
-            config.KeyRainGradientHeight = KeyRainGradientHeight;
-            config.KeyRainGradientPower = KeyRainGradientPower;
-            config.KeyPressAnimationEnabled = false;
-            config.KeyPressAnimationDuration = 0.12f;
-            config.KeyPressAnimationEasing = "ease-out-quad";
-            config.KeyPressAnimationAffectColors = true;
-            config.KeyPressAnimationScale = 1.0f;
-            config.KeyPressAnimationOffsetX = 0f;
-            config.KeyPressAnimationOffsetY = 0f;
-            config.AppearanceMigrated = true;
-        }
-
         private void EnsureKeyViewerConfigurationAppearance(KVConfiguration config)
         {
             if (config == null) return;
-
-            if (!config.AppearanceMigrated)
-            {
-                CopyGlobalKeyViewerAppearanceTo(config);
-            }
 
             if (config.FontPath == null) config.FontPath = "";
             if (float.IsNaN(config.Scale) || float.IsInfinity(config.Scale) || config.Scale <= 0f)
@@ -1305,25 +1134,12 @@ namespace CheryTools
             if (float.IsNaN(config.BorderThickness) || float.IsInfinity(config.BorderThickness) || config.BorderThickness < 0f)
                 config.BorderThickness = 2.0f;
             config.BorderThickness = Math.Max(0f, Math.Min(10f, config.BorderThickness));
-            if (float.IsNaN(config.DefaultWidth) || float.IsInfinity(config.DefaultWidth) || config.DefaultWidth <= 0f)
-                config.DefaultWidth = 50f;
-            if (float.IsNaN(config.DefaultHeight) || float.IsInfinity(config.DefaultHeight) || config.DefaultHeight <= 0f)
-                config.DefaultHeight = 50f;
-            config.DefaultWidth = Math.Max(10f, Math.Min(500f, config.DefaultWidth));
-            config.DefaultHeight = Math.Max(10f, Math.Min(500f, config.DefaultHeight));
-
             config.ColorBgNormal = CloneColor(config.ColorBgNormal, new float[] { 0.2f, 0.1f, 0.3f, 0.8f });
             config.ColorBgPressed = CloneColor(config.ColorBgPressed, new float[] { 0.5f, 0.2f, 0.8f, 1.0f });
             config.ColorBorderNormal = CloneColor(config.ColorBorderNormal, new float[] { 0.6f, 0.3f, 0.9f, 0.8f });
             config.ColorBorderPressed = CloneColor(config.ColorBorderPressed, new float[] { 0.8f, 0.4f, 1.0f, 1.0f });
             config.ColorTextNormal = CloneColor(config.ColorTextNormal, new float[] { 0.8f, 0.8f, 0.8f, 1.0f });
             config.ColorTextPressed = CloneColor(config.ColorTextPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
-            config.BackgroundGradientNormal = CloneAxisGradient(config.BackgroundGradientNormal, config.ColorBgNormal, config.ColorBgNormal);
-            config.BackgroundGradientPressed = CloneAxisGradient(config.BackgroundGradientPressed, config.ColorBgPressed, config.ColorBgPressed);
-            config.BorderGradientNormal = CloneAxisGradient(config.BorderGradientNormal, config.ColorBorderNormal, config.ColorBorderNormal);
-            config.BorderGradientPressed = CloneAxisGradient(config.BorderGradientPressed, config.ColorBorderPressed, config.ColorBorderPressed);
-            config.TextGradientNormal = CloneAxisGradient(config.TextGradientNormal, config.ColorTextNormal, config.ColorTextNormal);
-            config.TextGradientPressed = CloneAxisGradient(config.TextGradientPressed, config.ColorTextPressed, config.ColorTextPressed);
             config.ColorKps = CloneColor(config.ColorKps, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             config.ColorTotal = CloneColor(config.ColorTotal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             config.KeyTextOutlineColor = CloneColor(config.KeyTextOutlineColor, new float[] { 0f, 0f, 0f, 1f });
@@ -1402,12 +1218,6 @@ namespace CheryTools
             node.ColorBorderPressed = CloneColor(node.ColorBorderPressed, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             node.ColorTextNormal = CloneColor(node.ColorTextNormal, new float[] { 1.0f, 1.0f, 1.0f, 1.0f });
             node.ColorTextPressed = CloneColor(node.ColorTextPressed, new float[] { 0.0f, 0.0f, 0.0f, 1.0f });
-            node.BackgroundGradientNormal = CloneAxisGradient(node.BackgroundGradientNormal, node.ColorBgNormal, node.ColorBgNormal);
-            node.BackgroundGradientPressed = CloneAxisGradient(node.BackgroundGradientPressed, node.ColorBgPressed, node.ColorBgPressed);
-            node.BorderGradientNormal = CloneAxisGradient(node.BorderGradientNormal, node.ColorBorderNormal, node.ColorBorderNormal);
-            node.BorderGradientPressed = CloneAxisGradient(node.BorderGradientPressed, node.ColorBorderPressed, node.ColorBorderPressed);
-            node.TextGradientNormal = CloneAxisGradient(node.TextGradientNormal, node.ColorTextNormal, node.ColorTextNormal);
-            node.TextGradientPressed = CloneAxisGradient(node.TextGradientPressed, node.ColorTextPressed, node.ColorTextPressed);
             node.RainColor = CloneColor(node.RainColor, new float[] { 0.8f, 0.5f, 1.0f, 0.8f });
             node.RainGradientEndColor = CloneColor(node.RainGradientEndColor, new float[] { 1f, 0.25f, 0.8f, 0.8f });
             node.RainHorizontalGradientEndColor = CloneColor(node.RainHorizontalGradientEndColor, node.RainColor);
@@ -1591,9 +1401,8 @@ namespace CheryTools
             var config = new KVConfiguration();
             config.Name = string.IsNullOrEmpty(name) ? "新配置" : name;
             config.IsEnabled = true;
-            CopyGlobalKeyViewerAppearanceTo(config);
             config.Nodes = presetKeyCount > 0
-                ? GenerateDefaultKVLayout(presetKeyCount, config.DefaultWidth, config.DefaultHeight)
+                ? GenerateDefaultKVLayout(presetKeyCount, 50f, 50f)
                 : new System.Collections.Generic.List<KVNode>();
             return config;
         }
@@ -1758,7 +1567,7 @@ namespace CheryTools
 
         public System.Collections.Generic.List<KVNode> GenerateDefaultKVLayout(int count)
         {
-            return GenerateDefaultKVLayout(count, KeyViewerDefaultWidth, KeyViewerDefaultHeight);
+            return GenerateDefaultKVLayout(count, 50f, 50f);
         }
 
         public System.Collections.Generic.List<KVNode> GenerateDefaultKVLayout(int count, float defaultWidth, float defaultHeight)
@@ -1900,9 +1709,22 @@ namespace CheryTools
 
         public static bool IsGamePlaying()
         {
-            if (scrController.instance == null) return false;
-            if (!scrController.instance.gameworld) return false;
-            if (scrController.instance.paused) return false;
+            if (scrController.instance == null)
+            {
+                // Logger?.Log("[CheryTools] IsGamePlaying: scrController.instance is null");
+                return false;
+            }
+            if (!scrController.instance.gameworld)
+            {
+                // Logger?.Log("[CheryTools] IsGamePlaying: not in gameworld");
+                return false;
+            }
+            if (scrController.instance.paused)
+            {
+                // Logger?.Log("[CheryTools] IsGamePlaying: paused");
+                return false;
+            }
+            // Logger?.Log("[CheryTools] IsGamePlaying: TRUE");
             return true;
         }
 
@@ -1954,6 +1776,7 @@ namespace CheryTools
                     _imguiGameObject = null;
                 }
                 SdfTextRenderer.Shutdown();
+                OvTextTokenService.ClearCache();
                 KeyViewerUnityRenderer.Shutdown();
                 OverlayerUnityRenderer.Shutdown();
                 TextureManager.Clear();
@@ -1996,6 +1819,104 @@ namespace CheryTools
                     return false;
                 }
                 return true;
+            }
+        }
+
+        [HarmonyPatch(typeof(scrPlayer), "Hit")]
+        public static class scrPlayer_Hit_Patch
+        {
+            public struct HitTimingState
+            {
+                public bool Valid;
+                public bool IsAuto;
+                public bool PlayerAuto;
+                public bool NextTileIsAuto;
+                public bool MidspinInfiniteMargin;
+                public bool IsCcw;
+                public float AngleDiff;
+                public float FloorSpeed;
+                public float Pitch;
+                public float Bpm;
+            }
+
+            public static void Prefix(scrPlayer __instance, bool isAuto, ref HitTimingState __state)
+            {
+                __state = default(HitTimingState);
+                OverlayerManager.BeginScoreTileHit(__instance);
+                try
+                {
+                    if (__instance == null || __instance.planetarySystem == null || scrConductor.instance == null)
+                        return;
+
+                    scrPlanet hitPlanet = __instance.planetarySystem.chosenPlanet;
+                    if (hitPlanet == null || hitPlanet.currfloor == null)
+                        return;
+
+                    scrFloor hitFloor = hitPlanet.currfloor;
+                    __state.Valid = true;
+                    __state.IsAuto = isAuto;
+                    __state.PlayerAuto = __instance.auto;
+                    __state.NextTileIsAuto = hitFloor.nextfloor != null && hitFloor.nextfloor.auto;
+                    __state.MidspinInfiniteMargin = __instance.midspinInfiniteMargin;
+                    __state.IsCcw = hitFloor.isCCW;
+                    __state.AngleDiff = (float)(hitPlanet.angle - hitPlanet.targetExitAngle);
+                    __state.FloorSpeed = hitFloor.speed;
+                    __state.Pitch = scrConductor.instance.song != null ? scrConductor.instance.song.pitch : 1f;
+                    __state.Bpm = scrConductor.instance.bpm;
+                }
+                catch
+                {
+                    __state = default(HitTimingState);
+                }
+            }
+
+            public static void Postfix(bool __result, HitTimingState __state)
+            {
+                OverlayerManager.EndScoreTileHit();
+                if (!__result || !__state.Valid || __state.MidspinInfiniteMargin)
+                    return;
+
+                float angleDiff = NormalizeHitAngleDelta(__state.AngleDiff);
+                if (__state.IsCcw)
+                {
+                    angleDiff *= -1f;
+                }
+
+                if ((__state.IsAuto || __state.PlayerAuto || __state.NextTileIsAuto) && !RDC.useOldAuto)
+                {
+                    angleDiff = 0f;
+                }
+
+                double bpmTimesSpeed = __state.Bpm * __state.FloorSpeed;
+                if (bpmTimesSpeed <= 0.0)
+                    return;
+
+                // ADOFAI stores hit angle deltas in radians; one beat is PI radians.
+                double timingMs = angleDiff / Math.PI * (60000.0 / bpmTimesSpeed) / Math.Max(0.0001, __state.Pitch);
+                OverlayerManager.RecordLastHitTiming(timingMs);
+            }
+
+            private static float NormalizeHitAngleDelta(float angle)
+            {
+                angle %= Mathf.PI * 2f;
+                if (angle > Mathf.PI)
+                {
+                    angle -= Mathf.PI * 2f;
+                }
+                else if (angle < -Mathf.PI)
+                {
+                    angle += Mathf.PI * 2f;
+                }
+                return angle;
+            }
+        }
+
+        [HarmonyPatch(typeof(scrMarginTracker), "AddHit")]
+        public static class scrMarginTracker_AddHit_Patch
+        {
+            public static void Prefix(scrMarginTracker __instance, HitMargin hit)
+            {
+                OverlayerManager.RecordScoreJudgement(__instance, hit);
             }
         }
 

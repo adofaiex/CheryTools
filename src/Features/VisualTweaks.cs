@@ -8,7 +8,7 @@ namespace CheryTools
     {
         public static void ApplyCustomColors()
         {
-            if (!Main.IsEnabled || !Main.Settings.EnableCustomPlanetColors) return;
+            if (!Main.IsEnabled || Main.Settings == null || !Main.Settings.EnableCustomPlanetColors) return;
 
             var controller = scrController.instance;
             if (controller == null) return;
@@ -21,6 +21,7 @@ namespace CheryTools
                 rRenderer.SetPlanetColor(FloatArrayToColor(Main.Settings.RedPlanetColor));
                 ApplyRingColor(rRenderer, Main.Settings.RedRingColor);
                 rRenderer.SetTailColor(FloatArrayToColor(Main.Settings.RedTailColor));
+                ApplyPlanetTexture(rRenderer, Main.Settings.RedPlanetTexturePath);
             }
 
             // Apply for Blue Planet
@@ -31,6 +32,7 @@ namespace CheryTools
                 bRenderer.SetPlanetColor(FloatArrayToColor(Main.Settings.BluePlanetColor));
                 ApplyRingColor(bRenderer, Main.Settings.BlueRingColor);
                 bRenderer.SetTailColor(FloatArrayToColor(Main.Settings.BlueTailColor));
+                ApplyPlanetTexture(bRenderer, Main.Settings.BluePlanetTexturePath);
             }
 
             // Apply for Green Planet
@@ -41,6 +43,7 @@ namespace CheryTools
                 gRenderer.SetPlanetColor(FloatArrayToColor(Main.Settings.GreenPlanetColor));
                 ApplyRingColor(gRenderer, Main.Settings.GreenRingColor);
                 gRenderer.SetTailColor(FloatArrayToColor(Main.Settings.GreenTailColor));
+                ApplyPlanetTexture(gRenderer, Main.Settings.GreenPlanetTexturePath);
             }
         }
 
@@ -69,6 +72,21 @@ namespace CheryTools
         {
             if (renderer == null || renderer.ringComp == null) return;
             renderer.ringComp.color = FloatArrayToColor(color);
+        }
+
+        private static void ApplyPlanetTexture(PlanetRenderer renderer, string path)
+        {
+            if (renderer == null || renderer.sprite == null || Main.Settings == null || !Main.Settings.EnableCustomPlanetTextures)
+                return;
+
+            Texture referenceTexture = ADOBase.gc != null && ADOBase.gc.tex_planetWhite != null
+                ? ADOBase.gc.tex_planetWhite
+                : renderer.sprite.sprite;
+            Texture2D texture = TextureManager.GetOrCreatePlanetSpriteTexture(path, referenceTexture);
+            if (texture == null)
+                return;
+
+            renderer.sprite.sprite = texture;
         }
     }
 

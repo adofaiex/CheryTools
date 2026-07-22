@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Numerics;
-using System.Text;
 using System.Text.RegularExpressions;
 using ImGuiNET;
 using UnityEngine;
@@ -19,7 +18,6 @@ public class CheryToolsMenu : MonoBehaviour
 {
 	private static int _lastTextFormatCursorPos = 0;
 	private static string _tagSearchText = "";
-	private static readonly Regex ColorTagBoundaryRegex = new Regex(@"<\s*(/)?\s*color\s*(?:=\s*[^>]*?)?\s*>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
 	private struct TagInsertItem
 	{
@@ -37,15 +35,14 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private static readonly TagInsertItem[] AllTagInsertItems = new TagInsertItem[]
 	{
-		new TagInsertItem("#import regex\n#regex /pattern/replacement/\n", "启用 OV 正则替换"),
-		new TagInsertItem("#regex /(\\d+)\\.0+/$1/\n", "正则示例：去掉数字末尾 .0"),
 		new TagInsertItem("{fps}", "当前 FPS"),
 		new TagInsertItem("{fps:1}", "当前 FPS，最多 1 位小数"),
-		new TagInsertItem("{kps}", "当前每秒按键数"),
-		new TagInsertItem("{tot}", "总按键次数"),
 		new TagInsertItem("{combo}", "当前 Pure Combo"),
 		new TagInsertItem("{combo:p}", "当前 Perfect Combo"),
-		new TagInsertItem("{music}", "当前曲目标题"),
+		new TagInsertItem("{score}", "当前计分，满分 1000000"),
+		new TagInsertItem("{music}", "当前曲目完整信息"),
+		new TagInsertItem("{artist}", "当前曲师"),
+		new TagInsertItem("{title}", "当前曲名"),
 		new TagInsertItem("{ttile}", "总轨道数量"),
 		new TagInsertItem("{atile}", "经过的轨道数量"),
 		new TagInsertItem("{level}", "关卡制作者"),
@@ -71,14 +68,14 @@ public class CheryToolsMenu : MonoBehaviour
 		new TagInsertItem("{wtime12}", "电脑时间，12 小时制"),
 		new TagInsertItem("{judge}", "当前判定模式"),
 		new TagInsertItem("{interval}", "定时窗口大小百分比"),
+		new TagInsertItem("{timing}", "本次击打延迟 ms，可为负数"),
+		new TagInsertItem("{timing:2}", "本次击打延迟 ms，最多 2 位小数"),
 		new TagInsertItem("{acc}", "准确率，最多 2 位小数"),
 		new TagInsertItem("{acc:2}", "准确率，最多 2 位小数"),
 		new TagInsertItem("{xacc}", "X-Accuracy，最多 2 位小数"),
 		new TagInsertItem("{xacc:2}", "X-Accuracy，最多 2 位小数"),
 		new TagInsertItem("{progress}", "地图进度，最多 2 位小数"),
 		new TagInsertItem("{progress:2}", "地图进度，最多 2 位小数"),
-		new TagInsertItem("{expr:progress*2}", "表达式：地图进度 * 2"),
-		new TagInsertItem("{expr:sqrt(acc)}", "表达式：sqrt(准确率)"),
 		new TagInsertItem("{te}", "Too Early 数量"),
 		new TagInsertItem("{ve}", "Very Early 数量"),
 		new TagInsertItem("{ep}", "Early Perfect 数量"),
@@ -110,12 +107,6 @@ public class CheryToolsMenu : MonoBehaviour
 			}
 		}
 		return keys.ToArray();
-	}
-
-	private unsafe static int TextFormatCallback(ImGuiInputTextCallbackData* data)
-	{
-		_lastTextFormatCursorPos = data->CursorPos;
-		return 0;
 	}
 
 	private static void DrawLiteralTagText(string text)
@@ -242,7 +233,9 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private void DrawOverlayerTagInsertPopup(OverlayerText ovText)
 	{
-		ImGui.SetNextWindowSize(new Vector2(640f, 430f), ImGuiCond.Appearing);
+		Vector2 popupSize = new Vector2(640f, 430f);
+		ImGui.SetNextWindowSize(popupSize, ImGuiCond.Always);
+		ImGui.SetNextWindowSizeConstraints(popupSize, popupSize);
 		if (!ImGui.BeginPopup("TagSelectorPopup"))
 		{
 			return;
@@ -415,6 +408,54 @@ public class CheryToolsMenu : MonoBehaviour
 		return true;
 	}
 
+	private static bool DrawAssetPathEditor(string label, ref string path, string category, bool rebuildFonts, Action afterChanged = null)
+	{
+		string input = path ?? string.Empty;
+		ImGui.SetNextItemWidth(260f);
+		bool changed = false;
+		bool committed = false;
+		if (ImGui.InputText(label, ref input, 512u))
+		{
+			path = input;
+			changed = true;
+		}
+
+		if (ImGui.IsItemDeactivatedAfterEdit())
+		{
+			bool imported = ImportResourcePath(ref path, category, rebuildFonts);
+			changed |= imported;
+			committed = true;
+		}
+
+		ImGui.SameLine();
+		if (ImGui.Button(Tr("common.apply", "应用") + "##" + label))
+		{
+			bool imported = ImportResourcePath(ref path, category, rebuildFonts);
+			changed |= imported;
+			committed = true;
+		}
+
+		ImGui.SameLine();
+		if (ImGui.Button(Tr("common.clear", "清空") + "##" + label))
+		{
+			path = string.Empty;
+			changed = true;
+			committed = true;
+		}
+
+		if (changed)
+		{
+			Main.RequestSave();
+		}
+
+		if (committed)
+		{
+			afterChanged?.Invoke();
+		}
+
+		return changed;
+	}
+
 	private static string FormatPreviewDuration(double seconds)
 	{
 		if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0.0)
@@ -465,9 +506,7 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private static string FormatPreviewText(string text)
 	{
-		OverlayerRegexDocument regexDocument = OverlayerRegexProcessor.GetDocument(text);
-		string result = FormatPreviewTags(regexDocument != null ? regexDocument.Body : text);
-		return OverlayerRegexProcessor.Apply(result, regexDocument, "OV preview");
+		return FormatPreviewTags(text);
 	}
 
 	private static string FormatPreviewTags(string text)
@@ -477,13 +516,9 @@ public class CheryToolsMenu : MonoBehaviour
 			return text;
 		}
 
-		int kps = (Object)KeyViewerManager.Instance != (Object)null ? KeyViewerManager.Instance.CurrentKPS : 0;
-		int totalHits = Main.Settings != null ? Main.Settings.TotalHits : 0;
 		DateTime now = DateTime.Now;
 
 		string result = text
-			.Replace("{kps}", kps.ToString(CultureInfo.InvariantCulture))
-			.Replace("{tot}", totalHits.ToString(CultureInfo.InvariantCulture))
 			.Replace("{ttile}", "128")
 			.Replace("{atile}", "65")
 			.Replace("{x}", "1.00")
@@ -511,334 +546,24 @@ public class CheryToolsMenu : MonoBehaviour
 			.Replace("{miss}", "0")
 			.Replace("{combo:p}", "12")
 			.Replace("{combo}", "34")
+			.Replace("{score}", "456789")
 			.Replace("{xperfect:xpp}", "10")
 			.Replace("{xperfect:epp}", "2")
 			.Replace("{xperfect:lpp}", "1")
 			.Replace("{music}", "Artist - SongName")
+			.Replace("{artist}", "Artist")
+			.Replace("{title}", "SongName")
 			.Replace("{level}", "Level Author");
 
 		result = Regex.Replace(result, @"\{fps(?:[:](\d+))?\}", match => FormatPreviewNumber(144.0, match, 0));
 		result = Regex.Replace(result, @"\{bpm(?:[:](\d+))?\}", match => FormatPreviewNumber(123.45, match, 2));
 		result = Regex.Replace(result, @"\{tbpm(?:[:](\d+))?\}", match => FormatPreviewNumber(185.18, match, 2));
 		result = Regex.Replace(result, @"\{cbpm(?:[:](\d+))?\}", match => FormatPreviewNumber(246.9, match, 2));
+		result = Regex.Replace(result, @"\{timing(?:[:](\d+))?\}", match => FormatPreviewNumber(-12.0, match, 0));
 		result = Regex.Replace(result, @"\{acc(?:[:](\d+))?\}", match => FormatPreviewNumber(98.5, match, 2));
 		result = Regex.Replace(result, @"\{xacc(?:[:](\d+))?\}", match => FormatPreviewNumber(97.0, match, 2));
 		result = Regex.Replace(result, @"\{progress(?:[:](\d+))?\}", match => FormatPreviewNumber(50.0, match, 2));
-		result = ReplacePreviewExpressions(result);
 		return result;
-	}
-
-	private static string ReplacePreviewExpressions(string text)
-	{
-		if (string.IsNullOrEmpty(text) || text.IndexOf("{expr:", StringComparison.OrdinalIgnoreCase) < 0)
-		{
-			return text;
-		}
-
-		StringBuilder builder = new StringBuilder(text.Length);
-		int index = 0;
-		while (index < text.Length)
-		{
-			int open = text.IndexOf("{expr:", index, StringComparison.OrdinalIgnoreCase);
-			if (open < 0)
-			{
-				builder.Append(text, index, text.Length - index);
-				break;
-			}
-
-			builder.Append(text, index, open - index);
-			int close = FindPreviewExpressionClose(text, open);
-			if (close < 0)
-			{
-				builder.Append(text, open, text.Length - open);
-				break;
-			}
-
-			string expression = text.Substring(open + 6, close - open - 6);
-			builder.Append(FormatPreviewExpression(expression));
-			index = close + 1;
-		}
-
-		return builder.ToString();
-	}
-
-	private static int FindPreviewExpressionClose(string text, int open)
-	{
-		int depth = 0;
-		for (int i = open + 6; i < text.Length; i++)
-		{
-			char c = text[i];
-			if (c == '{')
-			{
-				depth++;
-			}
-			else if (c == '}')
-			{
-				if (depth == 0)
-				{
-					return i;
-				}
-				depth--;
-			}
-		}
-
-		return -1;
-	}
-
-	private static string FormatPreviewExpression(string expression)
-	{
-		string normalized = Regex.Replace(expression ?? string.Empty, @"\{([^{}]+)\}", match =>
-		{
-			string name = match.Groups[1].Value.Trim();
-			int colon = name.IndexOf(':');
-			if (colon > 0 && int.TryParse(name.Substring(colon + 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
-			{
-				name = name.Substring(0, colon);
-			}
-			return name;
-		});
-
-		if (!TryEvaluatePreviewExpression(normalized, out double value))
-		{
-			return "0";
-		}
-
-		return FormatPreviewTrimZeros(value, 2);
-	}
-
-	private static string FormatPreviewTrimZeros(double value, int decimals)
-	{
-		decimals = Math.Max(0, Math.Min(6, decimals));
-		if (double.IsNaN(value) || double.IsInfinity(value))
-		{
-			value = 0.0;
-		}
-
-		double rounded = Math.Round(value, decimals, MidpointRounding.AwayFromZero);
-		if (decimals == 0)
-		{
-			return rounded.ToString("0", CultureInfo.InvariantCulture);
-		}
-
-		return rounded.ToString("0." + new string('#', decimals), CultureInfo.InvariantCulture);
-	}
-
-	private static bool TryEvaluatePreviewExpression(string expression, out double value)
-	{
-		value = 0.0;
-		try
-		{
-			var parser = new PreviewExpressionParser(expression, ResolvePreviewExpressionVariable);
-			return parser.TryEvaluate(out value);
-		}
-		catch
-		{
-			value = 0.0;
-			return false;
-		}
-	}
-
-	private static double ResolvePreviewExpressionVariable(string name)
-	{
-		switch ((name ?? string.Empty).Trim().ToLowerInvariant())
-		{
-			case "fps": return 144.0;
-			case "kps": return (Object)KeyViewerManager.Instance != (Object)null ? KeyViewerManager.Instance.CurrentKPS : 7.0;
-			case "tot": return Main.Settings != null ? Main.Settings.TotalHits : 128.0;
-			case "ttile": return 128.0;
-			case "atile": return 65.0;
-			case "x": return 1.0;
-			case "cur": return 2.0;
-			case "bpm": return 123.45;
-			case "tbpm": return 185.18;
-			case "cbpm": return 246.9;
-			case "acc": return 98.5;
-			case "xacc": return 97.0;
-			case "progress": return 50.0;
-			case "maptime": return 150.0;
-			case "maptime:p":
-			case "maptimep": return 45.0;
-			case "musictime": return 180.0;
-			case "musictime:p":
-			case "musictimep": return 60.0;
-			case "te": return 1.0;
-			case "ve": return 2.0;
-			case "ep": return 3.0;
-			case "p": return 45.0;
-			case "lp": return 3.0;
-			case "vl": return 2.0;
-			case "tl": return 1.0;
-			case "miss": return 0.0;
-			case "fm": return 0.0;
-			case "fo": return 0.0;
-			case "combo": return 34.0;
-			case "combo:p":
-			case "combop": return 12.0;
-			case "xperfect:xpp":
-			case "xperfectxpp": return 10.0;
-			case "xperfect:epp":
-			case "xperfectepp": return 2.0;
-			case "xperfect:lpp":
-			case "xperfectlpp": return 1.0;
-			default: return 0.0;
-		}
-	}
-
-	private sealed class PreviewExpressionParser
-	{
-		private readonly string _text;
-		private readonly Func<string, double> _resolveVariable;
-		private int _index;
-
-		public PreviewExpressionParser(string text, Func<string, double> resolveVariable)
-		{
-			_text = text ?? string.Empty;
-			_resolveVariable = resolveVariable;
-		}
-
-		public bool TryEvaluate(out double value)
-		{
-			value = ParseAddSubtract();
-			SkipWhitespace();
-			if (_index < _text.Length || double.IsNaN(value) || double.IsInfinity(value))
-			{
-				value = 0.0;
-				return false;
-			}
-			return true;
-		}
-
-		private double ParseAddSubtract()
-		{
-			double value = ParseMultiplyDivide();
-			while (true)
-			{
-				SkipWhitespace();
-				if (Match('+')) value += ParseMultiplyDivide();
-				else if (Match('-')) value -= ParseMultiplyDivide();
-				else return value;
-			}
-		}
-
-		private double ParseMultiplyDivide()
-		{
-			double value = ParsePower();
-			while (true)
-			{
-				SkipWhitespace();
-				if (Match('*')) value *= ParsePower();
-				else if (Match('/'))
-				{
-					double denominator = ParsePower();
-					value = Math.Abs(denominator) <= double.Epsilon ? 0.0 : value / denominator;
-				}
-				else return value;
-			}
-		}
-
-		private double ParsePower()
-		{
-			double value = ParseUnary();
-			SkipWhitespace();
-			if (Match('^'))
-			{
-				value = Math.Pow(value, ParsePower());
-			}
-			return value;
-		}
-
-		private double ParseUnary()
-		{
-			SkipWhitespace();
-			if (Match('+')) return ParseUnary();
-			if (Match('-')) return -ParseUnary();
-			return ParsePrimary();
-		}
-
-		private double ParsePrimary()
-		{
-			SkipWhitespace();
-			if (Match('('))
-			{
-				double value = ParseAddSubtract();
-				if (!Match(')')) throw new FormatException();
-				return value;
-			}
-
-			if (_index < _text.Length && (char.IsDigit(_text[_index]) || _text[_index] == '.'))
-			{
-				return ParseNumber();
-			}
-
-			string identifier = ParseIdentifier();
-			if (identifier.Length == 0) throw new FormatException();
-			if (string.Equals(identifier, "sqrt", StringComparison.OrdinalIgnoreCase))
-			{
-				if (!Match('(')) throw new FormatException();
-				double value = ParseAddSubtract();
-				if (!Match(')')) throw new FormatException();
-				return Math.Sqrt(Math.Max(0.0, value));
-			}
-
-			return _resolveVariable != null ? _resolveVariable(identifier) : 0.0;
-		}
-
-		private double ParseNumber()
-		{
-			int start = _index;
-			bool hasDot = false;
-			while (_index < _text.Length)
-			{
-				char c = _text[_index];
-				if (char.IsDigit(c)) _index++;
-				else if (c == '.' && !hasDot)
-				{
-					hasDot = true;
-					_index++;
-				}
-				else break;
-			}
-
-			if (!double.TryParse(_text.Substring(start, _index - start), NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
-			{
-				throw new FormatException();
-			}
-			return value;
-		}
-
-		private string ParseIdentifier()
-		{
-			int start = _index;
-			while (_index < _text.Length)
-			{
-				char c = _text[_index];
-				if (char.IsLetterOrDigit(c) || c == '_' || c == ':' || c == '.')
-				{
-					_index++;
-				}
-				else break;
-			}
-			return _text.Substring(start, _index - start);
-		}
-
-		private bool Match(char expected)
-		{
-			SkipWhitespace();
-			if (_index < _text.Length && _text[_index] == expected)
-			{
-				_index++;
-				return true;
-			}
-			return false;
-		}
-
-		private void SkipWhitespace()
-		{
-			while (_index < _text.Length && char.IsWhiteSpace(_text[_index]))
-			{
-				_index++;
-			}
-		}
 	}
 
 	private static void ReloadSettingsAfterImport(string sourcePath)
@@ -906,20 +631,25 @@ public class CheryToolsMenu : MonoBehaviour
 		}
 	}
 
-	private void ExportKeyViewerPackage()
+	private void ExportKeyViewerPackage(bool currentOnly)
 	{
 		try
 		{
+			KVConfiguration selected = currentOnly ? Main.Settings.GetSelectedKeyViewerConfiguration() : null;
+			if (currentOnly && selected == null) throw new InvalidOperationException("没有可导出的 KV 配置。");
+			string safeName = currentOnly && !string.IsNullOrWhiteSpace(selected.Name) ? selected.Name : "CheryTools_KeyViewer";
 			string path = ModernFileDialog.ShowSaveFileDialog(
-				"导出 KeyViewer 配置",
+				currentOnly ? "导出当前 KeyViewer 配置" : "导出全部 KeyViewer 配置",
 				"CheryTools KeyViewer 配置 (*.ctkv)|*.ctkv",
 				CheryToolsAssets.GameRoot,
-				"CheryTools_KeyViewer.ctkv"
+				safeName + ".ctkv"
 			);
 			
 			if (!string.IsNullOrEmpty(path))
 			{
-				path = CheryToolsAssets.ExportKeyViewerPackage(Main.Settings, path);
+				path = currentOnly
+					? CheryToolsAssets.ExportKeyViewerPackage(Main.Settings, selected, path)
+					: CheryToolsAssets.ExportKeyViewerPackage(Main.Settings, path);
 				_keyViewerExportMessage = "已导出: " + path;
 				Main.Logger.Log("KeyViewer package exported to: " + path);
 			}
@@ -1015,6 +745,32 @@ public class CheryToolsMenu : MonoBehaviour
 		}
 	}
 
+	private void ExportOverlayerComponentPackage(string kind, int index, string displayName)
+	{
+		try
+		{
+			string fileName = string.IsNullOrWhiteSpace(displayName) ? "CheryTools_OV_Component" : displayName;
+			string path = ModernFileDialog.ShowSaveFileDialog(
+				"导出单个 Overlayer 组件",
+				"CheryTools Overlayer 配置 (*.ctov)|*.ctov",
+				CheryToolsAssets.GameRoot,
+				fileName + ".ctov");
+			if (string.IsNullOrEmpty(path))
+			{
+				_overlayerExportMessage = "导出已取消";
+				return;
+			}
+			path = CheryToolsAssets.ExportOverlayerComponentPackage(Main.Settings, kind, index, path);
+			_overlayerExportMessage = "已导出单个组件: " + path;
+			Main.Logger.Log("Overlayer component package exported to: " + path);
+		}
+		catch (Exception ex)
+		{
+			_overlayerExportMessage = "OV 单组件导出失败: " + ex.Message;
+			Main.Logger.Log("Failed to export Overlayer component package: " + ex.ToString());
+		}
+	}
+
 	private void ImportOverlayerPackage()
 	{
 		try
@@ -1041,10 +797,13 @@ public class CheryToolsMenu : MonoBehaviour
 				{
 					_overlayerExportMessage += "\n" + importResult.ToSummary();
 				}
-				_selectedOvSidebarTab = 0;
-				_selectedOvSidebarImgTab = 0;
-				_selectedOvSidebarVideoTab = 0;
-				_selectedOvSidebarBarTab = 0;
+				if (importResult != null && importResult.FirstImportedIndex >= 0)
+				{
+					if (importResult.ImportedComponentKind == "text") _selectedOvSidebarTab = importResult.FirstImportedIndex;
+					else if (importResult.ImportedComponentKind == "image") _selectedOvSidebarImgTab = importResult.FirstImportedIndex;
+					else if (importResult.ImportedComponentKind == "video") _selectedOvSidebarVideoTab = importResult.FirstImportedIndex;
+					else if (importResult.ImportedComponentKind == "progress") _selectedOvSidebarBarTab = importResult.FirstImportedIndex;
+				}
 				TextureManager.Clear();
 				VideoTextureManager.Shutdown();
 				SdfTextRenderer.Shutdown();
@@ -1067,16 +826,6 @@ public class CheryToolsMenu : MonoBehaviour
 
 	public static bool IsMenuOpen = false;
 
-	private List<RichTextParser.ParsedSegment> _editingSegList;
-
-	private int _editingSegIndex = -1;
-
-	private int _editingBlockIndex = -1;
-
-	private System.Numerics.Vector4 _editingColor;
-
-	private bool _editingColorDirty = false;
-
 	public static bool ShowToolsWindow = true;
 
 	public static bool ShowKeyviewerWindow = false;
@@ -1091,6 +840,8 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private int _currentToolTab;
 
+	private int _settingsSidebarTab = 0;
+
 	private bool _waitingForToggleMenuKey = false;
 
 	private bool _waitingForToolsLimitedKey = false;
@@ -1102,6 +853,14 @@ public class CheryToolsMenu : MonoBehaviour
 	private bool _editingOverlayUpdateRate = false;
 
 	private float _pendingOverlayUpdateRate = 240.0f;
+
+	private bool _editingKeyViewerKpsRefreshInterval = false;
+
+	private float _pendingKeyViewerKpsRefreshInterval = 0.25f;
+
+	private bool _editingOverlayerFpsTagRefreshInterval = false;
+
+	private float _pendingOverlayerFpsTagRefreshInterval = 0.25f;
 
 	private bool _editingImageRenderScale = false;
 
@@ -1188,48 +947,11 @@ public class CheryToolsMenu : MonoBehaviour
 		return false;
 	}
 
-	private bool DrawAxisGradientSettings(string label, string id, KVAxisGradient gradient)
-	{
-		if (gradient == null) return false;
-		bool changed = false;
-		ImGui.Text(label);
-		ImGui.Indent();
-		bool verticalEnabled = gradient.VerticalEnabled;
-		if (ImGui.Checkbox(Tr("kv.gradientVertical", "纵向渐变") + "##" + id + "_v_enable", ref verticalEnabled))
-		{
-			gradient.VerticalEnabled = verticalEnabled;
-			changed = true;
-		}
-		if (verticalEnabled)
-		{
-			if (DrawColorPicker(Tr("kv.gradientVerticalEnd", "底部颜色") + "##" + id + "_v_color", ref gradient.VerticalEndColor))
-			{
-				changed = true;
-			}
-		}
-		bool horizontalEnabled = gradient.HorizontalEnabled;
-		if (ImGui.Checkbox(Tr("kv.gradientHorizontal", "横向渐变") + "##" + id + "_h_enable", ref horizontalEnabled))
-		{
-			gradient.HorizontalEnabled = horizontalEnabled;
-			changed = true;
-		}
-		if (horizontalEnabled)
-		{
-			if (DrawColorPicker(Tr("kv.gradientHorizontalEnd", "右侧颜色") + "##" + id + "_h_color", ref gradient.HorizontalEndColor))
-			{
-				changed = true;
-			}
-		}
-		ImGui.Unindent();
-		return changed;
-	}
-
 	private const string ProgressValueSourceCombo =
 		"常量\0" +
 		"地图进度 {progress}\0" +
 		"准度 {acc}\0" +
 		"X 准度 {xacc}\0" +
-		"KPS {kps}\0" +
 		"当前真实 CPS {cur}\0" +
 		"地图已游玩时间 {maptime:p}\0" +
 		"地图总时间 {maptime}\0" +
@@ -1763,78 +1485,374 @@ public class CheryToolsMenu : MonoBehaviour
 		}
 	}
 
-	private void DrawUpdateSettings()
+	private void DrawSettingsSidebarItem(int tabIndex, string localizationKey, string fallback)
 	{
-		ImGui.Text(Tr("settings.update", "更新"));
-		ImGui.Text(string.Format(Tr("settings.currentVersion", "当前版本: {0}"), GithubUpdateManager.CurrentVersion));
+		if (ImGui.Selectable(Tr(localizationKey, fallback), _settingsSidebarTab == tabIndex))
+		{
+			_settingsSidebarTab = tabIndex;
+		}
+	}
 
-		bool busy = GithubUpdateManager.IsBusy;
-		if (busy)
+	private void DrawSettingsPanel()
+	{
+		if (_settingsSidebarTab < 0 || _settingsSidebarTab > 7)
+		{
+			_settingsSidebarTab = 0;
+		}
+
+		ImGui.BeginChild("SettingsSidebar", new Vector2(140f, 0f), ImGuiChildFlags.Borders);
+		DrawSettingsSidebarItem(0, "settings.tab.general", "常规");
+		DrawSettingsSidebarItem(1, "settings.tab.windows", "窗口");
+		DrawSettingsSidebarItem(2, "settings.tab.language", "语言");
+		DrawSettingsSidebarItem(3, "settings.tab.cloud", "云同步");
+		DrawSettingsSidebarItem(4, "settings.tab.render", "渲染刷新");
+		DrawSettingsSidebarItem(5, "settings.tab.integration", "联动");
+		DrawSettingsSidebarItem(6, "settings.tab.developer", "开发者");
+		DrawSettingsSidebarItem(7, "settings.tab.config", "配置");
+		ImGui.EndChild();
+
+		ImGui.SameLine();
+		ImGui.BeginChild("SettingsContent", new Vector2(0f, 0f), ImGuiChildFlags.Borders);
+		switch (_settingsSidebarTab)
+		{
+			case 0:
+				DrawSettingsGeneralSection();
+				break;
+			case 1:
+				DrawWindowResetSettings();
+				break;
+			case 2:
+				DrawLocalizationSettings();
+				break;
+			case 3:
+				DrawCloudSyncSection();
+				break;
+			case 4:
+				DrawSettingsRenderSection();
+				break;
+			case 5:
+				DrawSettingsIntegrationSection();
+				break;
+			case 6:
+				DrawSettingsDeveloperSection();
+				break;
+			case 7:
+				DrawSettingsConfigSection();
+				break;
+		}
+		ImGui.EndChild();
+	}
+
+	private void DrawSettingsGeneralSection()
+	{
+		ImGui.Text(Tr("settings.tab.general", "常规"));
+		ImGui.Separator();
+
+		string hotkeyLabel = _waitingForToggleMenuKey ? Tr("settings.waitingKey", "[等待按键输入...]") : Main.Settings.ToggleMenuKey.ToString();
+		ImGui.AlignTextToFramePadding();
+		ImGui.Text(Tr("settings.hotkey", "呼出设置快捷键:"));
+		ImGui.SameLine();
+		if (ImGui.Button($"{hotkeyLabel}##ToggleMenuKeyBtn", new Vector2(120f, 0f)))
+		{
+			_waitingForToggleMenuKey = true;
+		}
+		if (_waitingForToggleMenuKey)
+		{
+			foreach (KeyCode value in SettingsHotkeyCandidates)
+			{
+				if (!Input.GetKeyDown(value))
+				{
+					continue;
+				}
+				Main.Settings.ToggleMenuKey = value;
+				_waitingForToggleMenuKey = false;
+				InputInterceptor.UpdateAllowedKeys();
+				Main.RequestSave();
+				break;
+			}
+		}
+
+		if (!_editingImGuiPanelScale)
+		{
+			_pendingImGuiPanelScale = Main.Settings.ImGuiPanelScale;
+		}
+		float imguiPanelScale = _pendingImGuiPanelScale;
+		if (ImGui.SliderFloat(Tr("settings.imguiScale", "ImGui 面板缩放"), ref imguiPanelScale, 0.6f, 2.0f, "%.2f"))
+		{
+			_pendingImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, imguiPanelScale));
+			_editingImGuiPanelScale = true;
+		}
+		if (ImGui.IsItemDeactivatedAfterEdit())
+		{
+			Main.Settings.ImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, _pendingImGuiPanelScale));
+			_editingImGuiPanelScale = false;
+			Main.RequestSave();
+		}
+
+		ImGui.Spacing();
+		if (ImGui.Button(Tr("settings.closeMenu", "关闭菜单")))
+		{
+			IsMenuOpen = false;
+		}
+	}
+
+	private void DrawSettingsRenderSection()
+	{
+		ImGui.Text(Tr("settings.tab.render", "渲染刷新"));
+		ImGui.Separator();
+
+		if (!_editingOverlayUpdateRate)
+		{
+			_pendingOverlayUpdateRate = Main.Settings.OverlayUpdateRate;
+		}
+		float overlayUpdateRate = _pendingOverlayUpdateRate;
+		if (ImGui.SliderFloat(Tr("settings.overlayRefreshRate", "覆盖层刷新率"), ref overlayUpdateRate, 30.0f, 360.0f, "%.0f FPS"))
+		{
+			_pendingOverlayUpdateRate = Math.Max(30.0f, Math.Min(360.0f, overlayUpdateRate));
+			_editingOverlayUpdateRate = true;
+		}
+		if (ImGui.IsItemDeactivatedAfterEdit())
+		{
+			Main.Settings.OverlayUpdateRate = Math.Max(30.0f, Math.Min(360.0f, _pendingOverlayUpdateRate));
+			_editingOverlayUpdateRate = false;
+			Main.RequestSave();
+		}
+
+		if (!_editingKeyViewerKpsRefreshInterval)
+		{
+			_pendingKeyViewerKpsRefreshInterval = Main.Settings.KeyViewerKpsRefreshInterval;
+		}
+		float keyViewerKpsRefreshInterval = _pendingKeyViewerKpsRefreshInterval;
+		if (ImGui.SliderFloat(Tr("settings.keyViewerKpsRefreshInterval", "KV KPS 刷新间隔"), ref keyViewerKpsRefreshInterval, 0.05f, 2.0f, "%.2f s"))
+		{
+			_pendingKeyViewerKpsRefreshInterval = Math.Max(0.05f, Math.Min(2.0f, keyViewerKpsRefreshInterval));
+			_editingKeyViewerKpsRefreshInterval = true;
+		}
+		if (ImGui.IsItemDeactivatedAfterEdit())
+		{
+			Main.Settings.KeyViewerKpsRefreshInterval = Math.Max(0.05f, Math.Min(2.0f, _pendingKeyViewerKpsRefreshInterval));
+			_editingKeyViewerKpsRefreshInterval = false;
+			Main.RequestSave();
+		}
+
+		if (!_editingOverlayerFpsTagRefreshInterval)
+		{
+			_pendingOverlayerFpsTagRefreshInterval = Main.Settings.OverlayerFpsTagRefreshInterval;
+		}
+		float overlayerFpsTagRefreshInterval = _pendingOverlayerFpsTagRefreshInterval;
+		if (ImGui.SliderFloat(Tr("settings.overlayerFpsTagRefreshInterval", "OV FPS Tag 刷新间隔"), ref overlayerFpsTagRefreshInterval, 0.05f, 2.0f, "%.2f s"))
+		{
+			_pendingOverlayerFpsTagRefreshInterval = Math.Max(0.05f, Math.Min(2.0f, overlayerFpsTagRefreshInterval));
+			_editingOverlayerFpsTagRefreshInterval = true;
+		}
+		if (ImGui.IsItemDeactivatedAfterEdit())
+		{
+			Main.Settings.OverlayerFpsTagRefreshInterval = Math.Max(0.05f, Math.Min(2.0f, _pendingOverlayerFpsTagRefreshInterval));
+			_editingOverlayerFpsTagRefreshInterval = false;
+			Main.RequestSave();
+		}
+
+		if (!_editingImageRenderScale)
+		{
+			_pendingImageRenderScale = Main.Settings.ImageRenderScale;
+		}
+		float imageRenderScale = _pendingImageRenderScale;
+		if (ImGui.SliderFloat(Tr("settings.imageRenderScale", "图片渲染倍率"), ref imageRenderScale, 0.25f, 2.0f, "%.2f"))
+		{
+			_pendingImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, imageRenderScale));
+			_editingImageRenderScale = true;
+		}
+		if (ImGui.IsItemDeactivatedAfterEdit())
+		{
+			Main.Settings.ImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, _pendingImageRenderScale));
+			_editingImageRenderScale = false;
+			TextureManager.ClearScaledTextures();
+			Main.RequestSave();
+		}
+	}
+
+	private void DrawSettingsIntegrationSection()
+	{
+		ImGui.Text(Tr("settings.integration", "联动设置"));
+		ImGui.Separator();
+
+		bool xPerfectActive = XPerfectBridge.Active;
+		ImGui.TextColored(
+			xPerfectActive ? new System.Numerics.Vector4(0.3f, 1f, 0.45f, 1f) : new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f),
+			xPerfectActive ? Tr("settings.xperfectDetected", "XPerfect 已检测到") : Tr("settings.xperfectMissing", "XPerfect 未检测到或未启用")
+		);
+		ImGui.SameLine();
+		if (ImGui.Button(Tr("settings.refreshDetection", "刷新检测") + "##XPerfectRefresh"))
+		{
+			XPerfectBridge.RefreshDetection();
+			xPerfectActive = XPerfectBridge.Active;
+		}
+		if (!xPerfectActive && Main.Settings.XPerfectIntegrationEnabled)
+		{
+			Main.Settings.XPerfectIntegrationEnabled = false;
+			Main.RequestSave();
+		}
+		bool xPerfectIntegrationEnabled = xPerfectActive && Main.Settings.XPerfectIntegrationEnabled;
+		if (!xPerfectActive)
 		{
 			ImGui.BeginDisabled();
 		}
-		if (ImGui.Button(Tr("settings.checkUpdate", "检查更新") + "##CheckGithubUpdate"))
+		if (ImGui.Checkbox("XPerfect##IntegrationXPerfect", ref xPerfectIntegrationEnabled))
 		{
-			GithubUpdateManager.CheckForUpdates();
+			Main.Settings.XPerfectIntegrationEnabled = xPerfectActive && xPerfectIntegrationEnabled;
+			Main.RequestSave();
 		}
-		if (busy)
+		if (!xPerfectActive)
 		{
 			ImGui.EndDisabled();
 		}
+	}
 
-		if (GithubUpdateManager.UpdateAvailable)
+	private void DrawSettingsDeveloperSection()
+	{
+		ImGui.Text(Tr("settings.developerOptions", "开发者选项"));
+		ImGui.Separator();
+
+		if (Main.Settings.GameUIDeveloperUnlocked)
 		{
-			ImGui.TextColored(new Vector4(0.3f, 1f, 0.45f, 1f), string.Format(Tr("settings.updateAvailable", "发现新版本: {0}"), GithubUpdateManager.LatestVersion));
-			string assetName = GithubUpdateManager.AssetName;
-			if (!string.IsNullOrEmpty(assetName))
-			{
-				ImGui.TextWrapped(string.Format(Tr("settings.updatePackage", "更新包: {0}"), assetName));
-			}
-
-			string notes = GithubUpdateManager.ReleaseNotes;
-			if (!string.IsNullOrWhiteSpace(notes) && ImGui.CollapsingHeader(Tr("settings.updateNotes", "更新说明") + "##GithubUpdateNotes"))
-			{
-				ImGui.TextWrapped(notes.Length > 1200 ? notes.Substring(0, 1200) + "..." : notes);
-			}
-
-			if (busy)
-			{
-				ImGui.BeginDisabled();
-			}
-			if (ImGui.Button(Tr("settings.downloadUpdate", "下载更新包") + "##DownloadGithubUpdate"))
-			{
-				GithubUpdateManager.DownloadUpdate();
-			}
-			if (busy)
-			{
-				ImGui.EndDisabled();
-			}
-
+			ImGui.TextColored(new System.Numerics.Vector4(0.3f, 1f, 0.45f, 1f), Tr("settings.gameUiAdvancedUnlocked", "Game UI 高级控制已解锁"));
 			ImGui.SameLine();
-			bool canInstall = GithubUpdateManager.DownloadReady && !busy;
-			if (!canInstall)
+			if (ImGui.Button(Tr("settings.relock", "重新锁定") + "##GameUIDevLock"))
 			{
-				ImGui.BeginDisabled();
-			}
-			if (ImGui.Button(Tr("settings.installAndRestart", "安装并重启") + "##InstallGithubUpdate"))
-			{
-				GithubUpdateManager.InstallAndRestart();
-			}
-			if (!canInstall)
-			{
-				ImGui.EndDisabled();
-			}
-
-			if (GithubUpdateManager.DownloadReady)
-			{
-				ImGui.TextWrapped(string.Format(Tr("settings.updateDownloaded", "已下载: {0}"), GithubUpdateManager.DownloadedZipPath));
+				Main.Settings.GameUIDeveloperUnlocked = false;
+				if (GameUIManager.Instance != null)
+				{
+					GameUIManager.Instance.RestoreAll();
+				}
+				Main.RequestSave();
 			}
 		}
-
-		string status = GithubUpdateManager.Status;
-		if (!string.IsNullOrEmpty(status))
+		else
 		{
-			ImGui.TextWrapped(status);
+			ImGui.SetNextItemWidth(160f);
+			if (ImGui.InputText(Tr("settings.gameUiDevKey", "输入 Key") + "##GameUIDevKey", ref _gameUIDeveloperKeyInput, 32u))
+			{
+				_gameUIDeveloperKeyFailed = false;
+			}
+			ImGui.SameLine();
+			if (ImGui.Button(Tr("settings.verify", "验证") + "##GameUIDevVerify"))
+			{
+				string key = (_gameUIDeveloperKeyInput ?? string.Empty).Trim();
+				if (string.Equals(key, GameUIManager.DeveloperUnlockKey, StringComparison.OrdinalIgnoreCase))
+				{
+					Main.Settings.GameUIDeveloperUnlocked = true;
+					_gameUIDeveloperKeyInput = "";
+					_gameUIDeveloperKeyFailed = false;
+					Main.RequestSave();
+				}
+				else
+				{
+					_gameUIDeveloperKeyFailed = true;
+				}
+			}
+			ImGui.TextColored(new System.Numerics.Vector4(0.75f, 0.75f, 0.75f, 1f), Tr("settings.gameUiDevHint", "用于解锁判定模式/不会失败/自动演奏的位置、缩放和透明度控制。"));
+			if (_gameUIDeveloperKeyFailed)
+			{
+				ImGui.TextColored(new System.Numerics.Vector4(1f, 0.35f, 0.35f, 1f), Tr("settings.keyVerifyFailed", "Key 验证失败"));
+			}
+		}
+	}
+
+	private void DrawSettingsConfigSection()
+	{
+		ImGui.Text(Tr("settings.tab.config", "配置"));
+		ImGui.Separator();
+
+		string text3 = Path.Combine(UnityEngine.Application.dataPath, "../CheryTools_Settings_Backup.xml");
+		string cytPath = Path.Combine(UnityEngine.Application.dataPath, "../CheryTools_Settings_Backup.cyt");
+		if (ImGui.Button(Tr("settings.exportCyt", "导出配置 (.cyt)")))
+		{
+			try
+			{
+				string path = ModernFileDialog.ShowSaveFileDialog(
+					"导出 CheryTools 总配置",
+					"CheryTools 总配置 (*.cyt)|*.cyt",
+					CheryToolsAssets.GameRoot,
+					"CheryTools_Settings_Backup.cyt"
+				);
+
+				if (!string.IsNullOrEmpty(path))
+				{
+					Main.Settings.Save(Main.ModEntry);
+					cytPath = CheryToolsAssets.ExportCytPackage(Main.Settings, path);
+					Main.Logger.Log("Settings exported to: " + cytPath);
+				}
+			}
+			catch (Exception ex)
+			{
+				Main.Logger.Log("Failed to export settings: " + ex.ToString());
+			}
+		}
+		ImGui.SameLine();
+		if (ImGui.Button(Tr("settings.importCyt", "导入配置 (.cyt)")))
+		{
+			try
+			{
+				string path = ModernFileDialog.ShowOpenFileDialog(
+					"导入 CheryTools 总配置",
+					"CheryTools 总配置 (*.cyt)|*.cyt",
+					CheryToolsAssets.GameRoot
+				);
+
+				if (!string.IsNullOrEmpty(path))
+				{
+					string destFileName = Path.Combine(Main.ModEntry.Path, "Settings.xml");
+					CheryToolsAssets.ImportCytPackage(path, destFileName);
+					ReloadSettingsAfterImport(path);
+				}
+			}
+			catch (Exception ex2)
+			{
+				Main.Logger.Log("Failed to import settings: " + ex2.ToString());
+			}
+		}
+		if (ImGui.Button(Tr("settings.importXml", "导入配置 (XML)")))
+		{
+			try
+			{
+				if (File.Exists(text3))
+				{
+					string destFileName = Path.Combine(Main.ModEntry.Path, "Settings.xml");
+					File.Copy(text3, destFileName, overwrite: true);
+					ReloadSettingsAfterImport(text3);
+				}
+			}
+			catch (Exception ex2)
+			{
+				Main.Logger.Log("Failed to import settings: " + ex2.ToString());
+			}
+		}
+		if (File.Exists(text3) || File.Exists(cytPath))
+		{
+			ImGui.SameLine();
+			ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1f), Tr("settings.configSavedInGameRoot", "配置已保存在游戏根目录!"));
+		}
+
+		ImGui.Separator();
+		ImGui.Text(Tr("settings.legacyKvMigration", "旧 KV 配置迁移"));
+		ImGui.TextColored(new System.Numerics.Vector4(0.65f, 0.65f, 0.65f, 1f), Tr("settings.legacyKvMigrationHint", "追加导入旧 16K/12K/10K/8K 为新 KV 配置，不覆盖当前配置。"));
+		string currentSettingsPath = Path.Combine(Main.ModEntry.Path, "Settings.xml");
+		if (ImGui.Button(Tr("settings.importLegacyFromCurrent", "从当前 Settings.xml 导入旧 KV")))
+		{
+			ImportLegacyKeyViewerFromXml(currentSettingsPath);
+		}
+		ImGui.SameLine();
+		if (ImGui.Button(Tr("settings.importLegacyFromXml", "从备份 XML 导入旧 KV")))
+		{
+			ImportLegacyKeyViewerFromXml(text3);
+		}
+		if (ImGui.Button(Tr("settings.importLegacyFromCyt", "从备份 .cyt 导入旧 KV")))
+		{
+			ImportLegacyKeyViewerFromCyt(cytPath);
+		}
+		if (!string.IsNullOrEmpty(_legacyKeyViewerImportMessage))
+		{
+			ImGui.TextColored(new System.Numerics.Vector4(0.75f, 0.85f, 1f, 1f), _legacyKeyViewerImportMessage);
 		}
 	}
 
@@ -1906,9 +1924,9 @@ public class CheryToolsMenu : MonoBehaviour
 		{
 			Main.Settings.ToolsLimitedKeys = new List<KeyCode>();
 		}
-		if (Main.Settings.ToolsLimitedKeys.Count > 30)
+		if (Main.Settings.ToolsLimitedKeys.Count > Settings.MaxToolsLimitedKeys)
 		{
-			Main.Settings.ToolsLimitedKeys.RemoveRange(30, Main.Settings.ToolsLimitedKeys.Count - 30);
+			Main.Settings.ToolsLimitedKeys.RemoveRange(Settings.MaxToolsLimitedKeys, Main.Settings.ToolsLimitedKeys.Count - Settings.MaxToolsLimitedKeys);
 		}
 
 		ImGui.Separator();
@@ -1920,7 +1938,7 @@ public class CheryToolsMenu : MonoBehaviour
 			InputInterceptor.UpdateAllowedKeys();
 			Main.RequestSave();
 		}
-		DrawInlineHelpText(Tr("tools.inputLimit.help", "启用后只放行下方登记的按键，最多 30 个；菜单热键、Esc、Ctrl、F10 保底放行。"));
+		DrawInlineHelpText(Tr("tools.inputLimit.help", "启用后只放行下方登记的按键，最多 128 个；菜单热键、Esc、Ctrl、F10 保底放行。"));
 
 		string addButtonLabel = _waitingForToolsLimitedKey ? Tr("tools.inputLimit.waiting", "[等待按键...]") : Tr("tools.inputLimit.add", "添加限制键");
 		if (ImGui.Button(addButtonLabel, new Vector2(140f, 0f)))
@@ -1928,7 +1946,7 @@ public class CheryToolsMenu : MonoBehaviour
 			_waitingForToolsLimitedKey = true;
 		}
 		ImGui.SameLine();
-		ImGui.Text($"{Main.Settings.ToolsLimitedKeys.Count}/30");
+		ImGui.Text($"{Main.Settings.ToolsLimitedKeys.Count}/{Settings.MaxToolsLimitedKeys}");
 		if (_waitingForToolsLimitedKey)
 		{
 			foreach (KeyCode value in SettingsHotkeyCandidates)
@@ -1939,7 +1957,7 @@ public class CheryToolsMenu : MonoBehaviour
 				}
 
 				_waitingForToolsLimitedKey = false;
-				if (Main.Settings.ToolsLimitedKeys.Count < 30 && !Main.Settings.ToolsLimitedKeys.Contains(value))
+				if (Main.Settings.ToolsLimitedKeys.Count < Settings.MaxToolsLimitedKeys && !Main.Settings.ToolsLimitedKeys.Contains(value))
 				{
 					Main.Settings.ToolsLimitedKeys.Add(value);
 					InputInterceptor.UpdateAllowedKeys();
@@ -2056,11 +2074,11 @@ public class CheryToolsMenu : MonoBehaviour
 		if (ImGui.CollapsingHeader(Tr("help.ov", "OV")))
 		{
 			DrawHelpBullet("help.ov.1", "OV 支持文本、图片、视频和进度条模块；同类模块之间可用深度控制遮挡顺序。");
-			DrawHelpBullet("help.ov.2", "文本模块支持 Tag、富文本颜色/字号、描边、阴影、语法高亮编辑器和右侧实时预览。");
+			DrawHelpBullet("help.ov.2", "文本模块支持 Tag、富文本颜色/字号、描边、阴影和语法高亮编辑器。");
 			DrawHelpBullet("help.ov.3", "Tag 插入窗口支持搜索；例如 {fps}、{progress:2}、{bpm:2}、{acc:2}、{wtime}。");
 			DrawHelpBullet("help.ov.4", "数字 Tag 支持 :位数 控制小数显示，并会自动去掉无意义的末尾 0。");
-			DrawHelpBullet("help.ov.5", "文本编辑器支持 #import regex 和 #regex /pattern/replacement/，用于对最终文本做正则替换。");
-			DrawHelpBullet("help.ov.6", "图片和视频模块可以设置位置、尺寸、旋转、锚点、透明度和对齐；OV 视频最多两个，仅支持 .mp4。");
+			DrawHelpBullet("help.ov.5", "文本模块可以使用 Token 节点动画，为指定字符或 Tag 配置触发动画和持续效果。");
+			DrawHelpBullet("help.ov.6", "图片和视频模块可以设置位置、尺寸、旋转、锚点、透明度和对齐；视频仅支持 .mp4。");
 			DrawHelpBullet("help.ov.7", "进度条可以选择当前值、0% 值和 100% 值来源；适合做音乐播放、地图进度、准确率等条形显示。");
 			DrawHelpBullet("help.ov.8", "解锁 OV 拖动后，可以在游戏画面直接拖动模块，并使用吸附线辅助对齐。");
 		}
@@ -2103,9 +2121,8 @@ public class CheryToolsMenu : MonoBehaviour
 			DrawSponsorEntry("@濑户星仔_洛辰", "https://space.bilibili.com/1942218610", 5);
 			DrawSponsorEntry("@杰西杰西杰-_-", "https://space.bilibili.com/3546385762749238", 6);
 			DrawSponsorEntry("@BaiZhu_L", "https://space.bilibili.com/1278798931", 7);
-			ImGui.Separator();
-			ImGui.TextUnformatted("QQ");
-			DrawSponsorEntry("@罗氓免 296**3", null, 8);
+			DrawSponsorEntry("@罗氓兔", "https://space.bilibili.com/181837031", 8);
+			DrawSponsorEntry("@F不笨", "https://space.bilibili.com/3494377433336147", 9);
 		}
 
 		ImGui.End();
@@ -2123,14 +2140,6 @@ public class CheryToolsMenu : MonoBehaviour
 			Main.RequestSave();
 		}
 
-		bool enabled = config.IsEnabled;
-		if (ImGui.Checkbox(Tr("kv.configEnable", "启用显示") + "##kv_config_enabled", ref enabled))
-		{
-			config.IsEnabled = enabled;
-			InputInterceptor.UpdateAllowedKeys();
-			Main.RequestSave();
-		}
-		ImGui.SameLine();
 		bool showInGame = config.ShowInGame;
 		if (ImGui.Checkbox(Tr("kv.showInGame", "游戏中显示") + "##kv_config_show_in_game", ref showInGame))
 		{
@@ -2145,14 +2154,6 @@ public class CheryToolsMenu : MonoBehaviour
 		{
 			FreeMakeEditor.IsOpen = true;
 		}
-		ImGui.SameLine();
-		if (ImGui.Button(Tr("kv.clearNodes", "清空节点"), new Vector2(90f, 30f)))
-		{
-			if (config.Nodes != null) config.Nodes.Clear();
-			InputInterceptor.UpdateAllowedKeys();
-			Main.RequestSave();
-		}
-
 		ImGui.SameLine();
 		if (ImGui.Button(Tr("kv.copyConfig", "复制配置"), new Vector2(90f, 30f)))
 		{
@@ -2187,37 +2188,17 @@ public class CheryToolsMenu : MonoBehaviour
 			return;
 		}
 
-		ImGui.Text(Tr("kv.replaceWithPreset", "用预设覆盖当前配置:"));
-		if (ImGui.Button("16K##kv_cfg_reset_16")) ReplaceSelectedKeyViewerConfig(config, 16);
-		ImGui.SameLine();
-		if (ImGui.Button("12K##kv_cfg_reset_12")) ReplaceSelectedKeyViewerConfig(config, 12);
-		ImGui.SameLine();
-		if (ImGui.Button("10K##kv_cfg_reset_10")) ReplaceSelectedKeyViewerConfig(config, 10);
-		ImGui.SameLine();
-		if (ImGui.Button("8K##kv_cfg_reset_8")) ReplaceSelectedKeyViewerConfig(config, 8);
-		ImGui.SameLine();
-		if (ImGui.Button(Tr("kv.emptyPreset", "空白") + "##kv_cfg_reset_empty")) ReplaceSelectedKeyViewerConfig(config, 0);
-	}
-
-	private void ReplaceSelectedKeyViewerConfig(KVConfiguration config, int presetKeyCount)
-	{
-		if (config == null) return;
-		config.Nodes = presetKeyCount > 0
-			? Main.Settings.GenerateDefaultKVLayout(presetKeyCount, config.DefaultWidth, config.DefaultHeight)
-			: new List<KVNode>();
-		InputInterceptor.UpdateAllowedKeys();
-		if ((Object)KeyViewerManager.Instance != (Object)null)
+		if ((Object)KeyViewerManager.Instance != (Object)null
+			&& ImGui.Button(Tr("kv.resetCurrentStats", "重置当前配置统计"), new Vector2(180f, 28f)))
 		{
-			KeyViewerManager.Instance.ResetCounts();
+			KeyViewerManager.Instance.ResetCounts(config);
 		}
-		Main.RequestSave();
 	}
 
 	private void DrawKeyViewerConfigSettings(KVConfiguration config)
 	{
 		if (config == null) return;
 
-		List<KVNode> selectedNodes = config.Nodes;
 		ImGui.Text(Tr("kv.appearanceSettings", "当前配置外观设置"));
 		ImGui.Separator();
 
@@ -2232,30 +2213,6 @@ public class CheryToolsMenu : MonoBehaviour
 		if (ImGui.IsItemDeactivatedAfterEdit())
 		{
 			ImportResourcePath(ref config.FontPath, "Fonts", true);
-		}
-		float textOffsetX = config.GlobalTextOffsetX;
-		if (ImGui.DragFloat(Tr("kv.keyTextOffsetX", "配置按键文字X偏移"), ref textOffsetX, 1f))
-		{
-			config.GlobalTextOffsetX = textOffsetX;
-			Main.RequestSave();
-		}
-		float textOffsetY = config.GlobalTextOffsetY;
-		if (ImGui.DragFloat(Tr("kv.keyTextOffsetY", "配置按键文字Y偏移"), ref textOffsetY, 1f))
-		{
-			config.GlobalTextOffsetY = textOffsetY;
-			Main.RequestSave();
-		}
-		float countOffsetX = config.GlobalCountOffsetX;
-		if (ImGui.DragFloat(Tr("kv.countTextOffsetX", "配置计数文字X偏移"), ref countOffsetX, 1f))
-		{
-			config.GlobalCountOffsetX = countOffsetX;
-			Main.RequestSave();
-		}
-		float countOffsetY = config.GlobalCountOffsetY;
-		if (ImGui.DragFloat(Tr("kv.countTextOffsetY", "配置计数文字Y偏移"), ref countOffsetY, 1f))
-		{
-			config.GlobalCountOffsetY = countOffsetY;
-			Main.RequestSave();
 		}
 		if (ImGui.Button(Tr("kv.reloadFont", "重新加载字体")))
 		{
@@ -2386,38 +2343,6 @@ public class CheryToolsMenu : MonoBehaviour
 			}
 			ImGui.Unindent();
 		}
-		ImGui.Spacing();
-		ImGui.Text(Tr("kv.bulkSize", "批量修改当前配置按键大小"));
-		bool sizeChanged = false;
-		float defaultWidth = config.DefaultWidth;
-		if (ImGui.DragFloat(Tr("kv.bulkWidth", "配置宽度设定") + "##bulk_w", ref defaultWidth, 1f, 10f, 500f))
-		{
-			config.DefaultWidth = defaultWidth;
-			sizeChanged = true;
-		}
-		float defaultHeight = config.DefaultHeight;
-		if (ImGui.DragFloat(Tr("kv.bulkHeight", "配置高度设定") + "##bulk_h", ref defaultHeight, 1f, 10f, 500f))
-		{
-			config.DefaultHeight = defaultHeight;
-			sizeChanged = true;
-		}
-		if (sizeChanged)
-		{
-			Main.RequestSave();
-		}
-		if (ImGui.Button(Tr("kv.applySizeToAllKeys", "应用大小到当前配置的所有按键")))
-		{
-			if (selectedNodes != null)
-			{
-				foreach (KVNode item in selectedNodes)
-				{
-					if (item == null || item.NodeType != 0) continue;
-					item.Width = config.DefaultWidth;
-					item.Height = config.DefaultHeight;
-				}
-				Main.RequestSave();
-			}
-		}
 		DrawKeyViewerColorSettings(config);
 		}
 
@@ -2443,20 +2368,14 @@ public class CheryToolsMenu : MonoBehaviour
 		if (DrawColorPicker(Tr("kv.normal", "未按下") + "##bg_norm", ref config.ColorBgNormal)) Main.RequestSave();
 		ImGui.SameLine();
 		if (DrawColorPicker(Tr("kv.pressed", "触发") + "##bg_press", ref config.ColorBgPressed)) Main.RequestSave();
-		if (DrawAxisGradientSettings(Tr("kv.backgroundNormalGradient", "未按下背景渐变"), "kv_bg_norm_grad", config.BackgroundGradientNormal)) Main.RequestSave();
-		if (DrawAxisGradientSettings(Tr("kv.backgroundPressedGradient", "触发背景渐变"), "kv_bg_press_grad", config.BackgroundGradientPressed)) Main.RequestSave();
 		ImGui.Text(Tr("kv.border", "边框"));
 		if (DrawColorPicker(Tr("kv.normal", "未按下") + "##border_norm", ref config.ColorBorderNormal)) Main.RequestSave();
 		ImGui.SameLine();
 		if (DrawColorPicker(Tr("kv.pressed", "触发") + "##border_press", ref config.ColorBorderPressed)) Main.RequestSave();
-		if (DrawAxisGradientSettings(Tr("kv.borderNormalGradient", "未按下边框渐变"), "kv_border_norm_grad", config.BorderGradientNormal)) Main.RequestSave();
-		if (DrawAxisGradientSettings(Tr("kv.borderPressedGradient", "触发边框渐变"), "kv_border_press_grad", config.BorderGradientPressed)) Main.RequestSave();
 		ImGui.Text(Tr("kv.text", "文本"));
 		if (DrawColorPicker(Tr("kv.normal", "未按下") + "##txt_norm", ref config.ColorTextNormal)) Main.RequestSave();
 		ImGui.SameLine();
 		if (DrawColorPicker(Tr("kv.pressed", "触发") + "##txt_press", ref config.ColorTextPressed)) Main.RequestSave();
-		if (DrawAxisGradientSettings(Tr("kv.textNormalGradient", "未按下文字渐变"), "kv_text_norm_grad", config.TextGradientNormal)) Main.RequestSave();
-		if (DrawAxisGradientSettings(Tr("kv.textPressedGradient", "触发文字渐变"), "kv_text_press_grad", config.TextGradientPressed)) Main.RequestSave();
 		ImGui.Text(Tr("kv.bottomStatsText", "底部统计文本"));
 		if (DrawColorPicker(Tr("kv.kpsColor", "KPS 颜色"), ref config.ColorKps)) Main.RequestSave();
 		ImGui.SameLine();
@@ -2515,19 +2434,11 @@ public class CheryToolsMenu : MonoBehaviour
 			{
 				ImGui.OpenPopup("kv_keypress_anim_easing_popup");
 			}
-			if (ImGui.BeginPopup("kv_keypress_anim_easing_popup"))
+			string selectedEasing = config.KeyPressAnimationEasing ?? "ease-out-quad";
+			if (DrawEasingSelectorPopup("kv_keypress_anim_easing_popup", ref selectedEasing))
 			{
-				string[] easingNames = new string[] { "linear", "ease-out-quad", "ease-in-out-quad", "ease-out-cubic", "ease-out-back", "ease-in-out-sine" };
-				for (int i = 0; i < easingNames.Length; i++)
-				{
-					string easingName = easingNames[i];
-					if (ImGui.Selectable(easingName, string.Equals(config.KeyPressAnimationEasing, easingName, StringComparison.OrdinalIgnoreCase)))
-					{
-						config.KeyPressAnimationEasing = easingName;
-						Main.RequestSave();
-					}
-				}
-				ImGui.EndPopup();
+				config.KeyPressAnimationEasing = selectedEasing;
+				Main.RequestSave();
 			}
 			ImGui.Unindent();
 		}
@@ -2708,280 +2619,6 @@ public class CheryToolsMenu : MonoBehaviour
 		}
 	}
 
-	private void DrawOverlayerTextPreview(OverlayerText overlayerText, int textIndex, string previewId, Vector2 size)
-	{
-		if (overlayerText == null)
-		{
-			return;
-		}
-
-		ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.1f, 0.1f, 0.1f, 0.5f));
-		try
-		{
-			bool isChildVisible = ImGui.BeginChild(previewId, size, ImGuiChildFlags.Borders);
-			try
-			{
-				if (!isChildVisible)
-				{
-					return;
-				}
-
-				OverlayerRegexDocument regexDocument = OverlayerRegexProcessor.GetDocument(overlayerText.TextFormat);
-				bool canEditPreviewSegments = regexDocument == null || !regexDocument.RegexEnabled;
-				string previewSource = canEditPreviewSegments
-					? (overlayerText.TextFormat ?? string.Empty)
-					: FormatPreviewText(overlayerText.TextFormat);
-				if (!canEditPreviewSegments)
-				{
-					ImGui.TextColored(new Vector4(0.95f, 0.68f, 0.30f, 1f), "正则已启用：预览显示最终结果，点击上色已关闭。");
-				}
-				List<RichTextParser.ParsedSegment> list = RichTextParser.Parse(previewSource, new Vector4(overlayerText.TextColor[0], overlayerText.TextColor[1], overlayerText.TextColor[2], overlayerText.TextColor[3]));
-				bool newLine = true;
-				for (int i = 0; i < list.Count; i++)
-				{
-					RichTextParser.ParsedSegment segment = list[i];
-					string[] lines = segment.RenderText.Split('\n');
-					for (int line = 0; line < lines.Length; line++)
-					{
-						if (line > 0)
-						{
-							newLine = true;
-						}
-						if (!newLine)
-						{
-							ImGui.SameLine(0f, 0f);
-						}
-
-						string previewText = canEditPreviewSegments ? FormatPreviewTags(lines[line]) : lines[line];
-						if (segment.HasSizeTag && segment.SizeValue > 0)
-						{
-							ImGui.SetWindowFontScale(segment.SizeValue / 48f * ((overlayerText.FontSize > 0) ? overlayerText.FontSize : 100f) / ImGui.GetFontSize());
-						}
-						else if (segment.HasSizeTag && segment.SizeValue < 0)
-						{
-							ImGui.SetWindowFontScale(-segment.SizeValue);
-						}
-
-						ImGui.TextColored(segment.Color, previewText);
-						if (segment.HasSizeTag)
-						{
-							ImGui.SetWindowFontScale(1.0f);
-						}
-						if (canEditPreviewSegments && ImGui.IsItemHovered())
-						{
-							ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-						}
-						if (canEditPreviewSegments && ImGui.IsItemClicked())
-						{
-							_editingBlockIndex = textIndex;
-							_editingSegIndex = i;
-							_editingSegList = list;
-							_editingColor = segment.Color;
-							_editingColorDirty = false;
-							ImGui.OpenPopup("ColorEditPopup");
-						}
-						newLine = false;
-					}
-				}
-
-				if (ImGui.BeginPopup("ColorEditPopup"))
-				{
-					ImGui.Text("修改该片段文字颜色");
-					if (ImGui.ColorPicker4("##picker", ref _editingColor))
-					{
-						_editingColorDirty = true;
-					}
-					if (_editingColorDirty && ImGui.IsItemDeactivatedAfterEdit() && _editingSegList != null && _editingSegIndex >= 0 && _editingSegIndex < _editingSegList.Count)
-					{
-						RichTextParser.ParsedSegment segment = _editingSegList[_editingSegIndex];
-						if (ApplyColorToTextSegment(overlayerText, segment, _editingColor))
-						{
-							_editingColorDirty = false;
-							_editingSegList = null;
-							_editingSegIndex = -1;
-							Main.RequestSave();
-							ImGui.CloseCurrentPopup();
-						}
-					}
-					if (ImGui.Button("恢复默认颜色", new Vector2(-1f, 0f)) && _editingSegList != null && _editingSegIndex >= 0 && _editingSegIndex < _editingSegList.Count)
-					{
-						RichTextParser.ParsedSegment segment = _editingSegList[_editingSegIndex];
-						if (RemoveColorFromTextSegment(overlayerText, segment))
-						{
-							_editingColorDirty = false;
-							_editingSegList = null;
-							_editingSegIndex = -1;
-							Main.RequestSave();
-						}
-						ImGui.CloseCurrentPopup();
-					}
-					ImGui.EndPopup();
-				}
-			}
-			finally
-			{
-				ImGui.EndChild();
-			}
-		}
-		finally
-		{
-			ImGui.PopStyleColor();
-		}
-	}
-
-	private bool ApplyColorToTextSegment(OverlayerText overlayerText, RichTextParser.ParsedSegment segment, Vector4 color)
-	{
-		if (overlayerText == null || string.IsNullOrEmpty(overlayerText.TextFormat) || string.IsNullOrEmpty(segment.RenderText))
-		{
-			return false;
-		}
-
-		string text = overlayerText.TextFormat;
-		int start = Math.Max(0, Math.Min(segment.SourceStart, text.Length));
-		int length = Math.Max(0, Math.Min(segment.SourceLength, text.Length - start));
-		if (length <= 0)
-		{
-			return false;
-		}
-
-		string source = text.Substring(start, length);
-		ExpandSegmentToOuterColorTag(text, ref start, ref length);
-		source = text.Substring(start, length);
-		string wrapped = "<color=#" + ColorToHex(color) + ">" + StripOuterColorTag(source) + "</color>";
-		if (source == wrapped)
-		{
-			return false;
-		}
-		overlayerText.TextFormat = text.Substring(0, start) + wrapped + text.Substring(start + length);
-		return true;
-	}
-
-	private bool RemoveColorFromTextSegment(OverlayerText overlayerText, RichTextParser.ParsedSegment segment)
-	{
-		if (overlayerText == null || string.IsNullOrEmpty(overlayerText.TextFormat))
-		{
-			return false;
-		}
-
-		string text = overlayerText.TextFormat;
-		int start = Math.Max(0, Math.Min(segment.SourceStart, text.Length));
-		int length = Math.Max(0, Math.Min(segment.SourceLength, text.Length - start));
-		if (length <= 0)
-		{
-			return false;
-		}
-
-		string source = text.Substring(start, length);
-		ExpandSegmentToOuterColorTag(text, ref start, ref length);
-		source = text.Substring(start, length);
-		string stripped = StripOuterColorTag(source);
-		if (stripped == source)
-		{
-			return false;
-		}
-
-		overlayerText.TextFormat = text.Substring(0, start) + stripped + text.Substring(start + length);
-		return true;
-	}
-
-	private static string StripOuterColorTag(string source)
-	{
-		if (string.IsNullOrEmpty(source))
-		{
-			return source;
-		}
-
-		Match match = Regex.Match(source, @"^\s*<\s*color\s*=\s*#?[0-9a-fA-F]{6,8}\s*>([\s\S]*)<\s*/\s*color\s*>\s*$", RegexOptions.IgnoreCase);
-		return match.Success ? match.Groups[1].Value : source;
-	}
-
-	private static void ExpandSegmentToOuterColorTag(string text, ref int start, ref int length)
-	{
-		if (string.IsNullOrEmpty(text) || length <= 0)
-		{
-			return;
-		}
-
-		int contentStart = Math.Max(0, Math.Min(start, text.Length));
-		int contentEnd = Math.Max(contentStart, Math.Min(start + length, text.Length));
-		Match opening = null;
-		foreach (Match match in ColorTagBoundaryRegex.Matches(text))
-		{
-			if (match.Index >= contentStart)
-			{
-				break;
-			}
-			if (match.Groups[1].Success)
-			{
-				opening = null;
-			}
-			else
-			{
-				opening = match;
-			}
-		}
-
-		if (opening == null)
-		{
-			return;
-		}
-
-		Match closing = null;
-		foreach (Match match in ColorTagBoundaryRegex.Matches(text, contentEnd))
-		{
-			if (match.Groups[1].Success)
-			{
-				closing = match;
-				break;
-			}
-			return;
-		}
-
-		if (closing == null)
-		{
-			return;
-		}
-
-		start = opening.Index;
-		length = closing.Index + closing.Length - opening.Index;
-	}
-
-	private string BuildTextFormatFromSegments(List<RichTextParser.ParsedSegment> segments)
-	{
-		if (segments == null)
-		{
-			return string.Empty;
-		}
-
-		StringBuilder builder = new StringBuilder();
-		foreach (RichTextParser.ParsedSegment segment in segments)
-		{
-			if (segment.HasSizeTag && segment.SizeValue < 0)
-			{
-				builder.Append("<size=" + (-segment.SizeValue * 100f).ToString("0.##", CultureInfo.InvariantCulture) + "%>");
-			}
-			else if (segment.HasSizeTag && segment.SizeValue > 0)
-			{
-				builder.Append("<size=" + segment.SizeValue.ToString("0.##", CultureInfo.InvariantCulture) + ">");
-			}
-
-			if (segment.HasColorTag)
-			{
-				builder.Append("<color=#" + ColorToHex(segment.Color) + ">" + segment.RenderText + "</color>");
-			}
-			else
-			{
-				builder.Append(segment.RenderText);
-			}
-
-			if (segment.HasSizeTag)
-			{
-				builder.Append("</size>");
-			}
-		}
-		return builder.ToString();
-	}
-
 	private void DrawOverlayerTextEditorWindow()
 	{
 		if (!ShowOverlayerTextEditorWindow)
@@ -3009,7 +2646,7 @@ public class CheryToolsMenu : MonoBehaviour
 			return;
 		}
 
-		ImGui.TextColored(new Vector4(0.65f, 0.78f, 1f, 1f), "左侧编辑公式，右侧实时预览。");
+		ImGui.TextColored(new Vector4(0.65f, 0.78f, 1f, 1f), "编辑文本内容，并使用“插入 Tag”添加动态信息。");
 		ImGui.SameLine();
 		if (ImGui.Button("插入 Tag##TextEditorInsertTag"))
 		{
@@ -3018,12 +2655,10 @@ public class CheryToolsMenu : MonoBehaviour
 		DrawOverlayerTagInsertPopup(overlayerText);
 		ImGui.Separator();
 
-		Vector2 avail = ImGui.GetContentRegionAvail();
-		float leftWidth = Math.Max(360f, avail.X * 0.56f);
-		ImGui.BeginChild("OvTextEditorLeftPane", new Vector2(leftWidth, 0f), ImGuiChildFlags.Borders);
+		ImGui.BeginChild("OvTextEditorPane", new Vector2(0f, 0f), ImGuiChildFlags.Borders);
 		try
 		{
-			ImGui.Text("公式编辑");
+			ImGui.Text("文本内容");
 			string input = overlayerText.TextFormat ?? string.Empty;
 			string editorId = $"TextFormatEditorWindow_{_overlayerTextEditorIndex}";
 			if (RichTextCodeEditor.Draw(editorId, ref input, new Vector2(0f, -1f)))
@@ -3032,18 +2667,6 @@ public class CheryToolsMenu : MonoBehaviour
 				Main.RequestSave();
 			}
 			_lastTextFormatCursorPos = RichTextCodeEditor.GetCursor(editorId, input);
-		}
-		finally
-		{
-			ImGui.EndChild();
-		}
-
-		ImGui.SameLine();
-		ImGui.BeginChild("OvTextEditorRightPane", new Vector2(0f, 0f), ImGuiChildFlags.Borders);
-		try
-		{
-			ImGui.Text("效果预览 (点击任意文字即可局部上色)");
-			DrawOverlayerTextPreview(overlayerText, _overlayerTextEditorIndex, $"preview_ov_editor_{_overlayerTextEditorIndex}", new Vector2(0f, 0f));
 		}
 		finally
 		{
@@ -3079,6 +2702,7 @@ public class CheryToolsMenu : MonoBehaviour
 		{
 			FreeMakeEditor.Draw();
 		}
+		OvTokenNodeEditor.Draw();
 		if (!IsMenuOpen)
 		{
 			return;
@@ -3178,6 +2802,20 @@ public class CheryToolsMenu : MonoBehaviour
 					if (ImGui.Checkbox(Tr("tools.disablePlayModeScrollZoom", "禁用播放时滚轮缩放"), ref disablePlayModeScrollZoom))
 					{
 						Main.Settings.DisablePlayModeScrollZoom = disablePlayModeScrollZoom;
+						Main.RequestSave();
+					}
+					bool enableOfficialLevelEditor = Main.Settings.EnableOfficialLevelEditorExperimental;
+					if (ImGui.Checkbox(Tr("tools.enableOfficialLevelEditor", "启用官谱关卡编辑器选项（实验性功能）"), ref enableOfficialLevelEditor))
+					{
+						Main.Settings.EnableOfficialLevelEditorExperimental = enableOfficialLevelEditor;
+						OfficialLevelEditorPatches.RefreshCurrentPauseMenu();
+						Main.RequestSave();
+					}
+					bool enableEditorLevelLibrary = Main.Settings.EnableEditorLevelLibrary;
+					if (ImGui.Checkbox(Tr("tools.enableEditorLevelLibrary", "启用关卡列表"), ref enableEditorLevelLibrary))
+					{
+						Main.Settings.EnableEditorLevelLibrary = enableEditorLevelLibrary;
+						EditorLevelLibraryPanel.RefreshFeatureState();
 						Main.RequestSave();
 					}
 					bool toolsAntiBounceKeys = Main.Settings.ToolsAntiBounceKeys;
@@ -3283,6 +2921,24 @@ public class CheryToolsMenu : MonoBehaviour
 					}
 					ImGui.Text(Tr("tools.planetColorSettings", "星球颜色设置"));
 					ImGui.Separator();
+					bool customPlanetTextures = Main.Settings.EnableCustomPlanetTextures;
+					if (ImGui.Checkbox(Tr("tools.customPlanetTextures", "启用自定义星球贴图"), ref customPlanetTextures))
+					{
+						Main.Settings.EnableCustomPlanetTextures = customPlanetTextures;
+						Main.RequestSave();
+						if (customPlanetTextures)
+						{
+							VisualTweaks.ApplyCustomColors();
+						}
+						else
+						{
+							VisualTweaks.RestoreDefaultColors();
+							if (Main.Settings.EnableCustomPlanetColors)
+							{
+								VisualTweaks.ApplyCustomColors();
+							}
+						}
+					}
 					ImGui.Text(Tr("tools.firePlanet", "火之行星"));
 					ImGui.SameLine(100f);
 					if (DrawColorPicker("##RedPlanetColor", ref Main.Settings.RedPlanetColor))
@@ -3306,6 +2962,11 @@ public class CheryToolsMenu : MonoBehaviour
 						Main.RequestSave();
 						VisualTweaks.ApplyCustomColors();
 					}
+					DrawAssetPathEditor(Tr("tools.planetTexture", "星球贴图") + "##RedPlanetTexture", ref Main.Settings.RedPlanetTexturePath, "Images", false, () =>
+					{
+						TextureManager.Clear();
+						VisualTweaks.ApplyCustomColors();
+					});
 					ImGui.Text(Tr("tools.icePlanet", "冰之行星"));
 					ImGui.SameLine(100f);
 					if (DrawColorPicker("##BluePlanetColor", ref Main.Settings.BluePlanetColor))
@@ -3329,6 +2990,11 @@ public class CheryToolsMenu : MonoBehaviour
 						Main.RequestSave();
 						VisualTweaks.ApplyCustomColors();
 					}
+					DrawAssetPathEditor(Tr("tools.planetTexture", "星球贴图") + "##BluePlanetTexture", ref Main.Settings.BluePlanetTexturePath, "Images", false, () =>
+					{
+						TextureManager.Clear();
+						VisualTweaks.ApplyCustomColors();
+					});
 					ImGui.Text(Tr("tools.greenPlanet", "？之行星"));
 					ImGui.SameLine(100f);
 					if (DrawColorPicker("##GreenPlanetColor", ref Main.Settings.GreenPlanetColor))
@@ -3352,6 +3018,11 @@ public class CheryToolsMenu : MonoBehaviour
 						Main.RequestSave();
 						VisualTweaks.ApplyCustomColors();
 					}
+					DrawAssetPathEditor(Tr("tools.planetTexture", "星球贴图") + "##GreenPlanetTexture", ref Main.Settings.GreenPlanetTexturePath, "Images", false, () =>
+					{
+						TextureManager.Clear();
+						VisualTweaks.ApplyCustomColors();
+					});
 				}
 				else if (_currentToolTab == 2)
 				{
@@ -3378,6 +3049,7 @@ public class CheryToolsMenu : MonoBehaviour
 				if (ImGui.Checkbox(Tr("kv.onlyShowPlaying", "仅游戏时显示") + "##kvplay", ref v4))
 				{
 					Main.Settings.KeyViewerOnlyShowPlaying = v4;
+					Main.Logger?.Log($"[CheryTools] KV OnlyShowPlaying changed to: {v4}");
 					Main.RequestSave();
 				}
 				bool v5 = Main.Settings.LimitInput;
@@ -3387,15 +3059,12 @@ public class CheryToolsMenu : MonoBehaviour
 					Main.RequestSave();
 					InputInterceptor.UpdateAllowedKeys();
 				}
-				ImGui.SameLine(ImGui.GetWindowWidth() - 150f);
-				if (ImGui.Button(Tr("kv.resetStats", "重置统计数据")) && (Object)KeyViewerManager.Instance != (Object)null)
+				if (ImGui.Button(Tr("kv.exportCurrent", "导出当前配置")))
 				{
-					KeyViewerManager.Instance.ResetCounts();
+					ExportKeyViewerPackage(true);
 				}
-				if (ImGui.Button(Tr("kv.export", "导出 KV 配置 (.ctkv)")))
-				{
-					ExportKeyViewerPackage();
-				}
+				ImGui.SameLine();
+				if (ImGui.Button(Tr("kv.exportAll", "导出全部配置"))) ExportKeyViewerPackage(false);
 				ImGui.SameLine();
 				if (ImGui.Button(Tr("kv.import", "导入 KV 配置 (.ctkv)")))
 				{
@@ -3427,6 +3096,7 @@ public class CheryToolsMenu : MonoBehaviour
 				if (ImGui.Checkbox(Tr("ov.onlyShowPlaying", "仅游戏时显示") + "##ovplay", ref v22))
 				{
 					Main.Settings.OverlayerOnlyShowPlaying = v22;
+					Main.Logger?.Log($"[CheryTools] OV OnlyShowPlaying changed to: {v22}");
 					Main.RequestSave();
 				}
 				ImGui.SameLine(ImGui.GetWindowWidth() - 120f);
@@ -3436,9 +3106,35 @@ public class CheryToolsMenu : MonoBehaviour
 					Main.Settings.OverlayerEditMode = v23;
 					Main.RequestSave();
 				}
-				if (ImGui.Button(Tr("ov.export", "导出 OV 配置 (.ctov)")))
+				if (ImGui.Button(Tr("ov.exportAll", "导出全部 OV")))
 				{
 					ExportOverlayerPackage();
+				}
+				ImGui.SameLine();
+				if (ImGui.Button(Tr("ov.exportSingle", "导出单个组件"))) ImGui.OpenPopup("OVExportSinglePopup");
+				if (ImGui.BeginPopup("OVExportSinglePopup"))
+				{
+					for (int i = 0; Main.Settings.OverlayerTexts != null && i < Main.Settings.OverlayerTexts.Count; i++)
+					{
+						OverlayerText item = Main.Settings.OverlayerTexts[i];
+						string name = item != null && !string.IsNullOrWhiteSpace(item.Name) ? item.Name : "文本 " + (i + 1);
+						if (ImGui.MenuItem("文本 / " + name + "##ov_export_text_" + i)) ExportOverlayerComponentPackage("text", i, name);
+					}
+					for (int i = 0; Main.Settings.OverlayerImages != null && i < Main.Settings.OverlayerImages.Count; i++)
+						if (ImGui.MenuItem("图片 / 图片 " + (i + 1) + "##ov_export_image_" + i)) ExportOverlayerComponentPackage("image", i, "图片 " + (i + 1));
+					for (int i = 0; Main.Settings.OverlayerVideos != null && i < Main.Settings.OverlayerVideos.Count; i++)
+					{
+						OverlayerVideo item = Main.Settings.OverlayerVideos[i];
+						string name = item != null && !string.IsNullOrWhiteSpace(item.Name) ? item.Name : "视频 " + (i + 1);
+						if (ImGui.MenuItem("视频 / " + name + "##ov_export_video_" + i)) ExportOverlayerComponentPackage("video", i, name);
+					}
+					for (int i = 0; Main.Settings.OverlayerProgressBars != null && i < Main.Settings.OverlayerProgressBars.Count; i++)
+					{
+						OverlayerProgressBar item = Main.Settings.OverlayerProgressBars[i];
+						string name = item != null && !string.IsNullOrWhiteSpace(item.Name) ? item.Name : "进度条 " + (i + 1);
+						if (ImGui.MenuItem("进度条 / " + name + "##ov_export_progress_" + i)) ExportOverlayerComponentPackage("progress", i, name);
+					}
+					ImGui.EndPopup();
 				}
 				ImGui.SameLine();
 				if (ImGui.Button(Tr("ov.import", "导入 OV 配置 (.ctov)")))
@@ -3550,8 +3246,8 @@ public class CheryToolsMenu : MonoBehaviour
 										ShowOverlayerTextEditorWindow = true;
 										_centerOverlayerTextEditorWindowNextFrame = true;
 									}
-									ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "公式: " + SingleLinePreview(FormatPreviewText(overlayerText2.TextFormat ?? string.Empty), 72));
-									ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1f), "可用变量: {fps}, {kps}, {tot}, {p}, {te}, {acc}, {progress}...");
+									ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "内容: " + SingleLinePreview(FormatPreviewText(overlayerText2.TextFormat ?? string.Empty), 72));
+									ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1f), "可用变量: {fps}, {score}, {p}, {te}, {acc}, {progress}...");
 									float v25 = overlayerText2.FontSize;
 									ImGui.SetNextItemWidth(150f);
 									if (ImGui.SliderFloat("字号", ref v25, 10f, 250f))
@@ -3731,17 +3427,19 @@ public class CheryToolsMenu : MonoBehaviour
 									}
 									
 									ImGui.Separator();
-									ImGui.Text("高级动画配置");
-									if (overlayerText2.Animations == null) overlayerText2.Animations = new List<OverlayerAnimation>();
-									if (overlayerText2.Animations.Count == 0) overlayerText2.Animations.Add(new OverlayerAnimation());
-									var mainAnim = overlayerText2.Animations[0];
-									
-									DrawAnimationPanel(mainAnim, false);
-									
-									ImGui.Spacing();
-									ImGui.Spacing();
-									ImGui.Text("效果预览 (点击任意文字即可局部上色):");
-									DrawOverlayerTextPreview(overlayerText2, selectedOvSidebarTab, $"preview_ov_{selectedOvSidebarTab}", new Vector2(0f, 60f));
+									ImGui.Text("Token 节点动画");
+									if (overlayerText2.TokenAnimation == null) overlayerText2.TokenAnimation = OvAnimationGraph.CreateDefault();
+									bool tokenAnimationEnabled = overlayerText2.TokenAnimation.Enabled;
+									if (ImGui.Checkbox("启用 Token 节点动画##ov_token_animation_enabled", ref tokenAnimationEnabled))
+									{
+										overlayerText2.TokenAnimation.Enabled = tokenAnimationEnabled;
+										Main.RequestSave();
+									}
+									ImGui.SameLine();
+									if (ImGui.Button("打开节点编辑器##ov_token_node_editor"))
+									{
+										OvTokenNodeEditor.Open(overlayerText2);
+									}
 								}
 							}
 							}
@@ -3931,7 +3629,23 @@ public class CheryToolsMenu : MonoBehaviour
 										ImGui.PopStyleVar(2);
 
 										ImGui.Separator();
-										ImGui.Text("高级动画配置");
+										ImGui.Text("节点动画");
+										if (overlayerImage.NodeAnimation == null) overlayerImage.NodeAnimation = OvImageNodeAnimation.CreateDefault();
+										bool imageNodeAnimationEnabled = overlayerImage.NodeAnimation.Enabled;
+										if (ImGui.Checkbox("启用节点动画##image_node_animation_enabled", ref imageNodeAnimationEnabled))
+										{
+											overlayerImage.NodeAnimation.Enabled = imageNodeAnimationEnabled;
+											Main.RequestSave();
+										}
+										ImGui.SameLine();
+										if (ImGui.Button("打开节点编辑器##image_node_animation"))
+										{
+											OvTokenNodeEditor.Open(overlayerImage);
+										}
+										ImGui.TextDisabled("图片输入节点固定代表当前图片，无需选择 Token。");
+
+										ImGui.Separator();
+										ImGui.Text("旧版高级动画配置");
 										if (overlayerImage.Animations == null) overlayerImage.Animations = new List<OverlayerAnimation>();
 										if (overlayerImage.Animations.Count == 0) overlayerImage.Animations.Add(new OverlayerAnimation());
 										var imgAnim = overlayerImage.Animations[0];
@@ -4493,267 +4207,11 @@ public class CheryToolsMenu : MonoBehaviour
 		{
 			return;
 		}
-		CenterNextWindowIfRequested(ref _centerSettingsWindowNextFrame, new Vector2(480f, 360f));
-		ImGui.SetNextWindowSize(new Vector2(480f, 360f), ImGuiCond.FirstUseEver);
+		CenterNextWindowIfRequested(ref _centerSettingsWindowNextFrame, new Vector2(720f, 480f));
+		ImGui.SetNextWindowSize(new Vector2(720f, 480f), ImGuiCond.FirstUseEver);
 		if (ImGui.Begin(Tr("settings.title", "设置"), ref ShowSettingsWindow))
 		{
-			string hotkeyLabel = _waitingForToggleMenuKey ? Tr("settings.waitingKey", "[等待按键输入...]") : Main.Settings.ToggleMenuKey.ToString();
-			ImGui.AlignTextToFramePadding();
-			ImGui.Text(Tr("settings.hotkey", "呼出设置快捷键:"));
-			ImGui.SameLine();
-			if (ImGui.Button($"{hotkeyLabel}##ToggleMenuKeyBtn", new Vector2(120f, 0f)))
-			{
-				_waitingForToggleMenuKey = true;
-			}
-			if (_waitingForToggleMenuKey)
-			{
-				foreach (KeyCode value in SettingsHotkeyCandidates)
-				{
-					if (!Input.GetKeyDown(value))
-					{
-						continue;
-					}
-					Main.Settings.ToggleMenuKey = value;
-					_waitingForToggleMenuKey = false;
-					InputInterceptor.UpdateAllowedKeys();
-					Main.RequestSave();
-					break;
-				}
-			}
-			DrawWindowResetSettings();
-			ImGui.Separator();
-			DrawLocalizationSettings();
-			ImGui.Separator();
-			DrawUpdateSettings();
-			ImGui.Separator();
-			DrawCloudSyncSection();
-			ImGui.Separator();
-			if (!_editingImGuiPanelScale)
-			{
-				_pendingImGuiPanelScale = Main.Settings.ImGuiPanelScale;
-			}
-			float imguiPanelScale = _pendingImGuiPanelScale;
-			if (ImGui.SliderFloat(Tr("settings.imguiScale", "ImGui 面板缩放"), ref imguiPanelScale, 0.6f, 2.0f, "%.2f"))
-			{
-				_pendingImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, imguiPanelScale));
-				_editingImGuiPanelScale = true;
-			}
-			if (ImGui.IsItemDeactivatedAfterEdit())
-			{
-				Main.Settings.ImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, _pendingImGuiPanelScale));
-				_editingImGuiPanelScale = false;
-				Main.RequestSave();
-			}
-			if (!_editingOverlayUpdateRate)
-			{
-				_pendingOverlayUpdateRate = Main.Settings.OverlayUpdateRate;
-			}
-			float overlayUpdateRate = _pendingOverlayUpdateRate;
-			if (ImGui.SliderFloat(Tr("settings.overlayRefreshRate", "覆盖层刷新率"), ref overlayUpdateRate, 30.0f, 360.0f, "%.0f FPS"))
-			{
-				_pendingOverlayUpdateRate = Math.Max(30.0f, Math.Min(360.0f, overlayUpdateRate));
-				_editingOverlayUpdateRate = true;
-			}
-			if (ImGui.IsItemDeactivatedAfterEdit())
-			{
-				Main.Settings.OverlayUpdateRate = Math.Max(30.0f, Math.Min(360.0f, _pendingOverlayUpdateRate));
-				_editingOverlayUpdateRate = false;
-				Main.RequestSave();
-			}
-			if (!_editingImageRenderScale)
-			{
-				_pendingImageRenderScale = Main.Settings.ImageRenderScale;
-			}
-			float imageRenderScale = _pendingImageRenderScale;
-			if (ImGui.SliderFloat(Tr("settings.imageRenderScale", "图片渲染倍率"), ref imageRenderScale, 0.25f, 2.0f, "%.2f"))
-			{
-				_pendingImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, imageRenderScale));
-				_editingImageRenderScale = true;
-			}
-			if (ImGui.IsItemDeactivatedAfterEdit())
-			{
-				Main.Settings.ImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, _pendingImageRenderScale));
-				_editingImageRenderScale = false;
-				TextureManager.ClearScaledTextures();
-				Main.RequestSave();
-			}
-
-			ImGui.Separator();
-			ImGui.Text(Tr("settings.integration", "\u8054\u52A8\u8BBE\u7F6E"));
-			bool xPerfectActive = XPerfectBridge.Active;
-			ImGui.TextColored(
-				xPerfectActive ? new System.Numerics.Vector4(0.3f, 1f, 0.45f, 1f) : new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f),
-				xPerfectActive ? Tr("settings.xperfectDetected", "XPerfect \u5DF2\u68C0\u6D4B\u5230") : Tr("settings.xperfectMissing", "XPerfect \u672A\u68C0\u6D4B\u5230\u6216\u672A\u542F\u7528")
-			);
-			ImGui.SameLine();
-			if (ImGui.Button(Tr("settings.refreshDetection", "\u5237\u65B0\u68C0\u6D4B") + "##XPerfectRefresh"))
-			{
-				XPerfectBridge.RefreshDetection();
-				xPerfectActive = XPerfectBridge.Active;
-			}
-			if (!xPerfectActive && Main.Settings.XPerfectIntegrationEnabled)
-			{
-				Main.Settings.XPerfectIntegrationEnabled = false;
-				Main.RequestSave();
-			}
-			bool xPerfectIntegrationEnabled = xPerfectActive && Main.Settings.XPerfectIntegrationEnabled;
-			if (!xPerfectActive)
-			{
-				ImGui.BeginDisabled();
-			}
-			if (ImGui.Checkbox("XPerfect##IntegrationXPerfect", ref xPerfectIntegrationEnabled))
-			{
-				Main.Settings.XPerfectIntegrationEnabled = xPerfectActive && xPerfectIntegrationEnabled;
-				Main.RequestSave();
-			}
-			if (!xPerfectActive)
-			{
-				ImGui.EndDisabled();
-			}
-
-			ImGui.Separator();
-			ImGui.Text(Tr("settings.developerOptions", "\u5F00\u53D1\u8005\u9009\u9879"));
-			if (Main.Settings.GameUIDeveloperUnlocked)
-			{
-				ImGui.TextColored(new System.Numerics.Vector4(0.3f, 1f, 0.45f, 1f), Tr("settings.gameUiAdvancedUnlocked", "Game UI 高级控制已解锁"));
-				ImGui.SameLine();
-				if (ImGui.Button(Tr("settings.relock", "重新锁定") + "##GameUIDevLock"))
-				{
-					Main.Settings.GameUIDeveloperUnlocked = false;
-					if (GameUIManager.Instance != null)
-					{
-						GameUIManager.Instance.RestoreAll();
-					}
-					Main.RequestSave();
-				}
-			}
-			else
-			{
-				ImGui.SetNextItemWidth(160f);
-				if (ImGui.InputText(Tr("settings.gameUiDevKey", "输入 Key") + "##GameUIDevKey", ref _gameUIDeveloperKeyInput, 32u))
-				{
-					_gameUIDeveloperKeyFailed = false;
-				}
-				ImGui.SameLine();
-				if (ImGui.Button(Tr("settings.verify", "验证") + "##GameUIDevVerify"))
-				{
-					string key = (_gameUIDeveloperKeyInput ?? string.Empty).Trim();
-					if (string.Equals(key, GameUIManager.DeveloperUnlockKey, StringComparison.OrdinalIgnoreCase))
-					{
-						Main.Settings.GameUIDeveloperUnlocked = true;
-						_gameUIDeveloperKeyInput = "";
-						_gameUIDeveloperKeyFailed = false;
-						Main.RequestSave();
-					}
-					else
-					{
-						_gameUIDeveloperKeyFailed = true;
-					}
-				}
-				ImGui.TextColored(new System.Numerics.Vector4(0.75f, 0.75f, 0.75f, 1f), Tr("settings.gameUiDevHint", "用于解锁判定模式/不会失败/自动演奏的位置、缩放和透明度控制。"));
-				if (_gameUIDeveloperKeyFailed)
-				{
-					ImGui.TextColored(new System.Numerics.Vector4(1f, 0.35f, 0.35f, 1f), Tr("settings.keyVerifyFailed", "Key 验证失败"));
-				}
-			}
-			ImGui.Separator();
-			ImGui.Spacing();
-			string text3 = Path.Combine(UnityEngine.Application.dataPath, "../CheryTools_Settings_Backup.xml");
-			string cytPath = Path.Combine(UnityEngine.Application.dataPath, "../CheryTools_Settings_Backup.cyt");
-			if (ImGui.Button(Tr("settings.exportCyt", "导出配置 (.cyt)")))
-			{
-				try
-				{
-					string path = ModernFileDialog.ShowSaveFileDialog(
-						"导出 CheryTools 总配置",
-						"CheryTools 总配置 (*.cyt)|*.cyt",
-						CheryToolsAssets.GameRoot,
-						"CheryTools_Settings_Backup.cyt"
-					);
-					
-					if (!string.IsNullOrEmpty(path))
-					{
-						Main.Settings.Save(Main.ModEntry);
-						cytPath = CheryToolsAssets.ExportCytPackage(Main.Settings, path);
-						Main.Logger.Log("Settings exported to: " + cytPath);
-					}
-				}
-				catch (Exception ex)
-				{
-					Main.Logger.Log("Failed to export settings: " + ex.ToString());
-				}
-			}
-			ImGui.SameLine();
-			if (ImGui.Button(Tr("settings.importCyt", "导入配置 (.cyt)")))
-			{
-				try
-				{
-					string path = ModernFileDialog.ShowOpenFileDialog(
-						"导入 CheryTools 总配置",
-						"CheryTools 总配置 (*.cyt)|*.cyt",
-						CheryToolsAssets.GameRoot
-					);
-					
-					if (!string.IsNullOrEmpty(path))
-					{
-						string destFileName = Path.Combine(Main.ModEntry.Path, "Settings.xml");
-						CheryToolsAssets.ImportCytPackage(path, destFileName);
-						ReloadSettingsAfterImport(path);
-					}
-				}
-				catch (Exception ex2)
-				{
-					Main.Logger.Log("Failed to import settings: " + ex2.ToString());
-				}
-			}
-			if (ImGui.Button(Tr("settings.importXml", "导入配置 (XML)")))
-			{
-				try
-				{
-					if (File.Exists(text3))
-					{
-						string destFileName = Path.Combine(Main.ModEntry.Path, "Settings.xml");
-						File.Copy(text3, destFileName, overwrite: true);
-						ReloadSettingsAfterImport(text3);
-					}
-				}
-				catch (Exception ex2)
-				{
-					Main.Logger.Log("Failed to import settings: " + ex2.ToString());
-				}
-			}
-			if (File.Exists(text3) || File.Exists(cytPath))
-			{
-				ImGui.SameLine();
-				ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1f), Tr("settings.configSavedInGameRoot", "配置已保存在游戏根目录!"));
-			}
-			ImGui.Separator();
-			ImGui.Text(Tr("settings.legacyKvMigration", "旧 KV 配置迁移"));
-			ImGui.TextColored(new System.Numerics.Vector4(0.65f, 0.65f, 0.65f, 1f), Tr("settings.legacyKvMigrationHint", "追加导入旧 16K/12K/10K/8K 为新 KV 配置，不覆盖当前配置。"));
-			string currentSettingsPath = Path.Combine(Main.ModEntry.Path, "Settings.xml");
-			if (ImGui.Button(Tr("settings.importLegacyFromCurrent", "从当前 Settings.xml 导入旧 KV")))
-			{
-				ImportLegacyKeyViewerFromXml(currentSettingsPath);
-			}
-			ImGui.SameLine();
-			if (ImGui.Button(Tr("settings.importLegacyFromXml", "从备份 XML 导入旧 KV")))
-			{
-				ImportLegacyKeyViewerFromXml(text3);
-			}
-			if (ImGui.Button(Tr("settings.importLegacyFromCyt", "从备份 .cyt 导入旧 KV")))
-			{
-				ImportLegacyKeyViewerFromCyt(cytPath);
-			}
-			if (!string.IsNullOrEmpty(_legacyKeyViewerImportMessage))
-			{
-				ImGui.TextColored(new System.Numerics.Vector4(0.75f, 0.85f, 1f, 1f), _legacyKeyViewerImportMessage);
-			}
-			ImGui.Separator();
-			ImGui.Spacing();
-			if (ImGui.Button(Tr("settings.closeMenu", "关闭菜单")))
-			{
-				IsMenuOpen = false;
-			}
+			DrawSettingsPanel();
 		}
 		ImGui.End();
 	}
@@ -5056,7 +4514,9 @@ public class CheryToolsMenu : MonoBehaviour
 		var drawList = ImGui.GetWindowDrawList();
 		var pos = ImGui.GetCursorScreenPos();
 		
-		bool isSelected = (selectedEasing.ToLowerInvariant() == name.ToLowerInvariant().Replace("-", "").Replace(" ", ""));
+		string selectedKey = (selectedEasing ?? string.Empty).ToLowerInvariant().Replace("-", "").Replace(" ", "");
+		string nameKey = (name ?? string.Empty).ToLowerInvariant().Replace("-", "").Replace(" ", "");
+		bool isSelected = selectedKey == nameKey;
 		uint bgCol = ImGui.GetColorU32(ImGuiCol.FrameBg);
 		uint borderCol = isSelected ? 0xFF00FFFF : 0x44FFFFFF;
 		
@@ -5097,6 +4557,54 @@ public class CheryToolsMenu : MonoBehaviour
 			selectedEasing = name;
 			ImGui.CloseCurrentPopup();
 		}
+	}
+
+	internal static bool DrawEasingSelectorPopup(string popupId, ref string selectedEasing)
+	{
+		string oldEasing = selectedEasing;
+		ImGui.SetNextWindowSize(new System.Numerics.Vector2(710f, 520f), ImGuiCond.Appearing);
+		if (ImGui.BeginPopup(popupId))
+		{
+			ImGui.Text("选择缓动类型");
+			ImGui.Separator();
+
+			string[] easingNames = new string[]
+			{
+				"linear",
+				"ease-in-sine", "ease-out-sine", "ease-in-out-sine",
+				"ease-in-quad", "ease-out-quad", "ease-in-out-quad",
+				"ease-in-cubic", "ease-out-cubic", "ease-in-out-cubic",
+				"ease-in-quart", "ease-out-quart", "ease-in-out-quart",
+				"ease-in-quint", "ease-out-quint", "ease-in-out-quint",
+				"ease-in-expo", "ease-out-expo", "ease-in-out-expo",
+				"ease-in-circ", "ease-out-circ", "ease-in-out-circ",
+				"ease-in-back", "ease-out-back", "ease-in-out-back"
+			};
+
+			float cellW = 120f;
+			float cellH = 65f;
+			float spacingX = 18f;
+			float spacingY = 15f;
+			int cols = 5;
+
+			for (int i = 0; i < easingNames.Length; i++)
+			{
+				string easeName = easingNames[i];
+				DrawEasingCell(easeName, easeName, ref selectedEasing, cellW, cellH);
+
+				if ((i + 1) % cols != 0)
+				{
+					ImGui.SameLine(0f, spacingX);
+				}
+				else
+				{
+					ImGui.Dummy(new System.Numerics.Vector2(0f, spacingY));
+				}
+			}
+			ImGui.EndPopup();
+		}
+
+		return !string.Equals(oldEasing, selectedEasing, StringComparison.Ordinal);
 	}
 
 	private static void DrawAnimationPanel(OverlayerAnimation anim, bool isImage)

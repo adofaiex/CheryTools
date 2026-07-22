@@ -9,9 +9,11 @@ namespace CheryTools
     {
         private static Dictionary<string, Texture2D> _loadedTextures = new Dictionary<string, Texture2D>();
         private static Dictionary<string, Texture2D> _scaledTextures = new Dictionary<string, Texture2D>();
+        private static Dictionary<string, Texture2D> _planetSpriteTextures = new Dictionary<string, Texture2D>();
         private static Dictionary<string, Vector2Int> _imageSizes = new Dictionary<string, Vector2Int>();
         private static Dictionary<IntPtr, Texture2D> _ptrToTexture = new Dictionary<IntPtr, Texture2D>();
         private const int TextureSizeBucket = 64;
+        private const int PlanetSpriteFrameCount = 11;
 
         public static IntPtr GetOrCreateTexture(string path)
         {
@@ -90,12 +92,13 @@ namespace CheryTools
 
             try
             {
-                Texture2D source = LoadTextureFromFile(resolvedPath);
+                // Reuse the managed original texture instead of decoding the same file
+                // again for every new display-size bucket.
+                Texture2D source = GetOrCreateTexture2D(path);
                 if (source == null) return null;
 
                 _imageSizes[resolvedPath] = new Vector2Int(source.width, source.height);
                 Texture2D scaled = ResizeTexture(source, targetWidth, targetHeight);
-                UnityEngine.Object.Destroy(source);
                 if (scaled == null) return null;
 
                 scaled.name = Path.GetFileNameWithoutExtension(resolvedPath) + "_" + targetWidth.ToString() + "x" + targetHeight.ToString();
@@ -107,6 +110,55 @@ namespace CheryTools
             {
                 Main.ModEntry.Logger.Log($"[TextureManager] Failed to create scaled image at {resolvedPath}: {e.Message}");
                 return GetOrCreateTexture2D(path);
+            }
+        }
+
+        public static Texture2D GetOrCreatePlanetSpriteTexture(string path, Texture referenceTexture)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+
+            string resolvedPath = CheryToolsAssets.ResolveAssetPath(path);
+            if (string.IsNullOrEmpty(resolvedPath)) return null;
+
+            Texture2D source = GetOrCreateTexture2D(path);
+            if (source == null) return null;
+
+            if (IsLikelyPlanetSpriteAtlas(source))
+            {
+                return source;
+            }
+
+            int frameWidth = source.width;
+            int atlasHeight = source.height;
+            if (referenceTexture != null && referenceTexture.width > 0 && referenceTexture.height > 0)
+            {
+                frameWidth = Mathf.Max(1, Mathf.RoundToInt(referenceTexture.width / (float)PlanetSpriteFrameCount));
+                atlasHeight = Mathf.Max(1, referenceTexture.height);
+            }
+
+            int atlasWidth = Mathf.Max(1, frameWidth * PlanetSpriteFrameCount);
+            string cacheKey = resolvedPath + "|planet|" + atlasWidth.ToString() + "x" + atlasHeight.ToString();
+            if (_planetSpriteTextures.TryGetValue(cacheKey, out Texture2D cached) && cached != null)
+            {
+                return cached;
+            }
+
+            try
+            {
+                Texture2D atlas = BuildRepeatedPlanetAtlas(source, frameWidth, atlasHeight);
+                if (atlas == null) return source;
+
+                atlas.name = Path.GetFileNameWithoutExtension(resolvedPath) + "_PlanetAtlas";
+                atlas.filterMode = FilterMode.Bilinear;
+                atlas.wrapMode = TextureWrapMode.Clamp;
+                _planetSpriteTextures[cacheKey] = atlas;
+                RegisterTexture(atlas);
+                return atlas;
+            }
+            catch (Exception e)
+            {
+                Main.ModEntry.Logger.Log($"[TextureManager] Failed to create planet texture atlas at {resolvedPath}: {e.Message}");
+                return source;
             }
         }
 
@@ -170,8 +222,13 @@ namespace CheryTools
             {
                 if (tex != null && destroyed.Add(tex)) UnityEngine.Object.Destroy(tex);
             }
+            foreach (var tex in _planetSpriteTextures.Values)
+            {
+                if (tex != null && destroyed.Add(tex)) UnityEngine.Object.Destroy(tex);
+            }
             _loadedTextures.Clear();
             _scaledTextures.Clear();
+            _planetSpriteTextures.Clear();
             _imageSizes.Clear();
             _ptrToTexture.Clear();
         }
@@ -237,6 +294,44 @@ namespace CheryTools
             }
         }
 
+        private static Texture2D BuildRepeatedPlanetAtlas(Texture2D source, int frameWidth, int height)
+        {
+            frameWidth = Mathf.Max(1, frameWidth);
+            height = Mathf.Max(1, height);
+
+            int atlasWidth = frameWidth * PlanetSpriteFrameCount;
+            Texture2D atlas = new Texture2D(atlasWidth, height, TextureFormat.RGBA32, false);
+            Color[] framePixels = new Color[frameWidth * height];
+
+            float invW = frameWidth > 1 ? 1f / (frameWidth - 1) : 0f;
+            float invH = height > 1 ? 1f / (height - 1) : 0f;
+            for (int y = 0; y < height; y++)
+            {
+                float v = height > 1 ? y * invH : 0.5f;
+                for (int x = 0; x < frameWidth; x++)
+                {
+                    float u = frameWidth > 1 ? x * invW : 0.5f;
+                    framePixels[y * frameWidth + x] = source.GetPixelBilinear(u, v);
+                }
+            }
+
+            for (int frame = 0; frame < PlanetSpriteFrameCount; frame++)
+            {
+                atlas.SetPixels(frame * frameWidth, 0, frameWidth, height, framePixels);
+            }
+
+            atlas.Apply(false, true);
+            return atlas;
+        }
+
+        private static bool IsLikelyPlanetSpriteAtlas(Texture2D texture)
+        {
+            if (texture == null || texture.height <= 0) return false;
+
+            float atlasAspect = texture.width / (float)texture.height;
+            return Mathf.Abs(atlasAspect - PlanetSpriteFrameCount) <= 0.05f;
+        }
+
         private static int BucketTextureSize(int size)
         {
             size = Mathf.Max(1, size);
@@ -257,6 +352,10 @@ namespace CheryTools
                 RegisterTexture(tex);
             }
             foreach (var tex in _scaledTextures.Values)
+            {
+                RegisterTexture(tex);
+            }
+            foreach (var tex in _planetSpriteTextures.Values)
             {
                 RegisterTexture(tex);
             }
