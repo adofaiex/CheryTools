@@ -15,6 +15,73 @@ namespace CheryTools
         private const int TextureSizeBucket = 64;
         private const int PlanetSpriteFrameCount = 11;
 
+        // Negative cache: a missing or corrupt image would otherwise be re-probed from
+        // disk (File.Exists / ReadAllBytes + decode) on every frame it stays configured.
+        // Failures are remembered per resolved path and only retried after a cooldown,
+        // so a file dropped in later is still picked up within a few seconds.
+        private static readonly Dictionary<string, float> _failedLoadTimes = new Dictionary<string, float>();
+        private const float FailedLoadRetrySeconds = 5f;
+        private const int FailedLoadCacheCapacity = 256;
+
+        // Scaled variants are bounded: an image animated across many size buckets would
+        // otherwise accumulate one mipmapped copy per bucket for the whole session.
+        // Entries untouched for the retention window are destroyed once the cache is
+        // over capacity; entries in active use are never evicted.
+        private static readonly Dictionary<string, int> _scaledLastAccessFrame = new Dictionary<string, int>();
+        private static readonly List<string> _scaledEvictionBuffer = new List<string>();
+        private const int MaxScaledTextures = 48;
+        private const int ScaledTextureRetentionFrames = 600;
+
+        private static bool IsLoadFailureCached(string resolvedPath)
+        {
+            if (!_failedLoadTimes.TryGetValue(resolvedPath, out float failedAt)) return false;
+            if (Time.realtimeSinceStartup - failedAt < FailedLoadRetrySeconds) return true;
+            _failedLoadTimes.Remove(resolvedPath);
+            return false;
+        }
+
+        private static void RememberLoadFailure(string resolvedPath)
+        {
+            if (_failedLoadTimes.Count >= FailedLoadCacheCapacity && !_failedLoadTimes.ContainsKey(resolvedPath))
+            {
+                return;
+            }
+            _failedLoadTimes[resolvedPath] = Time.realtimeSinceStartup;
+        }
+
+        private static void TouchScaledTexture(string cacheKey)
+        {
+            _scaledLastAccessFrame[cacheKey] = Time.frameCount;
+        }
+
+        private static void EvictStaleScaledTextures()
+        {
+            if (_scaledTextures.Count <= MaxScaledTextures) return;
+
+            int now = Time.frameCount;
+            _scaledEvictionBuffer.Clear();
+            foreach (var pair in _scaledTextures)
+            {
+                _scaledLastAccessFrame.TryGetValue(pair.Key, out int lastAccess);
+                if (now - lastAccess > ScaledTextureRetentionFrames)
+                {
+                    _scaledEvictionBuffer.Add(pair.Key);
+                }
+            }
+
+            for (int i = 0; i < _scaledEvictionBuffer.Count; i++)
+            {
+                string key = _scaledEvictionBuffer[i];
+                if (_scaledTextures.TryGetValue(key, out Texture2D tex) && tex != null)
+                {
+                    _ptrToTexture.Remove((IntPtr)tex.GetInstanceID());
+                    UnityEngine.Object.Destroy(tex);
+                }
+                _scaledTextures.Remove(key);
+                _scaledLastAccessFrame.Remove(key);
+            }
+        }
+
         public static IntPtr GetOrCreateTexture(string path)
         {
             Texture2D tex = GetOrCreateTexture2D(path);
@@ -34,23 +101,35 @@ namespace CheryTools
                     return tex;
             }
 
-            if (!File.Exists(resolvedPath))
+            if (IsLoadFailureCached(resolvedPath))
                 return null;
+
+            if (!File.Exists(resolvedPath))
+            {
+                RememberLoadFailure(resolvedPath);
+                return null;
+            }
 
             try
             {
                 tex = LoadTextureFromFile(resolvedPath);
-                if (tex == null) return null;
-                
+                if (tex == null)
+                {
+                    RememberLoadFailure(resolvedPath);
+                    return null;
+                }
+
+                _failedLoadTimes.Remove(resolvedPath);
                 _loadedTextures[resolvedPath] = tex;
                 _imageSizes[resolvedPath] = new Vector2Int(tex.width, tex.height);
-                
+
                 RegisterTexture(tex);
                 return tex;
             }
             catch (Exception e)
             {
                 Main.ModEntry.Logger.Log($"[TextureManager] Failed to load image at {resolvedPath}: {e.Message}");
+                RememberLoadFailure(resolvedPath);
                 return null;
             }
         }
@@ -87,6 +166,7 @@ namespace CheryTools
             string cacheKey = resolvedPath + "|" + targetWidth.ToString() + "x" + targetHeight.ToString();
             if (_scaledTextures.TryGetValue(cacheKey, out Texture2D cached) && cached != null)
             {
+                TouchScaledTexture(cacheKey);
                 return cached;
             }
 
@@ -102,7 +182,9 @@ namespace CheryTools
                 if (scaled == null) return null;
 
                 scaled.name = Path.GetFileNameWithoutExtension(resolvedPath) + "_" + targetWidth.ToString() + "x" + targetHeight.ToString();
+                EvictStaleScaledTextures();
                 _scaledTextures[cacheKey] = scaled;
+                TouchScaledTexture(cacheKey);
                 RegisterTexture(scaled);
                 return scaled;
             }
@@ -178,7 +260,13 @@ namespace CheryTools
                 return width > 0 && height > 0;
             }
 
-            if (!File.Exists(resolvedPath)) return false;
+            if (IsLoadFailureCached(resolvedPath)) return false;
+
+            if (!File.Exists(resolvedPath))
+            {
+                RememberLoadFailure(resolvedPath);
+                return false;
+            }
 
             if (TryReadImageHeaderSize(resolvedPath, out width, out height))
             {
@@ -208,6 +296,7 @@ namespace CheryTools
                 if (tex != null) UnityEngine.Object.Destroy(tex);
             }
             _scaledTextures.Clear();
+            _scaledLastAccessFrame.Clear();
             RebuildPtrLookup();
         }
         
@@ -228,40 +317,60 @@ namespace CheryTools
             }
             _loadedTextures.Clear();
             _scaledTextures.Clear();
+            _scaledLastAccessFrame.Clear();
             _planetSpriteTextures.Clear();
             _imageSizes.Clear();
             _ptrToTexture.Clear();
+            _failedLoadTimes.Clear();
+        }
+
+        private static Func<Texture2D, byte[], bool> _loadImageDelegate;
+        private static bool _loadImageResolved;
+
+        private static Func<Texture2D, byte[], bool> ResolveLoadImage()
+        {
+            if (_loadImageResolved) return _loadImageDelegate;
+            _loadImageResolved = true;
+
+            var t = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
+            if (t == null) return null;
+
+            var method = t.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
+            if (method != null)
+            {
+                try
+                {
+                    _loadImageDelegate = (Func<Texture2D, byte[], bool>)Delegate.CreateDelegate(
+                        typeof(Func<Texture2D, byte[], bool>), method);
+                    return _loadImageDelegate;
+                }
+                catch { }
+            }
+
+            var method3 = t.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]), typeof(bool) });
+            if (method3 != null)
+            {
+                try
+                {
+                    var full = (Func<Texture2D, byte[], bool, bool>)Delegate.CreateDelegate(
+                        typeof(Func<Texture2D, byte[], bool, bool>), method3);
+                    _loadImageDelegate = (tex, data) => full(tex, data, false);
+                    return _loadImageDelegate;
+                }
+                catch { }
+            }
+
+            return null;
         }
 
         private static Texture2D LoadTextureFromFile(string resolvedPath)
         {
+            Func<Texture2D, byte[], bool> loadImage = ResolveLoadImage();
+            if (loadImage == null) return null;
+
             byte[] data = File.ReadAllBytes(resolvedPath);
             Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            bool loaded = false;
-            var t = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
-            if (t != null)
-            {
-                var method = t.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
-                object result = null;
-                if (method != null)
-                {
-                    result = method.Invoke(null, new object[] { tex, data });
-                }
-                else
-                {
-                    method = t.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]), typeof(bool) });
-                    if (method != null)
-                    {
-                        result = method.Invoke(null, new object[] { tex, data, false });
-                    }
-                }
-
-                if (method != null)
-                {
-                    loaded = !(result is bool) || (bool)result;
-                }
-            }
-            if (!loaded)
+            if (!loadImage(tex, data))
             {
                 UnityEngine.Object.Destroy(tex);
                 return null;

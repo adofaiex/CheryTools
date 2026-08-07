@@ -20,6 +20,10 @@ namespace CheryTools
         private float _nextOverlayUpdateTime = 0f;
         private long _lastOverlayRevision = -1;
         private int _lastOverlayStateHash = 0;
+        private bool _hasVisibleOverlayCache;
+        private bool _cachedHasVisibleOverlay;
+        private long _visibleOverlayCacheRevision = -1;
+        private bool _visibleOverlayCacheIsPlaying;
         private readonly HashSet<string> _loggedLayoutExceptions = new HashSet<string>(StringComparer.Ordinal);
 
         private Vector3[] _vertices = new Vector3[0];
@@ -28,7 +32,12 @@ namespace CheryTools
         private int[] _indices = new int[0];
         private int[] _subIndices = new int[0];
 
-        public static float PanelScale { get; private set; } = 1.0f;
+        // The old 1.30x panel size is the new visual 1.00x baseline.  ImGui still
+        // lays widgets out at the same logical sizes; only the final framebuffer
+        // mapping uses this density, so fullscreen layouts continue to fit exactly.
+        public const float PanelBaselineScale = 1.30f;
+        private const float DefaultUIFontSize = 20.0f;
+        public static float PanelScale { get; private set; } = PanelBaselineScale;
         private static System.Numerics.Vector2 _screenMousePos = System.Numerics.Vector2.Zero;
         private static System.Numerics.Vector2 _screenMouseDelta = System.Numerics.Vector2.Zero;
         public static System.Numerics.Vector2 ScreenDisplaySize
@@ -80,6 +89,8 @@ namespace CheryTools
             var scaler = canvasObj.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
             scaler.scaleFactor = 1.0f;
+
+            ImGuiPanelBackdrop.Initialize();
         }
 
         private static float NormalizePanelScale(float scale)
@@ -93,7 +104,7 @@ namespace CheryTools
 
         private void ApplyPanelScale(float scale)
         {
-            PanelScale = NormalizePanelScale(scale);
+            PanelScale = NormalizePanelScale(scale) * PanelBaselineScale;
             var io = ImGui.GetIO();
             io.FontGlobalScale = 1.0f;
             ClampPanelStyle();
@@ -192,7 +203,7 @@ namespace CheryTools
 
             if (System.IO.File.Exists(defaultFontPath))
             {
-                ImFontPtr defaultUIFont = io.Fonts.AddFontFromFileTTF(defaultFontPath, 20.0f, null, customChineseFull);
+                ImFontPtr defaultUIFont = AddDefaultUIFont(io.Fonts, defaultFontPath, customChineseFull);
                 ChineseDefaultUIFont = defaultUIFont;
                 DefaultHighResFont = io.Fonts.AddFontFromFileTTF(defaultFontPath, 48.0f, null, customChineseCommon);
                 DefaultLargeFont = loadDefaultLargeFont
@@ -203,7 +214,7 @@ namespace CheryTools
                 if (!string.Equals(defaultFontPath, chineseFontPath, StringComparison.OrdinalIgnoreCase)
                     && System.IO.File.Exists(chineseFontPath))
                 {
-                    ChineseDefaultUIFont = io.Fonts.AddFontFromFileTTF(chineseFontPath, 20.0f, null, customChineseFull);
+                    ChineseDefaultUIFont = AddDefaultUIFont(io.Fonts, chineseFontPath, customChineseFull);
                 }
             }
             else
@@ -330,6 +341,30 @@ namespace CheryTools
             if (_material != null)
             {
                 _material.mainTexture = _fontTexture;
+            }
+        }
+
+        private static unsafe ImFontPtr AddDefaultUIFont(ImFontAtlasPtr atlas, string path, IntPtr glyphRanges)
+        {
+            ImFontConfig* nativeConfig = ImGuiNative.ImFontConfig_ImFontConfig();
+            if (nativeConfig == null)
+            {
+                return atlas.AddFontFromFileTTF(path, DefaultUIFontSize, null, glyphRanges);
+            }
+
+            try
+            {
+                ImFontConfigPtr config = new ImFontConfigPtr(nativeConfig);
+                // Rasterize the 20 logical-pixel UI font at 26 physical pixels.
+                // At the 1.00x baseline this is a one-to-one texture mapping instead
+                // of enlarging a 20px bitmap with bilinear filtering.
+                config.RasterizerDensity = PanelBaselineScale;
+                config.PixelSnapH = true;
+                return atlas.AddFontFromFileTTF(path, DefaultUIFontSize, config, glyphRanges);
+            }
+            finally
+            {
+                ImGuiNative.ImFontConfig_destroy(nativeConfig);
             }
         }
 
@@ -504,12 +539,16 @@ namespace CheryTools
             if (_fontTexture != null) Destroy(_fontTexture);
             if (_material != null) Destroy(_material);
             if (_canvas != null) Destroy(_canvas.gameObject);
+            ImGuiPanelBackdrop.Shutdown();
             foreach (var m in _meshes) Destroy(m);
             TextureManager.Clear();
         }
 
         void Update()
         {
+            PerfHud.Sample();
+            ImGuiPanelBackdrop.SetActive(CheryToolsMenu.IsMenuOpen);
+
             if (NeedsFontAtlasRebuild)
             {
                 NeedsFontAtlasRebuild = false;
@@ -606,20 +645,28 @@ namespace CheryTools
 
         private static bool ShouldRenderImGui()
         {
-            return CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen || OvTokenNodeEditor.IsOpen;
+            return CheryToolsMenu.IsMenuOpen
+                || ImGuiPanelBackdrop.ShouldRenderPanel
+                || FreeMakeEditor.IsOpen
+                || OvTokenNodeEditor.IsOpen;
         }
 
         private bool ShouldUpdateOverlay()
         {
+            // KV/OV drawing is scheduled on the same scaled timeline as their
+            // animations. Time.captureFramerate therefore drives both animation
+            // progress and rendered overlay frames during offline exports.
+            float timelineNow = RenderTimelineClock.Time;
+
             if (CheryToolsMenu.IsMenuOpen || FreeMakeEditor.IsOpen || OvTokenNodeEditor.IsOpen)
             {
-                _nextOverlayUpdateTime = Time.unscaledTime;
+                _nextOverlayUpdateTime = timelineNow;
                 return true;
             }
 
             if (Main.Settings != null && Main.Settings.OverlayerEditMode)
             {
-                _nextOverlayUpdateTime = Time.unscaledTime;
+                _nextOverlayUpdateTime = timelineNow;
                 return true;
             }
 
@@ -629,10 +676,11 @@ namespace CheryTools
                 rate = 120.0f;
             }
             rate = Mathf.Clamp(rate, 30.0f, 360.0f);
-            float now = Time.unscaledTime;
+            float now = timelineNow;
 
             long revision = OverlayRenderInvalidator.Revision;
-            int stateHash = BuildOverlayStateHash();
+            bool isPlaying = Main.IsGamePlaying();
+            int stateHash = BuildOverlayStateHash(isPlaying);
             if (revision != _lastOverlayRevision || stateHash != _lastOverlayStateHash)
             {
                 _lastOverlayRevision = revision;
@@ -641,8 +689,27 @@ namespace CheryTools
                 return true;
             }
 
-            // Check visibility AFTER state hash to ensure state changes are detected
-            if (!HasAnyVisibleOverlay())
+            // The perf HUD refreshes at its own low rate even when all overlays are
+            // hidden or idle, so it must be checked before the visibility early-out.
+            if (PerfHud.Enabled && PerfHud.WantsOverlayRefresh(Time.unscaledTime))
+            {
+                return true;
+            }
+
+            // Check visibility AFTER state hash to ensure state changes are detected.
+            // The scan walks every KV config and all four OV collections, and its
+            // inputs only change with the invalidator revision or the gameplay flag,
+            // so the result is cached on that pair. The judgment itself is untouched.
+            if (!_hasVisibleOverlayCache
+                || _visibleOverlayCacheRevision != revision
+                || _visibleOverlayCacheIsPlaying != isPlaying)
+            {
+                _cachedHasVisibleOverlay = HasAnyVisibleOverlay();
+                _visibleOverlayCacheRevision = revision;
+                _visibleOverlayCacheIsPlaying = isPlaying;
+                _hasVisibleOverlayCache = true;
+            }
+            if (!_cachedHasVisibleOverlay)
             {
                 return false;
             }
@@ -675,7 +742,7 @@ namespace CheryTools
             return OverlayerManager.Instance != null && OverlayerManager.Instance.ShouldRenderOverlayNow();
         }
 
-        private int BuildOverlayStateHash()
+        private int BuildOverlayStateHash(bool isPlaying)
         {
             unchecked
             {
@@ -683,7 +750,7 @@ namespace CheryTools
                 hash = hash * 31 + Screen.width;
                 hash = hash * 31 + Screen.height;
                 hash = hash * 31 + (Main.IsEnabled ? 1 : 0);
-                hash = hash * 31 + (Main.IsGamePlaying() ? 1 : 0);
+                hash = hash * 31 + (isPlaying ? 1 : 0);
                 hash = hash * 31 + (CheryToolsMenu.IsMenuOpen ? 1 : 0);
                 hash = hash * 31 + (FreeMakeEditor.IsOpen ? 1 : 0);
                 hash = hash * 31 + (OvTokenNodeEditor.IsOpen ? 1 : 0);

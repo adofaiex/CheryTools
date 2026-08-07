@@ -1,26 +1,55 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace CheryTools
 {
     internal static class KeyDisplayNames
     {
+        // Both overloads sit on the per-node render path, so resolved symbols are
+        // memoized: Enum.TryParse/ToString and the prefix checks only run the first
+        // time a given key is seen. The domain is finite (KeyCode values + a handful
+        // of user-typed bind strings), so the caches are naturally bounded.
+        private static readonly Dictionary<string, string> _symbolsByName = new Dictionary<string, string>();
+        private static readonly Dictionary<int, string> _symbolsByCode = new Dictionary<int, string>();
+
         public static string GetKeySymbol(string keyName)
         {
             if (string.IsNullOrWhiteSpace(keyName)) return "";
-            if (System.Enum.TryParse(keyName, true, out KeyCode key))
+            if (_symbolsByName.TryGetValue(keyName, out string cached))
             {
-                return GetKeySymbol(key);
+                return cached;
             }
-            return keyName;
+
+            string symbol = System.Enum.TryParse(keyName, true, out KeyCode key)
+                ? GetKeySymbol(key)
+                : keyName;
+            if (_symbolsByName.Count < 1024)
+            {
+                _symbolsByName[keyName] = symbol;
+            }
+            return symbol;
         }
 
         public static string GetKeySymbol(KeyCode key)
         {
             if (key == KeyCode.None) return "";
+            int code = (int)key;
+            if (_symbolsByCode.TryGetValue(code, out string cached))
+            {
+                return cached;
+            }
+
+            string symbol = ResolveKeySymbol(key);
+            _symbolsByCode[code] = symbol;
+            return symbol;
+        }
+
+        private static string ResolveKeySymbol(KeyCode key)
+        {
             string name = key.ToString();
 
-            if (name.StartsWith("Alpha")) return name.Substring(5);
-            if (name.StartsWith("Keypad")) return name.Substring(6);
+            if (name.StartsWith("Alpha", System.StringComparison.Ordinal)) return name.Substring(5);
+            if (name.StartsWith("Keypad", System.StringComparison.Ordinal)) return name.Substring(6);
             switch (key)
             {
                 case KeyCode.LeftShift: return "LS";

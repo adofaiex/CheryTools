@@ -17,7 +17,8 @@ namespace CheryTools
         private static readonly Dictionary<int, RectTransform> _layerRoots = new Dictionary<int, RectTransform>();
         private static readonly Dictionary<string, OverlayerImageGraphic> _images = new Dictionary<string, OverlayerImageGraphic>();
         private static readonly Dictionary<string, int> _imageSortingOrders = new Dictionary<string, int>();
-        private static readonly Dictionary<int, CheryRectBatchGraphic> _rectBatches = new Dictionary<int, CheryRectBatchGraphic>();
+        private static readonly Dictionary<int, CheryRectBatchGroup> _rectBatches = new Dictionary<int, CheryRectBatchGroup>();
+        private static readonly Dictionary<int, CheryShadowBatchGraphic> _shadowBatches = new Dictionary<int, CheryShadowBatchGraphic>();
         private static readonly Dictionary<GameObject, int> _frameMarks = new Dictionary<GameObject, int>();
 
         public static void BeginFrame()
@@ -28,12 +29,20 @@ namespace CheryTools
             {
                 if (pair.Value != null) pair.Value.BeginFrame();
             }
+            foreach (var pair in _shadowBatches)
+            {
+                if (pair.Value != null) pair.Value.BeginFrame();
+            }
         }
 
         public static void EndFrame()
         {
             CleanupUnusedImages();
             foreach (var pair in _rectBatches)
+            {
+                if (pair.Value != null) pair.Value.EndFrame();
+            }
+            foreach (var pair in _shadowBatches)
             {
                 if (pair.Value != null) pair.Value.EndFrame();
             }
@@ -47,6 +56,10 @@ namespace CheryTools
             }
             foreach (var pair in _rectBatches)
             {
+                if (pair.Value != null) pair.Value.HideAll();
+            }
+            foreach (var pair in _shadowBatches)
+            {
                 if (pair.Value != null) pair.Value.gameObject.SetActive(false);
             }
         }
@@ -56,6 +69,7 @@ namespace CheryTools
             _images.Clear();
             _imageSortingOrders.Clear();
             _rectBatches.Clear();
+            _shadowBatches.Clear();
             _layerRoots.Clear();
             _frameMarks.Clear();
 
@@ -84,10 +98,27 @@ namespace CheryTools
             Mark(image.gameObject);
         }
 
+        // Reuse an image quad that was fully configured by an earlier bake.  No
+        // RectTransform, texture or mesh data is touched on this path.
+        public static bool KeepImageAlive(string id, int sortingOrder = CanvasSortingOrder)
+        {
+            if (!EnsureReady()) return false;
+            if (!_images.TryGetValue(id, out OverlayerImageGraphic image) || image == null)
+            {
+                return false;
+            }
+            if (!_imageSortingOrders.TryGetValue(id, out int currentOrder) || currentOrder != sortingOrder)
+            {
+                return false;
+            }
+            Mark(image.gameObject);
+            return true;
+        }
+
         public static void DrawOutlineRect(string id, Vector2 topLeft, Vector2 size, uint borderColor, float thickness, float cornerRadius = 0f, int sortingOrder = CanvasSortingOrder)
         {
             if (!EnsureReady()) return;
-            CheryRectBatchGraphic batch = GetRectBatch(sortingOrder);
+            CheryRectBatchGroup batch = GetRectBatch(sortingOrder);
             if (batch == null) return;
             batch.AddRect(topLeft, size, Color.clear, Color.clear, ToColor(borderColor), Mathf.Max(1f, thickness), Mathf.Max(0f, cornerRadius));
         }
@@ -95,10 +126,22 @@ namespace CheryTools
         public static void DrawFilledRect(string id, Vector2 topLeft, Vector2 size, uint fillColor, float cornerRadius = 0f, int sortingOrder = CanvasSortingOrder)
         {
             if (!EnsureReady()) return;
-            CheryRectBatchGraphic batch = GetRectBatch(sortingOrder);
+            CheryRectBatchGroup batch = GetRectBatch(sortingOrder);
             if (batch == null) return;
             Color color = ToColor(fillColor);
             batch.AddRect(topLeft, size, color, color, Color.clear, 0f, Mathf.Max(0f, cornerRadius));
+        }
+
+        // 9-slice gaussian soft shadow, same implementation as the key-rain shadows:
+        // one 36-vertex command against a static gaussian texture instead of stacked
+        // translucent rects.
+        public static void DrawSoftShadowRect(Vector2 topLeft, Vector2 size, uint color, float softness, int sortingOrder = CanvasSortingOrder)
+        {
+            if (!EnsureReady()) return;
+            CheryShadowBatchGraphic batch = GetShadowBatch(sortingOrder);
+            if (batch == null) return;
+            Color shadowColor = ToColor(color);
+            batch.AddShadow(topLeft, size, shadowColor, shadowColor, softness);
         }
 
         private static bool EnsureReady()
@@ -185,9 +228,9 @@ namespace CheryTools
             return image;
         }
 
-        private static CheryRectBatchGraphic GetRectBatch(int sortingOrder)
+        private static CheryRectBatchGroup GetRectBatch(int sortingOrder)
         {
-            if (_rectBatches.TryGetValue(sortingOrder, out CheryRectBatchGraphic batch) && batch != null)
+            if (_rectBatches.TryGetValue(sortingOrder, out CheryRectBatchGroup batch) && batch != null)
             {
                 return batch;
             }
@@ -195,7 +238,29 @@ namespace CheryTools
             RectTransform layerRoot = GetLayerRoot(sortingOrder);
             if (layerRoot == null) return null;
 
-            GameObject go = new GameObject("OV_Rect_Batch_" + sortingOrder.ToString(), typeof(RectTransform));
+            // Stable graphic first so it renders below the dynamic one.
+            string name = "OV_Rect_Batch_" + sortingOrder.ToString();
+            CheryRectBatchGraphic stableGraphic = KeyViewerUnityRenderer.CreateRectBatchGraphic(name + "_stable", layerRoot);
+            CheryRectBatchGraphic dynamicGraphic = KeyViewerUnityRenderer.CreateRectBatchGraphic(name + "_dynamic", layerRoot);
+            if (stableGraphic == null || dynamicGraphic == null) return null;
+
+            batch = new CheryRectBatchGroup();
+            batch.Initialize(stableGraphic, dynamicGraphic);
+            _rectBatches[sortingOrder] = batch;
+            return batch;
+        }
+
+        private static CheryShadowBatchGraphic GetShadowBatch(int sortingOrder)
+        {
+            if (_shadowBatches.TryGetValue(sortingOrder, out CheryShadowBatchGraphic batch) && batch != null)
+            {
+                return batch;
+            }
+
+            RectTransform layerRoot = GetLayerRoot(sortingOrder);
+            if (layerRoot == null) return null;
+
+            GameObject go = new GameObject("OV_Shadow_Batch_" + sortingOrder.ToString(), typeof(RectTransform));
             go.transform.SetParent(layerRoot, false);
             RectTransform rt = go.GetComponent<RectTransform>();
             rt.anchorMin = Vector2.zero;
@@ -203,9 +268,9 @@ namespace CheryTools
             rt.offsetMin = Vector2.zero;
             rt.offsetMax = Vector2.zero;
             rt.pivot = new Vector2(0.5f, 0.5f);
-            batch = go.AddComponent<CheryRectBatchGraphic>();
+            batch = go.AddComponent<CheryShadowBatchGraphic>();
             batch.raycastTarget = false;
-            _rectBatches[sortingOrder] = batch;
+            _shadowBatches[sortingOrder] = batch;
             return batch;
         }
 
@@ -292,11 +357,6 @@ namespace CheryTools
         public override Texture mainTexture
         {
             get { return _texture != null ? _texture : s_WhiteTexture; }
-        }
-
-        public void SetImage(Texture texture, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha)
-        {
-            SetImage(texture, p1, p2, p3, p4, alpha, Vector2.zero, Vector2.one);
         }
 
         public void SetImage(Texture texture, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, float alpha, Vector2 uvMin, Vector2 uvMax)

@@ -30,6 +30,7 @@ namespace CheryTools
         }
     }
 
+    [DefaultExecutionOrder(32000)]
     public class GameUIManager : MonoBehaviour
     {
         public const string DeveloperUnlockKey = "CHERYUI110";
@@ -57,9 +58,19 @@ namespace CheryTools
         private readonly List<RectTransform> _resolvedRectsBuffer = new List<RectTransform>(4);
         private readonly HashSet<string> _activeStateIdsBuffer = new HashSet<string>();
         private bool _wasApplying = false;
-        private int _lastSettingsHash = 0;
-        private float _nextRefreshTime = 0f;
-        private const float RefreshInterval = 0.1f;
+        // Reused by the restore paths to avoid allocating a List plus a prefix string.
+        private readonly List<string> _restoreKeysBuffer = new List<string>();
+        private static readonly Dictionary<string, string> _targetPrefixCache = new Dictionary<string, string>();
+
+        private static string GetTargetPrefix(string targetId)
+        {
+            if (!_targetPrefixCache.TryGetValue(targetId, out string prefix))
+            {
+                prefix = targetId + "#";
+                _targetPrefixCache[targetId] = prefix;
+            }
+            return prefix;
+        }
 
         private sealed class ElementState
         {
@@ -117,18 +128,6 @@ namespace CheryTools
                 return;
             }
 
-            int settingsHash = BuildSettingsHash();
-            if (!_wasApplying || settingsHash != _lastSettingsHash)
-            {
-                _nextRefreshTime = 0f;
-            }
-            else if (Time.unscaledTime < _nextRefreshTime)
-            {
-                return;
-            }
-
-            _lastSettingsHash = settingsHash;
-            _nextRefreshTime = Time.unscaledTime + RefreshInterval;
             _wasApplying = true;
 
             foreach (var target in Targets)
@@ -163,34 +162,6 @@ namespace CheryTools
             }
         }
 
-        private static int BuildSettingsHash()
-        {
-            unchecked
-            {
-                int hash = 17;
-                hash = hash * 31 + (Main.IsEnabled ? 1 : 0);
-                hash = hash * 31 + (Main.Settings != null && Main.Settings.GameUIControlEnabled ? 1 : 0);
-                hash = hash * 31 + (Main.Settings != null && Main.Settings.GameUIDeveloperUnlocked ? 1 : 0);
-                var elements = Main.Settings != null ? Main.Settings.GameUIElements : null;
-                if (elements == null)
-                    return hash;
-
-                for (int i = 0; i < elements.Count; i++)
-                {
-                    GameUIElementSetting setting = elements[i];
-                    if (setting == null) continue;
-                    hash = hash * 31 + (setting.Id != null ? setting.Id.GetHashCode() : 0);
-                    hash = hash * 31 + (setting.Enabled ? 1 : 0);
-                    hash = hash * 31 + (setting.Visible ? 1 : 0);
-                    hash = hash * 31 + Quantize(setting.OffsetX);
-                    hash = hash * 31 + Quantize(setting.OffsetY);
-                    hash = hash * 31 + Quantize(setting.Scale);
-                    hash = hash * 31 + Quantize(setting.Alpha);
-                }
-                return hash;
-            }
-        }
-
         private static bool HasEnabledTargets()
         {
             var elements = Main.Settings != null ? Main.Settings.GameUIElements : null;
@@ -204,13 +175,6 @@ namespace CheryTools
                     return true;
             }
             return false;
-        }
-
-        private static int Quantize(float value)
-        {
-            if (float.IsNaN(value) || float.IsInfinity(value))
-                return 0;
-            return Mathf.RoundToInt(value * 1000f);
         }
 
         public void RestoreAll()
@@ -581,45 +545,100 @@ namespace CheryTools
             }
         }
 
+        private readonly struct TargetStateKey
+        {
+            public readonly string TargetId;
+            public readonly int InstanceId;
+
+            public TargetStateKey(string targetId, int instanceId)
+            {
+                TargetId = targetId;
+                InstanceId = instanceId;
+            }
+        }
+
+        private sealed class TargetStateKeyComparer : IEqualityComparer<TargetStateKey>
+        {
+            public static readonly TargetStateKeyComparer Instance = new TargetStateKeyComparer();
+
+            public bool Equals(TargetStateKey a, TargetStateKey b)
+            {
+                return a.InstanceId == b.InstanceId
+                    && string.Equals(a.TargetId, b.TargetId, StringComparison.Ordinal);
+            }
+
+            public int GetHashCode(TargetStateKey key)
+            {
+                unchecked
+                {
+                    int hash = key.TargetId != null ? key.TargetId.GetHashCode() : 0;
+                    return hash * 31 + key.InstanceId;
+                }
+            }
+        }
+
+        // MakeTargetStateId ran per resolved rect per LateUpdate and allocated two strings
+        // each time. The result only depends on (targetId, instance id), so memoize it.
+        // Instance ids are not reused within a session, but scene reloads create new rects,
+        // so the cache is capped and dropped wholesale on overflow (it is pure memoization).
+        private const int TargetStateIdCacheLimit = 256;
+        private static readonly Dictionary<TargetStateKey, string> _targetStateIdCache
+            = new Dictionary<TargetStateKey, string>(TargetStateKeyComparer.Instance);
+
         private static string MakeTargetStateId(string targetId, RectTransform rect)
         {
-            return targetId + "#" + rect.GetInstanceID().ToString();
+            TargetStateKey key = new TargetStateKey(targetId, rect.GetInstanceID());
+            if (_targetStateIdCache.TryGetValue(key, out string stateId))
+            {
+                return stateId;
+            }
+
+            if (_targetStateIdCache.Count >= TargetStateIdCacheLimit)
+            {
+                _targetStateIdCache.Clear();
+            }
+
+            stateId = GetTargetPrefix(targetId) + key.InstanceId.ToString();
+            _targetStateIdCache[key] = stateId;
+            return stateId;
         }
 
         private void RestoreTargetStates(string targetId)
         {
-            string prefix = targetId + "#";
-            var keys = new List<string>();
+            if (_states.Count == 0) return;
+            string prefix = GetTargetPrefix(targetId);
+            _restoreKeysBuffer.Clear();
             foreach (var key in _states.Keys)
             {
                 if (string.Equals(key, targetId, StringComparison.Ordinal) || key.StartsWith(prefix, StringComparison.Ordinal))
                 {
-                    keys.Add(key);
+                    _restoreKeysBuffer.Add(key);
                 }
             }
 
-            for (int i = 0; i < keys.Count; i++)
+            for (int i = 0; i < _restoreKeysBuffer.Count; i++)
             {
-                Restore(keys[i]);
+                Restore(_restoreKeysBuffer[i]);
             }
         }
 
         private void RestoreInactiveTargetStates(string targetId, HashSet<string> activeStateIds)
         {
-            string prefix = targetId + "#";
-            var keys = new List<string>();
+            if (_states.Count == 0) return;
+            string prefix = GetTargetPrefix(targetId);
+            _restoreKeysBuffer.Clear();
             foreach (var key in _states.Keys)
             {
                 if ((string.Equals(key, targetId, StringComparison.Ordinal) || key.StartsWith(prefix, StringComparison.Ordinal))
                     && (activeStateIds == null || !activeStateIds.Contains(key)))
                 {
-                    keys.Add(key);
+                    _restoreKeysBuffer.Add(key);
                 }
             }
 
-            for (int i = 0; i < keys.Count; i++)
+            for (int i = 0; i < _restoreKeysBuffer.Count; i++)
             {
-                Restore(keys[i]);
+                Restore(_restoreKeysBuffer[i]);
             }
         }
 

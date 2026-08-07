@@ -60,6 +60,12 @@ public static class FreeMakeEditor
 	private static Vector2 _lastWindowPos = new Vector2(100f, 100f);
 	private static Vector2 _lastWindowSize = new Vector2(900f, 600f);
 	private static bool _centerWindowNextFrame = false;
+	private const float DefaultPropertyPanelWidth = 420f;
+	private const float MinPropertyPanelWidth = 300f;
+	private const float MaxPropertyPanelScreenRatio = 0.45f;
+	private const float MinCanvasWidth = 280f;
+	private const float PropertyPanelSplitterWidth = 7f;
+	private static bool _propertyPanelWidthDirty;
 
 	private struct AlignLine
 	{
@@ -129,6 +135,72 @@ public static class FreeMakeEditor
 			pos = clampedPos;
 		}
 		_lastWindowPos = pos;
+	}
+
+	private static float ResolvePropertyPanelWidth(float availableWidth)
+	{
+		float width = Main.Settings != null
+			? Main.Settings.FreeMakePropertyPanelWidth
+			: DefaultPropertyPanelWidth;
+		if (float.IsNaN(width) || float.IsInfinity(width) || width <= 0f)
+		{
+			width = DefaultPropertyPanelWidth;
+		}
+
+		Vector2 displaySize = GetDisplaySize();
+		float spacing = ImGui.GetStyle().ItemSpacing.X;
+		float screenMax = Math.Max(MinPropertyPanelWidth, displaySize.X * MaxPropertyPanelScreenRatio);
+		float layoutMax = Math.Max(MinPropertyPanelWidth,
+			availableWidth - MinCanvasWidth - PropertyPanelSplitterWidth - spacing * 2f);
+		float maxWidth = Math.Max(MinPropertyPanelWidth, Math.Min(screenMax, layoutMax));
+		return Math.Max(MinPropertyPanelWidth, Math.Min(maxWidth, width));
+	}
+
+	private static void DrawPropertyPanelSplitter(ref float propertyPanelWidth, float availableWidth)
+	{
+		Vector2 splitterStart = ImGui.GetCursorScreenPos();
+		float height = Math.Max(1f, ImGui.GetContentRegionAvail().Y);
+		ImGui.InvisibleButton("FM_PropsSplitter", new Vector2(PropertyPanelSplitterWidth, height));
+		bool hovered = ImGui.IsItemHovered();
+		bool active = ImGui.IsItemActive();
+		if (hovered || active)
+		{
+			ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
+		}
+
+		uint lineColor = ImGui.GetColorU32(active
+			? ImGuiCol.SeparatorActive
+			: hovered ? ImGuiCol.SeparatorHovered : ImGuiCol.Separator);
+		float lineX = splitterStart.X + PropertyPanelSplitterWidth * 0.5f;
+		ImGui.GetWindowDrawList().AddLine(
+			new Vector2(lineX, splitterStart.Y),
+			new Vector2(lineX, splitterStart.Y + height),
+			lineColor,
+			active ? 2f : 1f);
+
+		if (active)
+		{
+			float newWidth = propertyPanelWidth - ImGui.GetIO().MouseDelta.X;
+			float spacing = ImGui.GetStyle().ItemSpacing.X;
+			float screenMax = Math.Max(MinPropertyPanelWidth, GetDisplaySize().X * MaxPropertyPanelScreenRatio);
+			float layoutMax = Math.Max(MinPropertyPanelWidth,
+				availableWidth - MinCanvasWidth - PropertyPanelSplitterWidth - spacing * 2f);
+			newWidth = Math.Max(MinPropertyPanelWidth, Math.Min(Math.Min(screenMax, layoutMax), newWidth));
+			if (Math.Abs(newWidth - propertyPanelWidth) > 0.01f)
+			{
+				propertyPanelWidth = newWidth;
+				if (Main.Settings != null)
+				{
+					Main.Settings.FreeMakePropertyPanelWidth = newWidth;
+				}
+				_propertyPanelWidthDirty = true;
+			}
+		}
+		else if (_propertyPanelWidthDirty && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+		{
+			_propertyPanelWidthDirty = false;
+			Main.RequestSave();
+		}
 	}
 
 	private static void CopyColor(float[] source, ref float[] target)
@@ -637,6 +709,10 @@ public static class FreeMakeEditor
 		}
 
 		ImGui.SetNextWindowSize(_lastWindowSize, ImGuiCond.FirstUseEver);
+		Vector2 freeMakeDisplaySize = GetDisplaySize();
+		ImGui.SetNextWindowSizeConstraints(
+			new Vector2(Math.Min(760f, freeMakeDisplaySize.X), Math.Min(420f, freeMakeDisplaySize.Y)),
+			freeMakeDisplaySize);
 		if (_centerWindowNextFrame)
 		{
 			Vector2 displaySize = GetDisplaySize();
@@ -709,7 +785,12 @@ public static class FreeMakeEditor
 			}
 			ImGui.EndChild();
 			ImGui.SameLine();
-			ImGui.BeginChild("FM_Canvas", new Vector2(-300f, 0f), ImGuiChildFlags.Borders);
+			float editorLayoutWidth = ImGui.GetContentRegionAvail().X;
+			float propertyPanelWidth = ResolvePropertyPanelWidth(editorLayoutWidth);
+			float editorItemSpacing = ImGui.GetStyle().ItemSpacing.X;
+			float canvasPanelWidth = Math.Max(1f,
+				editorLayoutWidth - propertyPanelWidth - PropertyPanelSplitterWidth - editorItemSpacing * 2f);
+			ImGui.BeginChild("FM_Canvas", new Vector2(canvasPanelWidth, 0f), ImGuiChildFlags.Borders);
 			Vector2 cursorScreenPos = ImGui.GetCursorScreenPos();
 			Vector2 contentRegionAvail = ImGui.GetContentRegionAvail();
 			ImDrawListPtr windowDrawList = ImGui.GetWindowDrawList();
@@ -967,6 +1048,8 @@ public static class FreeMakeEditor
 				}
 			}
 			ImGui.EndChild();
+			ImGui.SameLine();
+			DrawPropertyPanelSplitter(ref propertyPanelWidth, editorLayoutWidth);
 			ImGui.SameLine();
 			ImGui.BeginChild("FM_Props", new Vector2(0f, 0f), ImGuiChildFlags.Borders);
 			ImGui.Text(Tr("freemake.properties", "属性面板"));
@@ -2045,7 +2128,8 @@ public static class FreeMakeEditor
 		_activeAlignLines.Clear();
 		if (!_isDraggingNodes || _selectedNodes.Count == 0) return;
 
-		float snapLimit = 5f / (keyViewerScale * _canvasZoom);
+		float safeKeyViewerScale = Math.Abs(keyViewerScale) > 0.0001f ? Math.Abs(keyViewerScale) : 1f;
+		float snapLimit = 5f / (safeKeyViewerScale * _canvasZoom);
 
 		List<KVNode> refNodes = new List<KVNode>();
 		foreach (var n in allNodes)
@@ -2057,9 +2141,9 @@ public static class FreeMakeEditor
 		}
 
 		List<SnapCandidate> refXList = new List<SnapCandidate>();
-		refXList.Add(new SnapCandidate { Value = -displaySize.X * 0.5f, Node = null });
+		refXList.Add(new SnapCandidate { Value = -displaySize.X * 0.5f / safeKeyViewerScale, Node = null });
 		refXList.Add(new SnapCandidate { Value = 0f, Node = null });
-		refXList.Add(new SnapCandidate { Value = displaySize.X * 0.5f, Node = null });
+		refXList.Add(new SnapCandidate { Value = displaySize.X * 0.5f / safeKeyViewerScale, Node = null });
 		foreach (var r in refNodes)
 		{
 			float rw = r.Width * r.Scale;
@@ -2069,9 +2153,9 @@ public static class FreeMakeEditor
 		}
 
 		List<SnapCandidate> refYList = new List<SnapCandidate>();
-		refYList.Add(new SnapCandidate { Value = -displaySize.Y * 0.5f, Node = null });
+		refYList.Add(new SnapCandidate { Value = -displaySize.Y * 0.5f / safeKeyViewerScale, Node = null });
 		refYList.Add(new SnapCandidate { Value = 0f, Node = null });
-		refYList.Add(new SnapCandidate { Value = displaySize.Y * 0.5f, Node = null });
+		refYList.Add(new SnapCandidate { Value = displaySize.Y * 0.5f / safeKeyViewerScale, Node = null });
 		foreach (var r in refNodes)
 		{
 			float rh = r.Height * r.Scale;

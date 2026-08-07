@@ -37,6 +37,9 @@
     <Compile Remove="Backups\**\*.cs" />
     <None Remove="Backups\**\*" />
     <Content Remove="Backups\**\*" />
+    <Compile Remove="Analysis\**\*.cs" />
+    <None Remove="Analysis\**\*" />
+    <Content Remove="Analysis\**\*" />
     <Compile Remove="src\Features\Overlayer\ExternalOverlayBridge.cs" />
     <Compile Remove="src\Features\Overlayer\ExternalOverlayStateBuilder.cs" />
   </ItemGroup>
@@ -116,10 +119,6 @@
     </Reference>
     <Reference Include="UnityEngine.JSONSerializeModule">
       <HintPath>$(ManagedAssembliesDir)\UnityEngine.JSONSerializeModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Facepunch.Steamworks.Win64">
-      <HintPath>$(ManagedAssembliesDir)\Facepunch.Steamworks.Win64.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="System.IO.Compression" />

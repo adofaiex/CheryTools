@@ -17,9 +17,23 @@ namespace CheryTools
         private static bool _filteringEnabled;
         private static bool _inputPatchesApplied;
 
+        // The postfixes below run several times per frame (once per ButtonState, and
+        // again on the async keyboard's polling thread cadence), so key names and
+        // allow/deny decisions are cached to keep Enum.ToString and string hashing
+        // out of the per-query path. Name caches are settings-independent and persist;
+        // decision caches are rebuilt whenever the whitelist changes.
+        private static readonly Dictionary<int, string> _keyCodeNameCache = new Dictionary<int, string>();
+        private static readonly Dictionary<int, string> _asyncKeyNameCache = new Dictionary<int, string>();
+        private static readonly Dictionary<int, bool> _allowedByKeyCode = new Dictionary<int, bool>();
+        private static readonly Dictionary<int, bool> _allowedByAsyncKey = new Dictionary<int, bool>();
+        private static readonly Predicate<AnyKeyCode> _notAllowedPredicate = k => !IsKeyAllowed(k);
+        private static readonly Predicate<AnyKeyCode> _bouncedPredicate = IsBouncedWentDown;
+
         public static void UpdateAllowedKeys()
         {
             _allowedKeys.Clear();
+            _allowedByKeyCode.Clear();
+            _allowedByAsyncKey.Clear();
             bool shouldLimitInput = Main.IsEnabled
                 && Main.Settings != null
                 && (Main.Settings.ToolsLimitInput || (Main.Settings.EnableKeyViewer && Main.Settings.LimitInput));
@@ -180,6 +194,8 @@ namespace CheryTools
             _inputPatchesApplied = false;
             _lastWentDownTimes.Clear();
             _lastWentDownFrames.Clear();
+            _allowedByKeyCode.Clear();
+            _allowedByAsyncKey.Clear();
         }
 
         private static void UpdateInputPatches(bool shouldPatch)
@@ -213,7 +229,33 @@ namespace CheryTools
 
         public static bool IsKeyAllowed(AnyKeyCode anyKey)
         {
-            string keyName = GetKeyName(anyKey);
+            if (anyKey.value is KeyCode kc)
+            {
+                int code = (int)kc;
+                if (_allowedByKeyCode.TryGetValue(code, out bool cachedAllowed))
+                {
+                    return cachedAllowed;
+                }
+                bool allowed = ComputeKeyAllowed(GetKeyName(anyKey));
+                _allowedByKeyCode[code] = allowed;
+                return allowed;
+            }
+            if (anyKey.value is AsyncKeyCode akc && akc.key != ushort.MaxValue)
+            {
+                int code = akc.key;
+                if (_allowedByAsyncKey.TryGetValue(code, out bool cachedAllowed))
+                {
+                    return cachedAllowed;
+                }
+                bool allowed = ComputeKeyAllowed(GetKeyName(anyKey));
+                _allowedByAsyncKey[code] = allowed;
+                return allowed;
+            }
+            return ComputeKeyAllowed(GetKeyName(anyKey));
+        }
+
+        private static bool ComputeKeyAllowed(string keyName)
+        {
             if (string.IsNullOrEmpty(keyName) || IsUnknownKeyName(keyName))
             {
                 LogOnce(
@@ -261,11 +303,11 @@ namespace CheryTools
                 int removed = 0;
                 if (shouldLimitInput)
                 {
-                    removed += stateCount.keys.RemoveAll(k => !IsKeyAllowed(k));
+                    removed += stateCount.keys.RemoveAll(_notAllowedPredicate);
                 }
                 if (shouldAntiBounce && state == ButtonState.WentDown)
                 {
-                    removed += stateCount.keys.RemoveAll(IsBouncedWentDown);
+                    removed += stateCount.keys.RemoveAll(_bouncedPredicate);
                 }
                 if (removed > 0)
                 {
@@ -316,16 +358,30 @@ namespace CheryTools
         {
             if (anyKey.value is KeyCode kc)
             {
-                return kc.ToString();
+                int code = (int)kc;
+                if (!_keyCodeNameCache.TryGetValue(code, out string name))
+                {
+                    name = kc.ToString();
+                    _keyCodeNameCache[code] = name;
+                }
+                return name;
             }
             if (anyKey.value is AsyncKeyCode akc)
             {
-                string label = akc.label.ToString();
-                if (string.Equals(label, "Unknown", StringComparison.OrdinalIgnoreCase) && akc.key != ushort.MaxValue)
+                bool hasScanCode = akc.key != ushort.MaxValue;
+                if (hasScanCode && _asyncKeyNameCache.TryGetValue(akc.key, out string cached))
                 {
-                    return "AsyncRaw:" + akc.key.ToString(CultureInfo.InvariantCulture);
+                    return cached;
                 }
-                return akc.label.ToString();
+                string label = akc.label.ToString();
+                string result = string.Equals(label, "Unknown", StringComparison.OrdinalIgnoreCase) && hasScanCode
+                    ? "AsyncRaw:" + akc.key.ToString(CultureInfo.InvariantCulture)
+                    : label;
+                if (hasScanCode)
+                {
+                    _asyncKeyNameCache[akc.key] = result;
+                }
+                return result;
             }
             return null;
         }

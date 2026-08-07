@@ -23,7 +23,6 @@ namespace CheryTools
         }
 
         private const int CanvasSortingOrder = RenderDepth.DefaultTextSortingOrder;
-        private const int CanvasSortingOrderBehindImGui = RenderDepth.DefaultTextSortingOrder;
         private const int DefaultAtlasSize = 1024;
         private const int DefaultSamplingSize = 72;
         private const int DefaultAtlasPadding = 9;
@@ -42,11 +41,80 @@ namespace CheryTools
         private static readonly Dictionary<string, int> _textSortingOrders = new Dictionary<string, int>();
         private static readonly Dictionary<TextMeshProUGUI, Material> _materials = new Dictionary<TextMeshProUGUI, Material>();
         private static readonly Dictionary<TextMeshProUGUI, TMP_FontAsset> _materialFonts = new Dictionary<TextMeshProUGUI, TMP_FontAsset>();
+
+        // Shared material pool for plain texts: texts with identical font + outline +
+        // underlay parameters share one Material so UGUI can batch them, instead of
+        // one Instantiate per outlined text. Token style layers (ids containing
+        // "__ct_") keep private materials because MakeTokenLayerFaceTransparent
+        // mutates the face color per layer.
+        private static readonly Dictionary<PooledMaterialKey, Material> _materialPool = new Dictionary<PooledMaterialKey, Material>(PooledMaterialKeyComparer.Instance);
+        private static readonly Dictionary<PooledMaterialKey, int> _materialPoolRefs = new Dictionary<PooledMaterialKey, int>(PooledMaterialKeyComparer.Instance);
+        private static readonly Dictionary<TextMeshProUGUI, PooledMaterialKey> _pooledMaterialKeys = new Dictionary<TextMeshProUGUI, PooledMaterialKey>();
+        private static readonly List<Font> _createdFonts = new List<Font>();
+
+        private readonly struct PooledMaterialKey
+        {
+            public readonly int FontId;
+            public readonly float OutlineWidth;
+            public readonly float OutlineSoftness;
+            public readonly Vector4 OutlineColor;
+            public readonly bool HasShadow;
+            public readonly Vector4 ShadowColor;
+            public readonly Vector2 ShadowOffset;
+            public readonly float ShadowSoftness;
+
+            public PooledMaterialKey(int fontId, float outlineWidth, float outlineSoftness, Vector4 outlineColor,
+                bool hasShadow, Vector4 shadowColor, Vector2 shadowOffset, float shadowSoftness)
+            {
+                FontId = fontId;
+                OutlineWidth = outlineWidth;
+                OutlineSoftness = outlineSoftness;
+                OutlineColor = outlineColor;
+                HasShadow = hasShadow;
+                ShadowColor = shadowColor;
+                ShadowOffset = shadowOffset;
+                ShadowSoftness = shadowSoftness;
+            }
+        }
+
+        private sealed class PooledMaterialKeyComparer : IEqualityComparer<PooledMaterialKey>
+        {
+            public static readonly PooledMaterialKeyComparer Instance = new PooledMaterialKeyComparer();
+
+            public bool Equals(PooledMaterialKey a, PooledMaterialKey b)
+            {
+                return a.FontId == b.FontId
+                    && a.OutlineWidth == b.OutlineWidth
+                    && a.OutlineSoftness == b.OutlineSoftness
+                    && a.OutlineColor == b.OutlineColor
+                    && a.HasShadow == b.HasShadow
+                    && a.ShadowColor == b.ShadowColor
+                    && a.ShadowOffset == b.ShadowOffset
+                    && a.ShadowSoftness == b.ShadowSoftness;
+            }
+
+            public int GetHashCode(PooledMaterialKey key)
+            {
+                unchecked
+                {
+                    int hash = key.FontId;
+                    hash = hash * 31 + key.OutlineWidth.GetHashCode();
+                    hash = hash * 31 + key.OutlineSoftness.GetHashCode();
+                    hash = hash * 31 + key.OutlineColor.GetHashCode();
+                    hash = hash * 31 + (key.HasShadow ? 1 : 0);
+                    hash = hash * 31 + key.ShadowColor.GetHashCode();
+                    hash = hash * 31 + key.ShadowOffset.GetHashCode();
+                    hash = hash * 31 + key.ShadowSoftness.GetHashCode();
+                    return hash;
+                }
+            }
+        }
         private static readonly Dictionary<TextMeshProUGUI, TextObjectState> _textStates = new Dictionary<TextMeshProUGUI, TextObjectState>();
         private static readonly Dictionary<TextMeshProUGUI, TokenMeshState> _tokenMeshStates = new Dictionary<TextMeshProUGUI, TokenMeshState>();
-        private static readonly Dictionary<string, Vector2> _measureCache = new Dictionary<string, Vector2>();
-        private static readonly Queue<string> _measureCacheOrder = new Queue<string>();
+        private static readonly Dictionary<MeasureKey, Vector2> _measureCache = new Dictionary<MeasureKey, Vector2>(MeasureKeyComparer.Instance);
+        private static readonly Queue<MeasureKey> _measureCacheOrder = new Queue<MeasureKey>();
         private static readonly Dictionary<string, int> _tokenLayerOrderHashes = new Dictionary<string, int>();
+        private static readonly Dictionary<string, List<string>> _tokenLayerIdsByFace = new Dictionary<string, List<string>>();
         private static readonly List<string> _tokenLayerIdBuffer = new List<string>(8);
         private static readonly Dictionary<string, Vector4> _tokenColorGroupBuffer = new Dictionary<string, Vector4>();
         private static readonly Dictionary<string, TokenGroupRenderOperation> _tokenGroupOperationMap = new Dictionary<string, TokenGroupRenderOperation>();
@@ -101,9 +169,18 @@ namespace CheryTools
         {
             public string Text = string.Empty;
             public int LayoutHash;
+            // Grow-only pooled snapshots of the TMP mesh. A text with a dynamic tag
+            // plus token animation rebuilds every refresh, so per-rebuild Clone()
+            // calls were a steady allocation stream. BaseVertexCounts records how many
+            // entries of each (possibly larger) buffer are valid.
             public Vector3[][] BaseVertices = new Vector3[0][];
             public Color32[][] BaseColors = new Color32[0][];
+            public int[] BaseVertexCounts = new int[0];
             public string[] TokenByCharacter;
+            // Token id per TMP link index ("ct_" prefix stripped, null for foreign
+            // links). GetLinkID() allocates a fresh string per call, so ids are
+            // resolved once per mesh rebuild instead of per link per frame.
+            public string[] TokenIdByLink;
             public int LastPoseHash;
             public TokenRenderChannel LastChannel;
             public bool HasPoseHash;
@@ -128,13 +205,10 @@ namespace CheryTools
         public static void BeginFrame()
         {
             _frameId++;
-            UpdateCanvasSortingOrder();
         }
 
         public static void EndFrame()
         {
-            UpdateCanvasSortingOrder();
-
             List<string> staleIds = null;
             foreach (var pair in _texts)
             {
@@ -170,21 +244,18 @@ namespace CheryTools
                 _texts.Remove(id);
                 _textSortingOrders.Remove(id);
                 _tokenLayerOrderHashes.Remove(id);
+                _tokenLayerIdsByFace.Remove(id);
                 return;
             }
 
-            if (_materials.TryGetValue(tmp, out Material material) && material != null)
-            {
-                UnityEngine.Object.Destroy(material);
-            }
-            _materials.Remove(tmp);
-            _materialFonts.Remove(tmp);
+            ReleaseTextMaterial(tmp);
             _textStates.Remove(tmp);
             _tokenMeshStates.Remove(tmp);
             _frameMarks.Remove(tmp);
             _texts.Remove(id);
             _textSortingOrders.Remove(id);
             _tokenLayerOrderHashes.Remove(id);
+            _tokenLayerIdsByFace.Remove(id);
             UnityEngine.Object.Destroy(tmp.gameObject);
         }
 
@@ -196,11 +267,19 @@ namespace CheryTools
             }
             _materials.Clear();
             _materialFonts.Clear();
+            foreach (var pair in _materialPool)
+            {
+                if (pair.Value != null) UnityEngine.Object.Destroy(pair.Value);
+            }
+            _materialPool.Clear();
+            _materialPoolRefs.Clear();
+            _pooledMaterialKeys.Clear();
             _textStates.Clear();
             _tokenMeshStates.Clear();
             _measureCache.Clear();
             _measureCacheOrder.Clear();
             _tokenLayerOrderHashes.Clear();
+            _tokenLayerIdsByFace.Clear();
             _tokenLayerIdBuffer.Clear();
             _tokenColorGroupBuffer.Clear();
             _tokenGroupOperationMap.Clear();
@@ -210,7 +289,39 @@ namespace CheryTools
             _textSortingOrders.Clear();
             _layerCanvases.Clear();
             _layerRects.Clear();
+
+            // Destroy runtime-created font assets, their dynamic atlas textures and
+            // source Font objects; previously they leaked across mod enable cycles.
+            foreach (var pair in _fontAssets)
+            {
+                TMP_FontAsset asset = pair.Value;
+                if (asset == null) continue;
+                if (asset.atlasTextures != null)
+                {
+                    for (int i = 0; i < asset.atlasTextures.Length; i++)
+                    {
+                        if (asset.atlasTextures[i] != null)
+                        {
+                            UnityEngine.Object.Destroy(asset.atlasTextures[i]);
+                        }
+                    }
+                }
+                if (asset.material != null)
+                {
+                    UnityEngine.Object.Destroy(asset.material);
+                }
+                UnityEngine.Object.Destroy(asset);
+            }
             _fontAssets.Clear();
+            for (int i = 0; i < _createdFonts.Count; i++)
+            {
+                if (_createdFonts[i] != null)
+                {
+                    UnityEngine.Object.Destroy(_createdFonts[i]);
+                }
+            }
+            _createdFonts.Clear();
+            _failedFontTimes.Clear();
             _normalizedFontPathCache.Clear();
             _measureText = null;
 
@@ -227,7 +338,7 @@ namespace CheryTools
             _loggedInitError = false;
         }
 
-        public static TextBounds DrawOverlayerText(string id, OverlayerText ovText, string text, float offsetX, float offsetY, float scaleX, float scaleY, float minWidth = 0f, float minHeight = 0f, bool useFixedSize = false, int sortingOrder = CanvasSortingOrder, IReadOnlyDictionary<string, OvTokenPose> tokenPoses = null)
+        public static TextBounds DrawOverlayerText(string id, OverlayerText ovText, string text, float offsetX, float offsetY, float scaleX, float scaleY, float minWidth = 0f, float minHeight = 0f, bool useFixedSize = false, int sortingOrder = CanvasSortingOrder, Dictionary<string, OvTokenPose> tokenPoses = null)
         {
             float fontSize = Math.Max(1f, ovText.FontSize);
             Vector2 contentMeasured = MeasureText(ovText.FontPath, text, fontSize, ovText.LetterSpacing, ovText.LineHeightOffset);
@@ -318,6 +429,10 @@ namespace CheryTools
                     materialShadowOffset,
                     materialShadowSoftness);
             }
+            else
+            {
+                _tokenLayerIdsByFace.Remove(id);
+            }
 
             float layoutLeft = pivotedX - pivotX * drawWidth * safeScaleX;
             float layoutTop = pivotedY - pivotY * drawHeight * safeScaleY;
@@ -346,7 +461,7 @@ namespace CheryTools
             };
         }
 
-        private static bool HasTokenChannelOverride(IReadOnlyDictionary<string, OvTokenPose> poses, TokenRenderChannel channel)
+        private static bool HasTokenChannelOverride(Dictionary<string, OvTokenPose> poses, TokenRenderChannel channel)
         {
             if (poses == null) return false;
             foreach (KeyValuePair<string, OvTokenPose> pair in poses)
@@ -374,7 +489,7 @@ namespace CheryTools
             float characterSpacing,
             float lineSpacing,
             int sortingOrder,
-            IReadOnlyDictionary<string, OvTokenPose> poses,
+            Dictionary<string, OvTokenPose> poses,
             bool splitOutline,
             Vector4 baseOutlineColor,
             float outlineThickness,
@@ -421,7 +536,19 @@ namespace CheryTools
                     layerIds.Add(layerId);
                 }
             }
+            RememberTokenStyleLayers(id, layerIds);
             PlaceTokenStyleLayersBeforeFace(id, layerIds);
+        }
+
+        private static void RememberTokenStyleLayers(string faceId, List<string> layerIds)
+        {
+            if (!_tokenLayerIdsByFace.TryGetValue(faceId, out List<string> remembered))
+            {
+                remembered = new List<string>(Math.Max(4, layerIds.Count));
+                _tokenLayerIdsByFace[faceId] = remembered;
+            }
+            remembered.Clear();
+            for (int i = 0; i < layerIds.Count; i++) remembered.Add(layerIds[i]);
         }
 
         private static void DrawTokenStyleLayer(
@@ -441,7 +568,7 @@ namespace CheryTools
             float characterSpacing,
             float lineSpacing,
             int sortingOrder,
-            IReadOnlyDictionary<string, OvTokenPose> poses,
+            Dictionary<string, OvTokenPose> poses,
             TokenRenderChannel channel,
             bool baseLayer,
             string groupId,
@@ -462,7 +589,7 @@ namespace CheryTools
         }
 
         private static Dictionary<string, Vector4> CollectTokenColorGroups(
-            IReadOnlyDictionary<string, OvTokenPose> poses, TokenRenderChannel channel)
+            Dictionary<string, OvTokenPose> poses, TokenRenderChannel channel)
         {
             Dictionary<string, Vector4> result = _tokenColorGroupBuffer;
             result.Clear();
@@ -525,7 +652,7 @@ namespace CheryTools
             }
         }
 
-        private static void ApplyTokenLayerMask(string layerId, IReadOnlyDictionary<string, OvTokenPose> poses,
+        private static void ApplyTokenLayerMask(string layerId, Dictionary<string, OvTokenPose> poses,
             TokenRenderChannel channel, bool baseLayer, string groupId)
         {
             if (!_texts.TryGetValue(layerId, out TextMeshProUGUI tmp) || tmp == null) return;
@@ -578,9 +705,8 @@ namespace CheryTools
             for (int i = 0; i < info.linkCount; i++)
             {
                 TMP_LinkInfo link = info.linkInfo[i];
-                string linkId = link.GetLinkID();
-                if (string.IsNullOrEmpty(linkId) || !linkId.StartsWith("ct_", StringComparison.Ordinal)) continue;
-                string tokenId = linkId.Substring(3);
+                string tokenId = ResolveLinkTokenId(link);
+                if (tokenId == null) continue;
                 int first = Math.Max(0, link.linkTextfirstCharacterIndex);
                 int end = Math.Min(info.characterCount, first + Math.Max(0, link.linkTextLength));
                 for (int c = first; c < end; c++) tokenByCharacter[c] = tokenId;
@@ -588,7 +714,24 @@ namespace CheryTools
             return tokenByCharacter;
         }
 
-        private static bool IsTokenVisibleInLayer(string tokenId, IReadOnlyDictionary<string, OvTokenPose> poses,
+        private static string[] BuildTokenLinkMap(TMP_TextInfo info)
+        {
+            string[] tokenIdByLink = new string[Math.Max(0, info.linkCount)];
+            for (int i = 0; i < info.linkCount; i++)
+            {
+                tokenIdByLink[i] = ResolveLinkTokenId(info.linkInfo[i]);
+            }
+            return tokenIdByLink;
+        }
+
+        private static string ResolveLinkTokenId(TMP_LinkInfo link)
+        {
+            string linkId = link.GetLinkID();
+            if (string.IsNullOrEmpty(linkId) || !linkId.StartsWith("ct_", StringComparison.Ordinal)) return null;
+            return linkId.Substring(3);
+        }
+
+        private static bool IsTokenVisibleInLayer(string tokenId, Dictionary<string, OvTokenPose> poses,
             TokenRenderChannel channel, bool baseLayer, string groupId)
         {
             if (string.IsNullOrEmpty(tokenId)) return baseLayer;
@@ -604,7 +747,7 @@ namespace CheryTools
             return string.Equals(tokenGroup, groupId, StringComparison.Ordinal);
         }
 
-        private static bool ApplyTokenPoses(string id, IReadOnlyDictionary<string, OvTokenPose> poses,
+        private static bool ApplyTokenPoses(string id, Dictionary<string, OvTokenPose> poses,
             TokenRenderChannel channel = TokenRenderChannel.Face)
         {
             if (!_texts.TryGetValue(id, out TextMeshProUGUI tmp) || tmp == null) return false;
@@ -625,18 +768,40 @@ namespace CheryTools
             {
                 tmp.ForceMeshUpdate();
                 TMP_TextInfo textInfo = tmp.textInfo;
-                state.BaseVertices = new Vector3[textInfo.meshInfo.Length][];
-                state.BaseColors = new Color32[textInfo.meshInfo.Length][];
-                for (int i = 0; i < textInfo.meshInfo.Length; i++)
+                int meshCount = textInfo.meshInfo.Length;
+                if (state.BaseVertices.Length != meshCount)
+                {
+                    state.BaseVertices = new Vector3[meshCount][];
+                    state.BaseColors = new Color32[meshCount][];
+                    state.BaseVertexCounts = new int[meshCount];
+                }
+                for (int i = 0; i < meshCount; i++)
                 {
                     Vector3[] vertices = textInfo.meshInfo[i].vertices;
                     Color32[] colors = textInfo.meshInfo[i].colors32;
-                    state.BaseVertices[i] = vertices != null ? (Vector3[])vertices.Clone() : new Vector3[0];
-                    state.BaseColors[i] = colors != null ? (Color32[])colors.Clone() : new Color32[0];
+                    int vertexCount = vertices != null ? vertices.Length : 0;
+                    Vector3[] vertexBuffer = state.BaseVertices[i];
+                    if (vertexBuffer == null || vertexBuffer.Length < vertexCount)
+                    {
+                        vertexBuffer = new Vector3[vertexCount];
+                        state.BaseVertices[i] = vertexBuffer;
+                    }
+                    if (vertexCount > 0) Array.Copy(vertices, vertexBuffer, vertexCount);
+
+                    int colorCount = colors != null ? colors.Length : 0;
+                    Color32[] colorBuffer = state.BaseColors[i];
+                    if (colorBuffer == null || colorBuffer.Length < colorCount)
+                    {
+                        colorBuffer = new Color32[colorCount];
+                        state.BaseColors[i] = colorBuffer;
+                    }
+                    if (colorCount > 0) Array.Copy(colors, colorBuffer, colorCount);
+                    state.BaseVertexCounts[i] = vertexCount;
                 }
                 state.Text = tmp.text ?? string.Empty;
                 state.LayoutHash = layoutHash;
                 state.TokenByCharacter = BuildTokenCharacterMap(textInfo);
+                state.TokenIdByLink = BuildTokenLinkMap(textInfo);
                 state.HasPoseHash = false;
                 state.HasLayerMaskHash = false;
                 state.Applied = false;
@@ -655,16 +820,17 @@ namespace CheryTools
             RestoreTokenBaseMesh(info, state);
             if (hasPoses)
             {
+                string[] tokenIdByLink = state.TokenIdByLink;
                 for (int i = 0; i < info.linkCount; i++)
                 {
-                    TMP_LinkInfo link = info.linkInfo[i];
-                    string linkId = link.GetLinkID();
-                    if (string.IsNullOrEmpty(linkId) || !linkId.StartsWith("ct_", StringComparison.Ordinal)) continue;
-                    string tokenId = linkId.Substring(3);
+                    string tokenId = tokenIdByLink != null && i < tokenIdByLink.Length
+                        ? tokenIdByLink[i]
+                        : ResolveLinkTokenId(info.linkInfo[i]);
+                    if (tokenId == null) continue;
                     if (!poses.TryGetValue(tokenId, out OvTokenPose pose)) continue;
-                    ApplyPoseToLink(info, link, pose, channel);
+                    ApplyPoseToLink(info, info.linkInfo[i], pose, channel);
                 }
-                ApplyTokenGroupTransforms(info, poses);
+                ApplyTokenGroupTransforms(info, poses, tokenIdByLink);
             }
 
             tmp.UpdateVertexData(TMP_VertexDataUpdateFlags.Vertices | TMP_VertexDataUpdateFlags.Colors32);
@@ -676,7 +842,7 @@ namespace CheryTools
             return true;
         }
 
-        private static int BuildTokenPoseHash(IReadOnlyDictionary<string, OvTokenPose> poses,
+        private static int BuildTokenPoseHash(Dictionary<string, OvTokenPose> poses,
             TokenRenderChannel channel)
         {
             unchecked
@@ -730,7 +896,7 @@ namespace CheryTools
         }
 
         private static void ApplyTokenGroupTransforms(TMP_TextInfo info,
-            IReadOnlyDictionary<string, OvTokenPose> poses)
+            Dictionary<string, OvTokenPose> poses, string[] tokenIdByLink)
         {
             Dictionary<string, TokenGroupRenderOperation> operationMap = _tokenGroupOperationMap;
             List<TokenGroupRenderOperation> operations = _tokenGroupOperations;
@@ -775,33 +941,34 @@ namespace CheryTools
             });
             for (int i = 0; i < operations.Count; i++)
             {
-                ApplyTokenGroupTransform(info, operations[i]);
+                ApplyTokenGroupTransform(info, operations[i], tokenIdByLink);
             }
         }
 
-        private static void ApplyTokenGroupTransform(TMP_TextInfo info, TokenGroupRenderOperation operation)
+        private static void ApplyTokenGroupTransform(TMP_TextInfo info, TokenGroupRenderOperation operation,
+            string[] tokenIdByLink)
         {
             bool hasBounds = false;
             Vector3 min = new Vector3(float.MaxValue, float.MaxValue, 0f);
             Vector3 max = new Vector3(float.MinValue, float.MinValue, 0f);
             for (int i = 0; i < info.linkCount; i++)
             {
-                TMP_LinkInfo link = info.linkInfo[i];
-                string linkId = link.GetLinkID();
-                if (string.IsNullOrEmpty(linkId) || !linkId.StartsWith("ct_", StringComparison.Ordinal)
-                    || !operation.TokenIds.Contains(linkId.Substring(3))) continue;
-                ExpandLinkBounds(info, link, ref min, ref max, ref hasBounds);
+                string tokenId = tokenIdByLink != null && i < tokenIdByLink.Length
+                    ? tokenIdByLink[i]
+                    : ResolveLinkTokenId(info.linkInfo[i]);
+                if (tokenId == null || !operation.TokenIds.Contains(tokenId)) continue;
+                ExpandLinkBounds(info, info.linkInfo[i], ref min, ref max, ref hasBounds);
             }
             if (!hasBounds) return;
 
             Vector2 pivot = new Vector2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
             for (int i = 0; i < info.linkCount; i++)
             {
-                TMP_LinkInfo link = info.linkInfo[i];
-                string linkId = link.GetLinkID();
-                if (string.IsNullOrEmpty(linkId) || !linkId.StartsWith("ct_", StringComparison.Ordinal)
-                    || !operation.TokenIds.Contains(linkId.Substring(3))) continue;
-                TransformLinkVertices(info, link, pivot, operation.Transform);
+                string tokenId = tokenIdByLink != null && i < tokenIdByLink.Length
+                    ? tokenIdByLink[i]
+                    : ResolveLinkTokenId(info.linkInfo[i]);
+                if (tokenId == null || !operation.TokenIds.Contains(tokenId)) continue;
+                TransformLinkVertices(info, info.linkInfo[i], pivot, operation.Transform);
             }
         }
 
@@ -906,17 +1073,22 @@ namespace CheryTools
             int count = Math.Min(info.meshInfo.Length, state.BaseVertices.Length);
             for (int i = 0; i < count; i++)
             {
+                // Pooled buffers may be larger than the live mesh; only the recorded
+                // valid range is meaningful.
+                int validCount = state.BaseVertexCounts != null && i < state.BaseVertexCounts.Length
+                    ? state.BaseVertexCounts[i]
+                    : 0;
                 Vector3[] vertices = info.meshInfo[i].vertices;
                 Vector3[] baseVertices = state.BaseVertices[i];
                 if (vertices != null && baseVertices != null)
                 {
-                    Array.Copy(baseVertices, vertices, Math.Min(baseVertices.Length, vertices.Length));
+                    Array.Copy(baseVertices, vertices, Math.Min(validCount, vertices.Length));
                 }
                 Color32[] colors = info.meshInfo[i].colors32;
                 Color32[] baseColors = state.BaseColors[i];
                 if (colors != null && baseColors != null)
                 {
-                    Array.Copy(baseColors, colors, Math.Min(baseColors.Length, colors.Length));
+                    Array.Copy(baseColors, colors, Math.Min(validCount, colors.Length));
                 }
             }
         }
@@ -1041,17 +1213,76 @@ namespace CheryTools
             return true;
         }
 
+        // Keeps an already-built TMP object alive without re-running text
+        // measurement, layout, material setup or token mesh processing.  This is
+        // the fast path used by the runtime baker for content whose complete
+        // visual state is unchanged since the last overlay revision.
+        public static bool KeepAlive(string id, int sortingOrder = CanvasSortingOrder)
+        {
+            bool kept = TouchScreenText(id, sortingOrder);
+            if (_tokenLayerIdsByFace.TryGetValue(id, out List<string> layerIds))
+            {
+                for (int i = 0; i < layerIds.Count; i++)
+                {
+                    TouchScreenText(layerIds[i], sortingOrder);
+                }
+            }
+            return kept;
+        }
+
+        // Struct cache key: the previous string.Join key allocated ~5 strings per
+        // lookup even on a cache hit, and MeasureText runs for every OV text per frame.
+        private readonly struct MeasureKey
+        {
+            public readonly string FontPath;
+            public readonly string Text;
+            public readonly float FontSize;
+            public readonly float CharacterSpacing;
+            public readonly float LineSpacing;
+
+            public MeasureKey(string fontPath, string text, float fontSize, float characterSpacing, float lineSpacing)
+            {
+                FontPath = fontPath;
+                Text = text;
+                FontSize = fontSize;
+                CharacterSpacing = characterSpacing;
+                LineSpacing = lineSpacing;
+            }
+        }
+
+        private sealed class MeasureKeyComparer : IEqualityComparer<MeasureKey>
+        {
+            public static readonly MeasureKeyComparer Instance = new MeasureKeyComparer();
+
+            public bool Equals(MeasureKey a, MeasureKey b)
+            {
+                return a.FontSize == b.FontSize
+                    && a.CharacterSpacing == b.CharacterSpacing
+                    && a.LineSpacing == b.LineSpacing
+                    && string.Equals(a.Text, b.Text, StringComparison.Ordinal)
+                    && string.Equals(a.FontPath, b.FontPath, StringComparison.Ordinal);
+            }
+
+            public int GetHashCode(MeasureKey key)
+            {
+                unchecked
+                {
+                    int hash = key.FontPath != null ? key.FontPath.GetHashCode() : 0;
+                    hash = hash * 31 + (key.Text != null ? key.Text.GetHashCode() : 0);
+                    hash = hash * 31 + key.FontSize.GetHashCode();
+                    hash = hash * 31 + key.CharacterSpacing.GetHashCode();
+                    hash = hash * 31 + key.LineSpacing.GetHashCode();
+                    return hash;
+                }
+            }
+        }
+
         public static Vector2 MeasureText(string fontPath, string text, float fontSize, float characterSpacing, float lineSpacing)
         {
             if (!EnsureReady()) return Vector2.zero;
             string normalizedPath = NormalizeFontPath(fontPath);
             string safeText = text ?? string.Empty;
-            string cacheKey = string.Join("|",
-                normalizedPath,
-                safeText,
-                fontSize.ToString("R", CultureInfo.InvariantCulture),
-                characterSpacing.ToString("R", CultureInfo.InvariantCulture),
-                lineSpacing.ToString("R", CultureInfo.InvariantCulture));
+            MeasureKey cacheKey = new MeasureKey(normalizedPath, safeText, fontSize, characterSpacing, lineSpacing);
             if (_measureCache.TryGetValue(cacheKey, out Vector2 cached))
             {
                 return cached;
@@ -1076,7 +1307,7 @@ namespace CheryTools
             Vector2 measured = _measureText.GetPreferredValues(safeText, float.PositiveInfinity, float.PositiveInfinity);
             while (_measureCache.Count >= MeasureCacheCapacity && _measureCacheOrder.Count > 0)
             {
-                string oldestKey = _measureCacheOrder.Dequeue();
+                MeasureKey oldestKey = _measureCacheOrder.Dequeue();
                 _measureCache.Remove(oldestKey);
             }
             _measureCache[cacheKey] = measured;
@@ -1250,8 +1481,12 @@ namespace CheryTools
                 rt.localScale = safeScale;
             }
 
-            _textStates[tmp] = new TextObjectState
+            // Only write the ~30-field state struct back when something changed;
+            // the unconditional write was a per-text-per-frame dictionary copy.
+            if (contentChanged || outlineChanged || transformChanged)
             {
+                _textStates[tmp] = new TextObjectState
+                {
                 Font = fontAsset,
                 Text = safeText,
                 FontSize = safeFontSize,
@@ -1281,7 +1516,8 @@ namespace CheryTools
                 ShadowSoftness = effectiveShadowSoftness,
                 CharacterSpacing = characterSpacing,
                 LineSpacing = lineSpacing
-            };
+                };
+            }
             _frameMarks[tmp] = _frameId;
         }
 
@@ -1348,7 +1584,6 @@ namespace CheryTools
 
                 _canvas = _layerCanvases[CanvasSortingOrder];
                 _scaler = _canvas.GetComponent<CanvasScaler>();
-                UpdateCanvasSortingOrder();
 
                 _isReady = true;
                 return true;
@@ -1408,30 +1643,37 @@ namespace CheryTools
             return rt;
         }
 
-        private static void UpdateCanvasSortingOrder()
-        {
-            if (_canvas == null) return;
-
-            int targetOrder = CheryToolsMenu.IsMenuOpen ? CanvasSortingOrderBehindImGui : CanvasSortingOrder;
-            if (_canvas.sortingOrder != targetOrder)
-            {
-                _canvas.sortingOrder = targetOrder;
-            }
-        }
+        // Font load failures are remembered with a cooldown: without it, a missing or
+        // broken font file re-probes the disk (and may retry the whole font-asset
+        // creation) for every drawn text on every frame.
+        private static readonly Dictionary<string, float> _failedFontTimes = new Dictionary<string, float>();
+        private const float FailedFontRetrySeconds = 5f;
 
         private static TMP_FontAsset GetFontAsset(string fontPath)
         {
             string path = NormalizeFontPath(fontPath);
             if (_fontAssets.TryGetValue(path, out var asset) && asset != null) return asset;
 
+            string failureKey = path ?? string.Empty;
+            if (_failedFontTimes.TryGetValue(failureKey, out float failedAt))
+            {
+                if (Time.realtimeSinceStartup - failedAt < FailedFontRetrySeconds)
+                {
+                    return null;
+                }
+                _failedFontTimes.Remove(failureKey);
+            }
+
             if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
             {
+                _failedFontTimes[failureKey] = Time.realtimeSinceStartup;
                 return null;
             }
 
             try
             {
                 Font font = new Font(path);
+                _createdFonts.Add(font);
                 asset = TMP_FontAsset.CreateFontAsset(
                     font,
                     DefaultSamplingSize,
@@ -1457,6 +1699,10 @@ namespace CheryTools
                 asset = null;
             }
 
+            if (asset == null)
+            {
+                _failedFontTimes[failureKey] = Time.realtimeSinceStartup;
+            }
             return asset;
         }
 
@@ -1531,12 +1777,7 @@ namespace CheryTools
 
             if (width <= 0f && softness <= 0f && !hasShadow)
             {
-                if (_materials.TryGetValue(tmp, out var oldMat) && oldMat != null)
-                {
-                    UnityEngine.Object.Destroy(oldMat);
-                }
-                _materials.Remove(tmp);
-                _materialFonts.Remove(tmp);
+                ReleaseTextMaterial(tmp);
                 tmp.fontSharedMaterial = font.material;
                 tmp.fontMaterial = font.material;
                 tmp.material = font.material;
@@ -1546,21 +1787,76 @@ namespace CheryTools
                 return;
             }
 
-            bool needsMaterial = !_materials.TryGetValue(tmp, out var mat)
-                || mat == null
-                || !_materialFonts.TryGetValue(tmp, out var materialFont)
-                || materialFont != font;
-
-            if (needsMaterial)
+            // Token style layers get a private material instance because their face
+            // color is mutated per layer after this call; everything else shares a
+            // pooled material keyed by the full style so identical texts can batch.
+            bool isTokenLayer = tmp.gameObject.name.IndexOf("__ct_", StringComparison.Ordinal) >= 0;
+            if (isTokenLayer)
             {
-                if (mat != null) UnityEngine.Object.Destroy(mat);
-                tmp.fontSharedMaterial = font.material;
-                mat = UnityEngine.Object.Instantiate(tmp.fontSharedMaterial);
-                _materials[tmp] = mat;
-                _materialFonts[tmp] = font;
+                bool needsMaterial = !_materials.TryGetValue(tmp, out var mat)
+                    || mat == null
+                    || !_materialFonts.TryGetValue(tmp, out var materialFont)
+                    || materialFont != font;
+
+                if (needsMaterial)
+                {
+                    if (mat != null) UnityEngine.Object.Destroy(mat);
+                    tmp.fontSharedMaterial = font.material;
+                    mat = UnityEngine.Object.Instantiate(tmp.fontSharedMaterial);
+                    _materials[tmp] = mat;
+                    _materialFonts[tmp] = font;
+                    tmp.fontMaterial = mat;
+                }
+
+                ConfigureOutlineMaterial(mat, width, softness, outlineColor, hasShadow, shadowColor, shadowOffset, shadowSoftness);
+
+                tmp.fontSharedMaterial = mat;
                 tmp.fontMaterial = mat;
+                tmp.material = mat;
+                tmp.UpdateMeshPadding();
+                tmp.SetMaterialDirty();
+                tmp.SetVerticesDirty();
+                return;
             }
 
+            PooledMaterialKey key = new PooledMaterialKey(
+                font.GetInstanceID(), width, softness, outlineColor,
+                hasShadow, shadowColor, shadowOffset, shadowSoftness);
+
+            if (_pooledMaterialKeys.TryGetValue(tmp, out PooledMaterialKey currentKey)
+                && PooledMaterialKeyComparer.Instance.Equals(currentKey, key)
+                && _materialPool.TryGetValue(key, out Material assigned)
+                && assigned != null
+                && ReferenceEquals(tmp.fontSharedMaterial, assigned))
+            {
+                return;
+            }
+
+            ReleaseTextMaterial(tmp);
+
+            if (!_materialPool.TryGetValue(key, out Material pooled) || pooled == null)
+            {
+                pooled = UnityEngine.Object.Instantiate(font.material);
+                ConfigureOutlineMaterial(pooled, width, softness, outlineColor, hasShadow, shadowColor, shadowOffset, shadowSoftness);
+                _materialPool[key] = pooled;
+                _materialPoolRefs[key] = 0;
+            }
+            _materialPoolRefs.TryGetValue(key, out int refs);
+            _materialPoolRefs[key] = refs + 1;
+            _pooledMaterialKeys[tmp] = key;
+
+            // Only fontSharedMaterial is set on the pooled path: assigning fontMaterial
+            // would make TMP treat the shared instance as text-owned and destroy it
+            // with the text.
+            tmp.fontSharedMaterial = pooled;
+            tmp.UpdateMeshPadding();
+            tmp.SetMaterialDirty();
+            tmp.SetVerticesDirty();
+        }
+
+        private static void ConfigureOutlineMaterial(Material mat, float width, float softness, Vector4 outlineColor,
+            bool hasShadow, Vector4 shadowColor, Vector2 shadowOffset, float shadowSoftness)
+        {
             mat.SetFloat(ShaderUtilities.ID_OutlineWidth, width);
             mat.SetColor(ShaderUtilities.ID_OutlineColor, ToColor(outlineColor));
             mat.SetFloat(OutlineSoftnessProperty, softness);
@@ -1574,13 +1870,38 @@ namespace CheryTools
             }
 
             ApplyUnderlay(mat, hasShadow, shadowColor, shadowOffset, shadowSoftness);
+        }
 
-            tmp.fontSharedMaterial = mat;
-            tmp.fontMaterial = mat;
-            tmp.material = mat;
-            tmp.UpdateMeshPadding();
-            tmp.SetMaterialDirty();
-            tmp.SetVerticesDirty();
+        private static void ReleaseTextMaterial(TextMeshProUGUI tmp)
+        {
+            if (_materials.TryGetValue(tmp, out Material privateMat))
+            {
+                if (privateMat != null) UnityEngine.Object.Destroy(privateMat);
+                _materials.Remove(tmp);
+                _materialFonts.Remove(tmp);
+            }
+
+            if (_pooledMaterialKeys.TryGetValue(tmp, out PooledMaterialKey key))
+            {
+                _pooledMaterialKeys.Remove(tmp);
+                if (_materialPoolRefs.TryGetValue(key, out int refs))
+                {
+                    refs--;
+                    if (refs <= 0)
+                    {
+                        if (_materialPool.TryGetValue(key, out Material pooled) && pooled != null)
+                        {
+                            UnityEngine.Object.Destroy(pooled);
+                        }
+                        _materialPool.Remove(key);
+                        _materialPoolRefs.Remove(key);
+                    }
+                    else
+                    {
+                        _materialPoolRefs[key] = refs;
+                    }
+                }
+            }
         }
 
         private static void ApplyUnderlay(Material mat, bool enabled, Vector4 shadowColor, Vector2 shadowOffset, float shadowSoftness)

@@ -47,7 +47,8 @@ namespace CheryTools
             "{cbpm}", "{cur}", "{maptime}", "{maptime:p}", "{musictime}", "{musictime:p}", "{datey}",
             "{datem}", "{dated}", "{wtime}", "{wtime12}", "{judge}", "{interval}", "{timing}", "{acc}", "{xacc}",
             "{progress}", "{te}", "{ve}", "{ep}", "{p}", "{lp}", "{vl}", "{tl}", "{fm}", "{fo}",
-            "{miss}"
+            "{miss}", "{attempts}", "{checkpointused}", "{curcheckpoint}", "{totalcheckpoint}",
+            "{gameversion}", "{cherytoolsversion}", "{totalplaytime}", "{minfps}", "{maxfps}"
         };
 
         public static bool Draw(string id, ref string text, Vector2 size)

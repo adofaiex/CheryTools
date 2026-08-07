@@ -15,8 +15,8 @@ namespace CheryTools
         private static int _frameId;
 
         private static readonly Dictionary<int, RectTransform> _layerRoots = new Dictionary<int, RectTransform>();
-        private static readonly Dictionary<int, CheryRectBatchGraphic> _rainBatches = new Dictionary<int, CheryRectBatchGraphic>();
-        private static readonly Dictionary<int, CheryRectBatchGraphic> _rectBatches = new Dictionary<int, CheryRectBatchGraphic>();
+        private static readonly Dictionary<int, CheryRectBatchGroup> _rainBatches = new Dictionary<int, CheryRectBatchGroup>();
+        private static readonly Dictionary<int, CheryRectBatchGroup> _rectBatches = new Dictionary<int, CheryRectBatchGroup>();
         private static readonly Dictionary<int, CheryShadowBatchGraphic> _shadowBatches = new Dictionary<int, CheryShadowBatchGraphic>();
         private static readonly Dictionary<string, KeyViewerImageGraphic> _images = new Dictionary<string, KeyViewerImageGraphic>();
         private static readonly Dictionary<string, int> _imageSortingOrders = new Dictionary<string, int>();
@@ -61,11 +61,11 @@ namespace CheryTools
         {
             foreach (var pair in _rainBatches)
             {
-                if (pair.Value != null) pair.Value.gameObject.SetActive(false);
+                if (pair.Value != null) pair.Value.HideAll();
             }
             foreach (var pair in _rectBatches)
             {
-                if (pair.Value != null) pair.Value.gameObject.SetActive(false);
+                if (pair.Value != null) pair.Value.HideAll();
             }
             foreach (var pair in _shadowBatches)
             {
@@ -96,11 +96,6 @@ namespace CheryTools
             _rootRect = null;
         }
 
-        public static void DrawRect(string id, Vector2 topLeft, Vector2 size, uint fillColor, uint borderColor, float borderThickness, float cornerRadius, int sortingOrder = CanvasSortingOrder)
-        {
-            DrawRect(id, topLeft, size, fillColor, fillColor, fillColor, fillColor, borderColor, borderColor, borderColor, borderColor, borderThickness, cornerRadius, sortingOrder);
-        }
-
         public static void DrawRect(
             string id,
             Vector2 topLeft,
@@ -118,7 +113,7 @@ namespace CheryTools
             int sortingOrder = CanvasSortingOrder)
         {
             if (!EnsureReady()) return;
-            CheryRectBatchGraphic batch = GetRectBatch(sortingOrder);
+            CheryRectBatchGroup batch = GetRectBatch(sortingOrder);
             if (batch == null) return;
             batch.AddRect(
                 topLeft,
@@ -135,19 +130,6 @@ namespace CheryTools
                 cornerRadius);
         }
 
-        public static void DrawGradientRect(string id, Vector2 topLeft, Vector2 size, uint topColor, uint bottomColor, int sortingOrder = CanvasSortingOrder)
-        {
-            DrawGradientRect(id, topLeft, size, topColor, bottomColor, 0f, sortingOrder);
-        }
-
-        public static void DrawGradientRect(string id, Vector2 topLeft, Vector2 size, uint topColor, uint bottomColor, float cornerRadius, int sortingOrder = CanvasSortingOrder)
-        {
-            if (!EnsureReady()) return;
-            CheryRectBatchGraphic batch = GetRainBatch(sortingOrder);
-            if (batch == null) return;
-            batch.AddRect(topLeft, size, ToColor(topColor), ToColor(topColor), ToColor(bottomColor), ToColor(bottomColor), Color.clear, Color.clear, Color.clear, Color.clear, 0f, cornerRadius);
-        }
-
         public static void DrawGradientRect(
             string id,
             Vector2 topLeft,
@@ -160,7 +142,7 @@ namespace CheryTools
             int sortingOrder = CanvasSortingOrder)
         {
             if (!EnsureReady()) return;
-            CheryRectBatchGraphic batch = GetRainBatch(sortingOrder);
+            CheryRectBatchGroup batch = GetRainBatch(sortingOrder);
             if (batch == null) return;
             batch.AddRect(topLeft, size, ToColor(topLeftColor), ToColor(topRightColor), ToColor(bottomRightColor), ToColor(bottomLeftColor), Color.clear, Color.clear, Color.clear, Color.clear, 0f, cornerRadius);
         }
@@ -186,7 +168,7 @@ namespace CheryTools
             int sortingOrder = CanvasSortingOrder)
         {
             if (!EnsureReady()) return;
-            CheryRectBatchGraphic batch = GetRainBatch(sortingOrder);
+            CheryRectBatchGroup batch = GetRainBatch(sortingOrder);
             if (batch == null) return;
             batch.AddKeyRainCurveRect(
                 topLeft,
@@ -229,6 +211,21 @@ namespace CheryTools
             SetRectTransform(image.rectTransform, topLeft, size);
             image.SetImage(texture, alpha, cornerRadius, uvMin, uvMax);
             Mark(image.gameObject);
+        }
+
+        public static bool KeepImageAlive(string id, int sortingOrder = CanvasSortingOrder)
+        {
+            if (!EnsureReady()) return false;
+            if (!_images.TryGetValue(id, out KeyViewerImageGraphic image) || image == null)
+            {
+                return false;
+            }
+            if (!_imageSortingOrders.TryGetValue(id, out int currentOrder) || currentOrder != sortingOrder)
+            {
+                return false;
+            }
+            Mark(image.gameObject);
+            return true;
         }
 
         private static bool EnsureReady()
@@ -289,26 +286,26 @@ namespace CheryTools
             return rt;
         }
 
-        private static CheryRectBatchGraphic GetRainBatch(int sortingOrder)
+        private static CheryRectBatchGroup GetRainBatch(int sortingOrder)
         {
-            if (_rainBatches.TryGetValue(sortingOrder, out CheryRectBatchGraphic batch) && batch != null)
+            if (_rainBatches.TryGetValue(sortingOrder, out CheryRectBatchGroup batch) && batch != null)
             {
                 return batch;
             }
 
-            batch = CreateRectBatch("KV_Rain_Batch_" + sortingOrder.ToString(), sortingOrder);
+            batch = CreateRectBatchGroup("KV_Rain_Batch_" + sortingOrder.ToString(), sortingOrder);
             _rainBatches[sortingOrder] = batch;
             return batch;
         }
 
-        private static CheryRectBatchGraphic GetRectBatch(int sortingOrder)
+        private static CheryRectBatchGroup GetRectBatch(int sortingOrder)
         {
-            if (_rectBatches.TryGetValue(sortingOrder, out CheryRectBatchGraphic batch) && batch != null)
+            if (_rectBatches.TryGetValue(sortingOrder, out CheryRectBatchGroup batch) && batch != null)
             {
                 return batch;
             }
 
-            batch = CreateRectBatch("KV_Rect_Batch_" + sortingOrder.ToString(), sortingOrder);
+            batch = CreateRectBatchGroup("KV_Rect_Batch_" + sortingOrder.ToString(), sortingOrder);
             _rectBatches[sortingOrder] = batch;
             return batch;
         }
@@ -325,12 +322,24 @@ namespace CheryTools
             return batch;
         }
 
-        private static CheryRectBatchGraphic CreateRectBatch(string name, int sortingOrder)
+        private static CheryRectBatchGroup CreateRectBatchGroup(string name, int sortingOrder)
         {
             if (!EnsureReady()) return null;
             RectTransform layerRoot = GetLayerRoot(sortingOrder);
             if (layerRoot == null) return null;
 
+            // Stable graphic first so it renders below the dynamic one.
+            CheryRectBatchGraphic stableGraphic = CreateRectBatchGraphic(name + "_stable", layerRoot);
+            CheryRectBatchGraphic dynamicGraphic = CreateRectBatchGraphic(name + "_dynamic", layerRoot);
+            if (stableGraphic == null || dynamicGraphic == null) return null;
+
+            var group = new CheryRectBatchGroup();
+            group.Initialize(stableGraphic, dynamicGraphic);
+            return group;
+        }
+
+        internal static CheryRectBatchGraphic CreateRectBatchGraphic(string name, RectTransform layerRoot)
+        {
             GameObject go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(layerRoot, false);
             RectTransform rt = go.GetComponent<RectTransform>();
@@ -457,25 +466,100 @@ namespace CheryTools
         }
     }
 
+    internal static class KeyViewerRoundedRectMesh
+    {
+        public const int MaxCornerSegments = 16;
+        public const float AntiAliasHalfWidth = 0.5f;
+
+        private const int MinCornerSegments = 4;
+        private const float SegmentScale = 1.25f;
+        private static readonly Vector2[][] UnitContours = CreateUnitContours();
+
+        public static int CalculateCornerSegments(float radius)
+        {
+            if (radius <= 0.01f) return MinCornerSegments;
+
+            // Approximation of the segment count needed for <= 0.2 px chord
+            // error. This avoids an Acos call for every rounded command.
+            int segments = Mathf.CeilToInt(SegmentScale * Mathf.Sqrt(radius));
+            return Mathf.Clamp(segments, MinCornerSegments, MaxCornerSegments);
+        }
+
+        public static Rect Expand(Rect r, float amount)
+        {
+            return new Rect(r.xMin - amount, r.yMin - amount, r.width + amount * 2f, r.height + amount * 2f);
+        }
+
+        public static Rect Inset(Rect r, float amount)
+        {
+            float safe = Mathf.Min(Mathf.Max(0f, amount), Mathf.Min(r.width, r.height) * 0.5f);
+            return new Rect(r.xMin + safe, r.yMin + safe, Mathf.Max(0f, r.width - safe * 2f), Mathf.Max(0f, r.height - safe * 2f));
+        }
+
+        public static void Build(Rect r, float radius, int segments, List<Vector2> points)
+        {
+            points.Clear();
+            radius = Mathf.Clamp(radius, 0f, Mathf.Min(r.width, r.height) * 0.5f);
+            segments = Mathf.Clamp(segments, MinCornerSegments, MaxCornerSegments);
+
+            Vector2[] samples = UnitContours[segments];
+            int arcLength = segments + 1;
+            AddSampledArc(points, new Vector2(r.xMax - radius, r.yMax - radius), radius, samples, 0, arcLength);
+            AddSampledArc(points, new Vector2(r.xMax - radius, r.yMin + radius), radius, samples, arcLength, arcLength);
+            AddSampledArc(points, new Vector2(r.xMin + radius, r.yMin + radius), radius, samples, arcLength * 2, arcLength);
+            AddSampledArc(points, new Vector2(r.xMin + radius, r.yMax - radius), radius, samples, arcLength * 3, arcLength);
+        }
+
+        private static void AddSampledArc(List<Vector2> points, Vector2 center, float radius, Vector2[] samples, int offset, int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Vector2 sample = samples[offset + i];
+                points.Add(new Vector2(center.x + sample.x * radius, center.y + sample.y * radius));
+            }
+        }
+
+        private static Vector2[][] CreateUnitContours()
+        {
+            var contours = new Vector2[MaxCornerSegments + 1][];
+            for (int segments = MinCornerSegments; segments <= MaxCornerSegments; segments++)
+            {
+                int arcLength = segments + 1;
+                Vector2[] samples = new Vector2[arcLength * 4];
+                int index = 0;
+                SampleUnitArc(samples, ref index, segments, 90f, 0f);
+                SampleUnitArc(samples, ref index, segments, 0f, -90f);
+                SampleUnitArc(samples, ref index, segments, -90f, -180f);
+                SampleUnitArc(samples, ref index, segments, 180f, 90f);
+                contours[segments] = samples;
+            }
+            return contours;
+        }
+
+        private static void SampleUnitArc(Vector2[] samples, ref int index, int segments, float startDeg, float endDeg)
+        {
+            for (int i = 0; i <= segments; i++)
+            {
+                float t = i / (float)segments;
+                float rad = Mathf.Lerp(startDeg, endDeg, t) * Mathf.Deg2Rad;
+                samples[index++] = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
+            }
+        }
+    }
+
     internal class KeyViewerImageGraphic : MaskableGraphic
     {
-        private const int CornerSegments = 8;
-
         private Texture _texture;
         private float _alpha = 1f;
         private float _cornerRadius;
         private Vector2 _uvMin = Vector2.zero;
         private Vector2 _uvMax = Vector2.one;
-        private readonly List<Vector2> _points = new List<Vector2>(CornerSegments * 4 + 4);
+        private readonly List<Vector2> _innerPoints = new List<Vector2>(KeyViewerRoundedRectMesh.MaxCornerSegments * 4 + 4);
+        private readonly List<Vector2> _outerPoints = new List<Vector2>(KeyViewerRoundedRectMesh.MaxCornerSegments * 4 + 4);
 
         public override Texture mainTexture
         {
             get { return _texture != null ? _texture : s_WhiteTexture; }
-        }
-
-        public void SetImage(Texture texture, float alpha, float cornerRadius)
-        {
-            SetImage(texture, alpha, cornerRadius, Vector2.zero, Vector2.one);
         }
 
         public void SetImage(Texture texture, float alpha, float cornerRadius, Vector2 uvMin, Vector2 uvMax)
@@ -509,8 +593,33 @@ namespace CheryTools
             if (r.width <= 0f || r.height <= 0f) return;
 
             float radius = Mathf.Min(_cornerRadius, Mathf.Min(r.width, r.height) * 0.5f);
-            BuildRoundedRect(r, radius, _points);
-            AddTexturedFill(vh, _points, r, new Color(1f, 1f, 1f, _alpha), _uvMin, _uvMax);
+            if (radius <= 0.01f)
+            {
+                AddTexturedRect(vh, r, new Color(1f, 1f, 1f, _alpha), _uvMin, _uvMax);
+                return;
+            }
+
+            int segments = KeyViewerRoundedRectMesh.CalculateCornerSegments(radius);
+            float aa = Mathf.Min(KeyViewerRoundedRectMesh.AntiAliasHalfWidth, Mathf.Min(r.width, r.height) * 0.25f);
+            Rect innerRect = KeyViewerRoundedRectMesh.Inset(r, aa);
+            Rect outerRect = KeyViewerRoundedRectMesh.Expand(r, aa);
+            KeyViewerRoundedRectMesh.Build(innerRect, Mathf.Max(0f, radius - aa), segments, _innerPoints);
+            KeyViewerRoundedRectMesh.Build(outerRect, radius + aa, segments, _outerPoints);
+
+            Color color = new Color(1f, 1f, 1f, _alpha);
+            AddTexturedFill(vh, _innerPoints, r, color, _uvMin, _uvMax);
+            AddTexturedFringe(vh, _outerPoints, _innerPoints, r, color, _uvMin, _uvMax);
+        }
+
+        private static void AddTexturedRect(VertexHelper vh, Rect r, Color color, Vector2 uvMin, Vector2 uvMax)
+        {
+            int start = vh.currentVertCount;
+            vh.AddVert(new Vector2(r.xMin, r.yMax), color, new Vector2(uvMin.x, uvMax.y));
+            vh.AddVert(new Vector2(r.xMax, r.yMax), color, uvMax);
+            vh.AddVert(new Vector2(r.xMax, r.yMin), color, new Vector2(uvMax.x, uvMin.y));
+            vh.AddVert(new Vector2(r.xMin, r.yMin), color, uvMin);
+            vh.AddTriangle(start, start + 1, start + 2);
+            vh.AddTriangle(start, start + 2, start + 3);
         }
 
         private static void AddTexturedFill(VertexHelper vh, List<Vector2> points, Rect r, Color color, Vector2 uvMin, Vector2 uvMax)
@@ -532,6 +641,33 @@ namespace CheryTools
             }
         }
 
+        private static void AddTexturedFringe(VertexHelper vh, List<Vector2> outer, List<Vector2> inner, Rect r, Color color, Vector2 uvMin, Vector2 uvMax)
+        {
+            int count = Mathf.Min(outer.Count, inner.Count);
+            if (count < 2) return;
+
+            Color transparent = color;
+            transparent.a = 0f;
+            int outerStart = vh.currentVertCount;
+            for (int i = 0; i < count; i++)
+            {
+                vh.AddVert(outer[i], transparent, ToUv(outer[i], r, uvMin, uvMax));
+            }
+
+            int innerStart = vh.currentVertCount;
+            for (int i = 0; i < count; i++)
+            {
+                vh.AddVert(inner[i], color, ToUv(inner[i], r, uvMin, uvMax));
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                int next = (i + 1) % count;
+                vh.AddTriangle(outerStart + i, outerStart + next, innerStart + next);
+                vh.AddTriangle(outerStart + i, innerStart + next, innerStart + i);
+            }
+        }
+
         private static Vector2 ToUv(Vector2 point, Rect r, Vector2 uvMin, Vector2 uvMax)
         {
             float u = r.width <= 0f ? 0f : Mathf.InverseLerp(r.xMin, r.xMax, point.x);
@@ -539,81 +675,81 @@ namespace CheryTools
             return new Vector2(Mathf.Lerp(uvMin.x, uvMax.x, u), Mathf.Lerp(uvMin.y, uvMax.y, v));
         }
 
-        private static void BuildRoundedRect(Rect r, float radius, List<Vector2> points)
-        {
-            points.Clear();
-            if (radius <= 0.01f)
-            {
-                points.Add(new Vector2(r.xMin, r.yMax));
-                points.Add(new Vector2(r.xMax, r.yMax));
-                points.Add(new Vector2(r.xMax, r.yMin));
-                points.Add(new Vector2(r.xMin, r.yMin));
-                return;
-            }
-
-            AddArc(points, new Vector2(r.xMax - radius, r.yMax - radius), radius, 90f, 0f);
-            AddArc(points, new Vector2(r.xMax - radius, r.yMin + radius), radius, 0f, -90f);
-            AddArc(points, new Vector2(r.xMin + radius, r.yMin + radius), radius, -90f, -180f);
-            AddArc(points, new Vector2(r.xMin + radius, r.yMax - radius), radius, 180f, 90f);
-        }
-
-        private static void AddArc(List<Vector2> points, Vector2 center, float radius, float startDeg, float endDeg)
-        {
-            for (int i = 0; i <= CornerSegments; i++)
-            {
-                float t = i / (float)CornerSegments;
-                float deg = Mathf.Lerp(startDeg, endDeg, t);
-                float rad = deg * Mathf.Deg2Rad;
-                points.Add(new Vector2(center.x + Mathf.Cos(rad) * radius, center.y + Mathf.Sin(rad) * radius));
-            }
-        }
     }
 
-    internal class CheryRectBatchGraphic : MaskableGraphic
-    {
-        private const int CornerSegments = 8;
-
-        private struct RectCommand
+    internal struct CheryRectCommand
         {
-            public Vector2 TopLeft;
-            public Vector2 Size;
-            public Color TopLeftColor;
-            public Color TopRightColor;
-            public Color BottomRightColor;
-            public Color BottomLeftColor;
-            public Color BorderTopLeftColor;
-            public Color BorderTopRightColor;
-            public Color BorderBottomRightColor;
-            public Color BorderBottomLeftColor;
-            public float BorderThickness;
-            public float CornerRadius;
-            public bool IsSoftShadow;
-            public float Softness;
-            public bool IsKeyRainCurve;
-            public Color FarColor;
-            public bool GradientEnabled;
-            public bool HeightMaskGradient;
-            public int FadeMode;
-            public float KeyY;
-            public float MaxHeight;
-            public float FadeHeight;
-            public float FadePower;
-            public float GradientHeight;
-            public float GradientPower;
-            public bool HorizontalGradientEnabled;
-            public Color HorizontalColor;
-        }
+        public Vector2 TopLeft;
+        public Vector2 Size;
+        public Color TopLeftColor;
+        public Color TopRightColor;
+        public Color BottomRightColor;
+        public Color BottomLeftColor;
+        public Color BorderTopLeftColor;
+        public Color BorderTopRightColor;
+        public Color BorderBottomRightColor;
+        public Color BorderBottomLeftColor;
+        public float BorderThickness;
+        public float CornerRadius;
+        public bool IsKeyRainCurve;
+        public Color FarColor;
+        public bool GradientEnabled;
+        public bool HeightMaskGradient;
+        public int FadeMode;
+        public float KeyY;
+        public float MaxHeight;
+        public float FadeHeight;
+        public float FadePower;
+        public float GradientHeight;
+        public float GradientPower;
+        public bool HorizontalGradientEnabled;
+        public Color HorizontalColor;
+    }
 
-        private readonly List<RectCommand> _commands = new List<RectCommand>(64);
-        private readonly List<Vector2> _outer = new List<Vector2>(CornerSegments * 4 + 4);
-        private readonly List<Vector2> _inner = new List<Vector2>(CornerSegments * 4 + 4);
-        private int _lastCommandHash;
-        private int _lastCommandCount = -1;
-        private bool _lastHadCommands;
+    // Splits a rect batch into a "stable" graphic (commands identical to last
+    // frame) and a "dynamic" graphic (commands that changed), so one animating rect
+    // no longer re-triangulates every rect in its layer. The stable graphic renders
+    // first (below); draw-order correctness is preserved by promoting any stable
+    // command that would have to render above an overlapping dynamic command into
+    // the dynamic graphic. Per-command hashes are computed once at Add time.
+    internal sealed class CheryRectBatchGroup
+    {
+        private readonly List<CheryRectCommand> _commands = new List<CheryRectCommand>(64);
+        private readonly List<int> _hashes = new List<int>(64);
+        private readonly List<int> _prevHashes = new List<int>(64);
+        private readonly List<bool> _dynamicFlags = new List<bool>(64);
+        private readonly List<int> _stableIndices = new List<int>(64);
+        private readonly List<int> _dynamicIndices = new List<int>(64);
+        private int _lastStableViewHash;
+        private int _lastDynamicViewHash;
+
+        public CheryRectBatchGraphic StableGraphic;
+        public CheryRectBatchGraphic DynamicGraphic;
+
+        public void Initialize(CheryRectBatchGraphic stableGraphic, CheryRectBatchGraphic dynamicGraphic)
+        {
+            StableGraphic = stableGraphic;
+            DynamicGraphic = dynamicGraphic;
+            stableGraphic.SetView(_commands, _stableIndices);
+            dynamicGraphic.SetView(_commands, _dynamicIndices);
+        }
 
         public void BeginFrame()
         {
             _commands.Clear();
+            _hashes.Clear();
+        }
+
+        public void HideAll()
+        {
+            if (StableGraphic != null && StableGraphic.gameObject.activeSelf)
+            {
+                StableGraphic.gameObject.SetActive(false);
+            }
+            if (DynamicGraphic != null && DynamicGraphic.gameObject.activeSelf)
+            {
+                DynamicGraphic.gameObject.SetActive(false);
+            }
         }
 
         public void AddRect(Vector2 topLeft, Vector2 size, Color topColor, Color bottomColor, Color borderColor, float borderThickness, float cornerRadius)
@@ -636,7 +772,7 @@ namespace CheryTools
             float cornerRadius)
         {
             if (size.x <= 0f || size.y <= 0f) return;
-            _commands.Add(new RectCommand
+            var cmd = new CheryRectCommand
             {
                 TopLeft = topLeft,
                 Size = size,
@@ -650,10 +786,10 @@ namespace CheryTools
                 BorderBottomLeftColor = borderBottomLeftColor,
                 BorderThickness = Mathf.Max(0f, borderThickness),
                 CornerRadius = Mathf.Max(0f, cornerRadius),
-                IsSoftShadow = false,
-                Softness = 0f,
                 IsKeyRainCurve = false
-            });
+            };
+            _commands.Add(cmd);
+            _hashes.Add(HashCommand(ref cmd));
         }
 
         public void AddKeyRainCurveRect(
@@ -676,7 +812,7 @@ namespace CheryTools
         {
             if (size.x <= 0f || size.y <= 0f) return;
             if (baseColor.a <= 0f && (!gradientEnabled || farColor.a <= 0f)) return;
-            _commands.Add(new RectCommand
+            var cmd = new CheryRectCommand
             {
                 TopLeft = topLeft,
                 Size = size,
@@ -690,8 +826,6 @@ namespace CheryTools
                 BorderBottomLeftColor = Color.clear,
                 BorderThickness = 0f,
                 CornerRadius = Mathf.Max(0f, cornerRadius),
-                IsSoftShadow = false,
-                Softness = 0f,
                 IsKeyRainCurve = true,
                 FarColor = farColor,
                 GradientEnabled = gradientEnabled,
@@ -705,130 +839,189 @@ namespace CheryTools
                 GradientPower = Mathf.Clamp(gradientPower, 0.1f, 5f),
                 HorizontalGradientEnabled = horizontalGradientEnabled,
                 HorizontalColor = horizontalColor
-            });
-        }
-
-        public void AddSoftShadowRect(Vector2 topLeft, Vector2 size, Color topColor, Color bottomColor, float softness)
-        {
-            if (size.x <= 0f || size.y <= 0f) return;
-            if (topColor.a <= 0f && bottomColor.a <= 0f) return;
-            _commands.Add(new RectCommand
-            {
-                TopLeft = topLeft,
-                Size = size,
-                TopLeftColor = topColor,
-                TopRightColor = topColor,
-                BottomRightColor = bottomColor,
-                BottomLeftColor = bottomColor,
-                BorderTopLeftColor = Color.clear,
-                BorderTopRightColor = Color.clear,
-                BorderBottomRightColor = Color.clear,
-                BorderBottomLeftColor = Color.clear,
-                BorderThickness = 0f,
-                CornerRadius = 0f,
-                IsSoftShadow = true,
-                Softness = Mathf.Max(0f, softness),
-                IsKeyRainCurve = false
-            });
+            };
+            _commands.Add(cmd);
+            _hashes.Add(HashCommand(ref cmd));
         }
 
         public void EndFrame()
         {
-            bool hasCommands = _commands.Count > 0;
-            bool activeChanged = gameObject.activeSelf != hasCommands;
-            if (gameObject.activeSelf != hasCommands)
+            int count = _commands.Count;
+            _dynamicFlags.Clear();
+            bool countChanged = count != _prevHashes.Count;
+            for (int i = 0; i < count; i++)
             {
-                gameObject.SetActive(hasCommands);
+                _dynamicFlags.Add(countChanged || _hashes[i] != _prevHashes[i]);
             }
 
-            if (!hasCommands)
+            // Promote stable commands that sit above (were submitted after) an
+            // overlapping dynamic command; iterate to a fixpoint because a promotion
+            // can force further promotions above it.
+            bool promoted = count > 0;
+            int iterations = 0;
+            while (promoted && iterations++ < 8)
             {
-                _lastHadCommands = false;
-                _lastCommandCount = 0;
-                _lastCommandHash = 0;
+                promoted = false;
+                for (int i = 0; i < count; i++)
+                {
+                    if (_dynamicFlags[i]) continue;
+                    for (int j = 0; j < i; j++)
+                    {
+                        if (!_dynamicFlags[j]) continue;
+                        if (CommandsOverlap(_commands[i], _commands[j]))
+                        {
+                            _dynamicFlags[i] = true;
+                            promoted = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (iterations >= 8)
+            {
+                for (int i = 0; i < count; i++) _dynamicFlags[i] = true;
+            }
+
+            _stableIndices.Clear();
+            _dynamicIndices.Clear();
+            int stableViewHash;
+            int dynamicViewHash;
+            unchecked
+            {
+                stableViewHash = 17;
+                dynamicViewHash = 17;
+                for (int i = 0; i < count; i++)
+                {
+                    if (_dynamicFlags[i])
+                    {
+                        _dynamicIndices.Add(i);
+                        dynamicViewHash = dynamicViewHash * 31 + _hashes[i];
+                    }
+                    else
+                    {
+                        _stableIndices.Add(i);
+                        stableViewHash = stableViewHash * 31 + _hashes[i];
+                    }
+                }
+            }
+
+            ApplyView(StableGraphic, _stableIndices.Count > 0, stableViewHash, ref _lastStableViewHash);
+            ApplyView(DynamicGraphic, _dynamicIndices.Count > 0, dynamicViewHash, ref _lastDynamicViewHash);
+
+            _prevHashes.Clear();
+            _prevHashes.AddRange(_hashes);
+        }
+
+        private static void ApplyView(CheryRectBatchGraphic graphic, bool hasContent, int viewHash, ref int lastViewHash)
+        {
+            if (graphic == null) return;
+            if (graphic.gameObject.activeSelf != hasContent)
+            {
+                graphic.gameObject.SetActive(hasContent);
+            }
+            if (!hasContent)
+            {
+                lastViewHash = 0;
                 return;
             }
-
-            int commandHash = CalculateCommandHash();
-            bool commandsChanged = activeChanged
-                || !_lastHadCommands
-                || _lastCommandCount != _commands.Count
-                || _lastCommandHash != commandHash;
-            if (commandsChanged)
+            if (viewHash != lastViewHash)
             {
-                _lastHadCommands = true;
-                _lastCommandCount = _commands.Count;
-                _lastCommandHash = commandHash;
-                SetVerticesDirty();
+                lastViewHash = viewHash;
+                graphic.SetVerticesDirty();
             }
         }
 
-        private int CalculateCommandHash()
+        private static bool CommandsOverlap(CheryRectCommand a, CheryRectCommand b)
+        {
+            return a.TopLeft.x < b.TopLeft.x + b.Size.x
+                && b.TopLeft.x < a.TopLeft.x + a.Size.x
+                && a.TopLeft.y < b.TopLeft.y + b.Size.y
+                && b.TopLeft.y < a.TopLeft.y + a.Size.y;
+        }
+
+        private static int HashCommand(ref CheryRectCommand cmd)
         {
             unchecked
             {
                 int hash = 17;
-                for (int i = 0; i < _commands.Count; i++)
+                hash = hash * 31 + cmd.TopLeft.x.GetHashCode();
+                hash = hash * 31 + cmd.TopLeft.y.GetHashCode();
+                hash = hash * 31 + cmd.Size.x.GetHashCode();
+                hash = hash * 31 + cmd.Size.y.GetHashCode();
+                hash = hash * 31 + cmd.TopLeftColor.GetHashCode();
+                hash = hash * 31 + cmd.TopRightColor.GetHashCode();
+                hash = hash * 31 + cmd.BottomRightColor.GetHashCode();
+                hash = hash * 31 + cmd.BottomLeftColor.GetHashCode();
+                hash = hash * 31 + cmd.BorderTopLeftColor.GetHashCode();
+                hash = hash * 31 + cmd.BorderTopRightColor.GetHashCode();
+                hash = hash * 31 + cmd.BorderBottomRightColor.GetHashCode();
+                hash = hash * 31 + cmd.BorderBottomLeftColor.GetHashCode();
+                hash = hash * 31 + cmd.BorderThickness.GetHashCode();
+                hash = hash * 31 + cmd.CornerRadius.GetHashCode();
+                hash = hash * 31 + cmd.IsKeyRainCurve.GetHashCode();
+                if (cmd.IsKeyRainCurve)
                 {
-                    RectCommand cmd = _commands[i];
-                    hash = hash * 31 + cmd.TopLeft.x.GetHashCode();
-                    hash = hash * 31 + cmd.TopLeft.y.GetHashCode();
-                    hash = hash * 31 + cmd.Size.x.GetHashCode();
-                    hash = hash * 31 + cmd.Size.y.GetHashCode();
-                    hash = hash * 31 + cmd.TopLeftColor.GetHashCode();
-                    hash = hash * 31 + cmd.TopRightColor.GetHashCode();
-                    hash = hash * 31 + cmd.BottomRightColor.GetHashCode();
-                    hash = hash * 31 + cmd.BottomLeftColor.GetHashCode();
-                    hash = hash * 31 + cmd.BorderTopLeftColor.GetHashCode();
-                    hash = hash * 31 + cmd.BorderTopRightColor.GetHashCode();
-                    hash = hash * 31 + cmd.BorderBottomRightColor.GetHashCode();
-                    hash = hash * 31 + cmd.BorderBottomLeftColor.GetHashCode();
-                    hash = hash * 31 + cmd.BorderThickness.GetHashCode();
-                    hash = hash * 31 + cmd.CornerRadius.GetHashCode();
-                    hash = hash * 31 + cmd.IsSoftShadow.GetHashCode();
-                    hash = hash * 31 + cmd.Softness.GetHashCode();
-                    hash = hash * 31 + cmd.IsKeyRainCurve.GetHashCode();
-                    if (cmd.IsKeyRainCurve)
-                    {
-                        hash = hash * 31 + cmd.FarColor.GetHashCode();
-                        hash = hash * 31 + cmd.GradientEnabled.GetHashCode();
-                        hash = hash * 31 + cmd.HeightMaskGradient.GetHashCode();
-                        hash = hash * 31 + cmd.FadeMode.GetHashCode();
-                        hash = hash * 31 + cmd.KeyY.GetHashCode();
-                        hash = hash * 31 + cmd.MaxHeight.GetHashCode();
-                        hash = hash * 31 + cmd.FadeHeight.GetHashCode();
-                        hash = hash * 31 + cmd.FadePower.GetHashCode();
-                        hash = hash * 31 + cmd.GradientHeight.GetHashCode();
-                        hash = hash * 31 + cmd.GradientPower.GetHashCode();
-                        hash = hash * 31 + cmd.HorizontalGradientEnabled.GetHashCode();
-                        hash = hash * 31 + cmd.HorizontalColor.GetHashCode();
-                    }
+                    hash = hash * 31 + cmd.FarColor.GetHashCode();
+                    hash = hash * 31 + cmd.GradientEnabled.GetHashCode();
+                    hash = hash * 31 + cmd.HeightMaskGradient.GetHashCode();
+                    hash = hash * 31 + cmd.FadeMode.GetHashCode();
+                    hash = hash * 31 + cmd.KeyY.GetHashCode();
+                    hash = hash * 31 + cmd.MaxHeight.GetHashCode();
+                    hash = hash * 31 + cmd.FadeHeight.GetHashCode();
+                    hash = hash * 31 + cmd.FadePower.GetHashCode();
+                    hash = hash * 31 + cmd.GradientHeight.GetHashCode();
+                    hash = hash * 31 + cmd.GradientPower.GetHashCode();
+                    hash = hash * 31 + cmd.HorizontalGradientEnabled.GetHashCode();
+                    hash = hash * 31 + cmd.HorizontalColor.GetHashCode();
                 }
                 return hash;
             }
         }
+    }
+
+    internal class CheryRectBatchGraphic : MaskableGraphic
+    {
+        private readonly List<Vector2> _outer = new List<Vector2>(KeyViewerRoundedRectMesh.MaxCornerSegments * 4 + 4);
+        private readonly List<Vector2> _inner = new List<Vector2>(KeyViewerRoundedRectMesh.MaxCornerSegments * 4 + 4);
+        private readonly List<Vector2> _aaOuter = new List<Vector2>(KeyViewerRoundedRectMesh.MaxCornerSegments * 4 + 4);
+        private readonly List<Vector2> _aaInner = new List<Vector2>(KeyViewerRoundedRectMesh.MaxCornerSegments * 4 + 4);
+
+        // View over the owning CheryRectBatchGroup command list: this graphic only
+        // triangulates the command indices assigned to it.
+        private List<CheryRectCommand> _viewCommands;
+        private List<int> _viewIndices;
+
+        internal void SetView(List<CheryRectCommand> commands, List<int> indices)
+        {
+            _viewCommands = commands;
+            _viewIndices = indices;
+        }
+
+        // Screen.width/height are native calls; EvaluateKeyRainCurveColor runs per
+        // vertex, so both are sampled once per mesh rebuild instead.
+        private static float _screenHalfWidth;
+        private static float _screenHalfHeight;
+
 
         protected override void OnPopulateMesh(VertexHelper vh)
         {
             vh.Clear();
-            if (_commands.Count == 0) return;
+            if (_viewCommands == null || _viewIndices == null || _viewIndices.Count == 0) return;
 
-            for (int i = 0; i < _commands.Count; i++)
+            _screenHalfWidth = Screen.width * 0.5f;
+            _screenHalfHeight = Screen.height * 0.5f;
+            for (int i = 0; i < _viewIndices.Count; i++)
             {
-                AddCommand(vh, _commands[i]);
+                int index = _viewIndices[i];
+                if (index < 0 || index >= _viewCommands.Count) continue;
+                AddCommand(vh, _viewCommands[index]);
             }
         }
 
-        private void AddCommand(VertexHelper vh, RectCommand cmd)
+        private void AddCommand(VertexHelper vh, CheryRectCommand cmd)
         {
             Rect r = ToLocalRect(cmd.TopLeft, cmd.Size);
             if (r.width <= 0f || r.height <= 0f) return;
-
-            if (cmd.IsSoftShadow)
-            {
-                AddSoftShadowFill(vh, r, cmd.TopLeftColor, cmd.BottomLeftColor, cmd.Softness);
-                return;
-            }
 
             if (cmd.IsKeyRainCurve)
             {
@@ -850,28 +1043,39 @@ namespace CheryTools
                 return;
             }
 
-            BuildRoundedRect(r, radius, _outer);
+            bool hasFill = HasVisibleFill(cmd);
+            bool hasBorder = cmd.BorderThickness > 0f && HasVisibleBorder(cmd);
+            float borderInset = hasBorder
+                ? Mathf.Min(cmd.BorderThickness, Mathf.Min(r.width, r.height) * 0.5f)
+                : 0f;
 
-            if (HasVisibleFill(cmd))
+            if (hasFill)
             {
-                AddRoundedFill(vh, _outer, r, cmd.TopLeftColor, cmd.TopRightColor, cmd.BottomRightColor, cmd.BottomLeftColor);
+                if (hasBorder)
+                {
+                    // Stop the fill at the opaque side of the border's AA band.
+                    // Drawing two identical fringes on top of each other would
+                    // over-cover the edge and make it look darker/thicker.
+                    AddRoundedFillClipped(vh, r, radius, CalculateBorderAa(r, borderInset), cmd.TopLeftColor, cmd.TopRightColor, cmd.BottomRightColor, cmd.BottomLeftColor);
+                }
+                else
+                {
+                    AddRoundedFillAA(vh, r, radius, cmd.TopLeftColor, cmd.TopRightColor, cmd.BottomRightColor, cmd.BottomLeftColor);
+                }
             }
 
-            if (cmd.BorderThickness > 0f && HasVisibleBorder(cmd))
+            if (hasBorder)
             {
-                float inset = Mathf.Min(cmd.BorderThickness, Mathf.Min(r.width, r.height) * 0.5f);
-                Rect innerRect = new Rect(r.xMin + inset, r.yMin + inset, Mathf.Max(0f, r.width - inset * 2f), Mathf.Max(0f, r.height - inset * 2f));
-                BuildRoundedRect(innerRect, Mathf.Max(0f, radius - inset), _inner);
-                AddRoundedBorder(vh, _outer, _inner, r, cmd);
+                AddRoundedBorderAA(vh, r, radius, borderInset, cmd);
             }
         }
 
-        private static bool HasVisibleFill(RectCommand cmd)
+        private static bool HasVisibleFill(CheryRectCommand cmd)
         {
             return cmd.TopLeftColor.a > 0f || cmd.TopRightColor.a > 0f || cmd.BottomRightColor.a > 0f || cmd.BottomLeftColor.a > 0f;
         }
 
-        private static bool HasVisibleBorder(RectCommand cmd)
+        private static bool HasVisibleBorder(CheryRectCommand cmd)
         {
             return cmd.BorderTopLeftColor.a > 0f || cmd.BorderTopRightColor.a > 0f || cmd.BorderBottomRightColor.a > 0f || cmd.BorderBottomLeftColor.a > 0f;
         }
@@ -880,115 +1084,15 @@ namespace CheryTools
         {
             float width = Mathf.Max(1f, size.x);
             float height = Mathf.Max(1f, size.y);
-            float left = Mathf.Round(topLeft.x) - Screen.width * 0.5f;
-            float top = Screen.height * 0.5f - Mathf.Round(topLeft.y);
+            float left = Mathf.Round(topLeft.x) - _screenHalfWidth;
+            float top = _screenHalfHeight - Mathf.Round(topLeft.y);
             return new Rect(left, top - height, width, height);
-        }
-
-        private static void AddSoftShadowFill(VertexHelper vh, Rect r, Color topColor, Color bottomColor, float softness)
-        {
-            if (softness <= 0.01f)
-            {
-                AddRectFill(vh, r, topColor, bottomColor);
-                return;
-            }
-
-            float blur = Mathf.Max(1f, softness);
-            Color clearTop = WithAlpha(topColor, 0f);
-            Color clearBottom = WithAlpha(bottomColor, 0f);
-
-            AddRectFill(vh, r, topColor, bottomColor);
-
-            AddGradientQuad(
-                vh,
-                new Vector2(r.xMin - blur, r.yMax),
-                new Vector2(r.xMin, r.yMax),
-                new Vector2(r.xMin, r.yMin),
-                new Vector2(r.xMin - blur, r.yMin),
-                clearTop,
-                topColor,
-                bottomColor,
-                clearBottom);
-            AddGradientQuad(
-                vh,
-                new Vector2(r.xMax, r.yMax),
-                new Vector2(r.xMax + blur, r.yMax),
-                new Vector2(r.xMax + blur, r.yMin),
-                new Vector2(r.xMax, r.yMin),
-                topColor,
-                clearTop,
-                clearBottom,
-                bottomColor);
-            AddGradientQuad(
-                vh,
-                new Vector2(r.xMin, r.yMax + blur),
-                new Vector2(r.xMax, r.yMax + blur),
-                new Vector2(r.xMax, r.yMax),
-                new Vector2(r.xMin, r.yMax),
-                clearTop,
-                clearTop,
-                topColor,
-                topColor);
-            AddGradientQuad(
-                vh,
-                new Vector2(r.xMin, r.yMin),
-                new Vector2(r.xMax, r.yMin),
-                new Vector2(r.xMax, r.yMin - blur),
-                new Vector2(r.xMin, r.yMin - blur),
-                bottomColor,
-                bottomColor,
-                clearBottom,
-                clearBottom);
-
-            AddCornerShadow(vh, new Vector2(r.xMin, r.yMax), blur, 90f, 180f, topColor);
-            AddCornerShadow(vh, new Vector2(r.xMax, r.yMax), blur, 0f, 90f, topColor);
-            AddCornerShadow(vh, new Vector2(r.xMax, r.yMin), blur, -90f, 0f, bottomColor);
-            AddCornerShadow(vh, new Vector2(r.xMin, r.yMin), blur, -180f, -90f, bottomColor);
-        }
-
-        private static void AddIndexedQuad(VertexHelper vh, int topLeft, int topRight, int bottomRight, int bottomLeft)
-        {
-            vh.AddTriangle(topLeft, topRight, bottomRight);
-            vh.AddTriangle(topLeft, bottomRight, bottomLeft);
         }
 
         private static Color WithAlpha(Color color, float alpha)
         {
             color.a *= Mathf.Clamp01(alpha);
             return color;
-        }
-
-        private static void AddGradientQuad(VertexHelper vh, Vector2 topLeft, Vector2 topRight, Vector2 bottomRight, Vector2 bottomLeft, Color colorTopLeft, Color colorTopRight, Color colorBottomRight, Color colorBottomLeft)
-        {
-            int start = vh.currentVertCount;
-            vh.AddVert(topLeft, colorTopLeft, Vector2.zero);
-            vh.AddVert(topRight, colorTopRight, Vector2.zero);
-            vh.AddVert(bottomRight, colorBottomRight, Vector2.zero);
-            vh.AddVert(bottomLeft, colorBottomLeft, Vector2.zero);
-            vh.AddTriangle(start, start + 1, start + 2);
-            vh.AddTriangle(start, start + 2, start + 3);
-        }
-
-        private static void AddCornerShadow(VertexHelper vh, Vector2 center, float radius, float startDeg, float endDeg, Color innerColor)
-        {
-            const int Segments = 10;
-            Color outerColor = WithAlpha(innerColor, 0f);
-            int centerIndex = vh.currentVertCount;
-            vh.AddVert(center, innerColor, Vector2.zero);
-
-            for (int i = 0; i <= Segments; i++)
-            {
-                float t = i / (float)Segments;
-                float deg = Mathf.Lerp(startDeg, endDeg, t);
-                float rad = deg * Mathf.Deg2Rad;
-                Vector2 point = new Vector2(center.x + Mathf.Cos(rad) * radius, center.y + Mathf.Sin(rad) * radius);
-                vh.AddVert(point, outerColor, Vector2.zero);
-            }
-
-            for (int i = 0; i < Segments; i++)
-            {
-                vh.AddTriangle(centerIndex, centerIndex + i + 1, centerIndex + i + 2);
-            }
         }
 
         private static void AddRectFill(VertexHelper vh, Rect r, Color topColor, Color bottomColor)
@@ -1007,28 +1111,36 @@ namespace CheryTools
             vh.AddTriangle(start, start + 2, start + 3);
         }
 
-        private void AddKeyRainCurveFill(VertexHelper vh, Rect r, RectCommand cmd)
+        private void AddKeyRainCurveFill(VertexHelper vh, Rect r, CheryRectCommand cmd)
         {
             float radius = Mathf.Min(cmd.CornerRadius, Mathf.Min(r.width, r.height) * 0.5f);
             if (radius > 0.01f)
             {
-                BuildRoundedRect(r, radius, _outer);
+                int cornerSegments = KeyViewerRoundedRectMesh.CalculateCornerSegments(radius);
+                float aa = Mathf.Min(KeyViewerRoundedRectMesh.AntiAliasHalfWidth, Mathf.Min(r.width, r.height) * 0.25f);
+                Rect innerRect = KeyViewerRoundedRectMesh.Inset(r, aa);
+                Rect outerRect = KeyViewerRoundedRectMesh.Expand(r, aa);
+                KeyViewerRoundedRectMesh.Build(innerRect, Mathf.Max(0f, radius - aa), cornerSegments, _inner);
+                KeyViewerRoundedRectMesh.Build(outerRect, radius + aa, cornerSegments, _aaOuter);
+
                 int centerIndex = vh.currentVertCount;
                 Vector2 center = r.center;
                 vh.AddVert(center, EvaluateKeyRainCurveColor(center.y, r, cmd, 0.5f), Vector2.zero);
 
-                for (int i = 0; i < _outer.Count; i++)
+                for (int i = 0; i < _inner.Count; i++)
                 {
-                    Vector2 p = _outer[i];
+                    Vector2 p = _inner[i];
                     float xT = r.width <= 0f ? 0f : Mathf.InverseLerp(r.xMin, r.xMax, p.x);
                     vh.AddVert(p, EvaluateKeyRainCurveColor(p.y, r, cmd, xT), Vector2.zero);
                 }
 
-                for (int i = 0; i < _outer.Count; i++)
+                for (int i = 0; i < _inner.Count; i++)
                 {
-                    int next = i == _outer.Count - 1 ? 1 : i + 2;
+                    int next = i == _inner.Count - 1 ? 1 : i + 2;
                     vh.AddTriangle(centerIndex, centerIndex + i + 1, centerIndex + next);
                 }
+
+                AddKeyRainCurveFringe(vh, _aaOuter, _inner, r, cmd);
                 return;
             }
 
@@ -1090,14 +1202,14 @@ namespace CheryTools
             return Mathf.Min(inset, r.width * 0.5f);
         }
 
-        private static Color EvaluateKeyRainCurveColor(float localY, Rect r, RectCommand cmd, bool rightSide)
+        private static Color EvaluateKeyRainCurveColor(float localY, Rect r, CheryRectCommand cmd, bool rightSide)
         {
             return EvaluateKeyRainCurveColor(localY, r, cmd, rightSide ? 1f : 0f);
         }
 
-        private static Color EvaluateKeyRainCurveColor(float localY, Rect r, RectCommand cmd, float xT)
+        private static Color EvaluateKeyRainCurveColor(float localY, Rect r, CheryRectCommand cmd, float xT)
         {
-            float screenY = Screen.height * 0.5f - localY;
+            float screenY = _screenHalfHeight - localY;
             float screenTop = cmd.TopLeft.y;
             float screenBottom = cmd.TopLeft.y + cmd.Size.y;
 
@@ -1136,24 +1248,12 @@ namespace CheryTools
             return color;
         }
 
-        private static void AddRectBorder(VertexHelper vh, Rect r, float thickness, RectCommand cmd)
+        private static void AddRectBorder(VertexHelper vh, Rect r, float thickness, CheryRectCommand cmd)
         {
             AddRectFill(vh, new Rect(r.xMin, r.yMax - thickness, r.width, thickness), cmd.BorderTopLeftColor, cmd.BorderTopRightColor, EvaluateBorderColor(r.xMax, r.yMax - thickness, r, cmd), EvaluateBorderColor(r.xMin, r.yMax - thickness, r, cmd));
             AddRectFill(vh, new Rect(r.xMin, r.yMin, r.width, thickness), EvaluateBorderColor(r.xMin, r.yMin + thickness, r, cmd), EvaluateBorderColor(r.xMax, r.yMin + thickness, r, cmd), cmd.BorderBottomRightColor, cmd.BorderBottomLeftColor);
             AddRectFill(vh, new Rect(r.xMin, r.yMin + thickness, thickness, Mathf.Max(0f, r.height - thickness * 2f)), EvaluateBorderColor(r.xMin, r.yMax - thickness, r, cmd), EvaluateBorderColor(r.xMin + thickness, r.yMax - thickness, r, cmd), EvaluateBorderColor(r.xMin + thickness, r.yMin + thickness, r, cmd), EvaluateBorderColor(r.xMin, r.yMin + thickness, r, cmd));
             AddRectFill(vh, new Rect(r.xMax - thickness, r.yMin + thickness, thickness, Mathf.Max(0f, r.height - thickness * 2f)), EvaluateBorderColor(r.xMax - thickness, r.yMax - thickness, r, cmd), EvaluateBorderColor(r.xMax, r.yMax - thickness, r, cmd), EvaluateBorderColor(r.xMax, r.yMin + thickness, r, cmd), EvaluateBorderColor(r.xMax - thickness, r.yMin + thickness, r, cmd));
-        }
-
-        private static void AddSolidQuad(VertexHelper vh, Rect r, Color color)
-        {
-            if (r.width <= 0f || r.height <= 0f) return;
-            int start = vh.currentVertCount;
-            vh.AddVert(new Vector2(r.xMin, r.yMax), color, Vector2.zero);
-            vh.AddVert(new Vector2(r.xMax, r.yMax), color, Vector2.zero);
-            vh.AddVert(new Vector2(r.xMax, r.yMin), color, Vector2.zero);
-            vh.AddVert(new Vector2(r.xMin, r.yMin), color, Vector2.zero);
-            vh.AddTriangle(start, start + 1, start + 2);
-            vh.AddTriangle(start, start + 2, start + 3);
         }
 
         private static void AddRoundedFill(VertexHelper vh, List<Vector2> points, Rect r, Color topLeftColor, Color topRightColor, Color bottomRightColor, Color bottomLeftColor)
@@ -1175,21 +1275,116 @@ namespace CheryTools
             }
         }
 
-        private static void AddRoundedBorder(VertexHelper vh, List<Vector2> outer, List<Vector2> inner, Rect r, RectCommand cmd)
+        private void AddRoundedFillAA(VertexHelper vh, Rect r, float radius, Color topLeftColor, Color topRightColor, Color bottomRightColor, Color bottomLeftColor)
+        {
+            int cornerSegments = KeyViewerRoundedRectMesh.CalculateCornerSegments(radius);
+            float aa = Mathf.Min(KeyViewerRoundedRectMesh.AntiAliasHalfWidth, Mathf.Min(r.width, r.height) * 0.25f);
+            Rect innerRect = KeyViewerRoundedRectMesh.Inset(r, aa);
+            Rect outerRect = KeyViewerRoundedRectMesh.Expand(r, aa);
+            KeyViewerRoundedRectMesh.Build(innerRect, Mathf.Max(0f, radius - aa), cornerSegments, _inner);
+            KeyViewerRoundedRectMesh.Build(outerRect, radius + aa, cornerSegments, _aaOuter);
+
+            AddRoundedFill(vh, _inner, r, topLeftColor, topRightColor, bottomRightColor, bottomLeftColor);
+            AddRoundedColorRing(vh, _aaOuter, _inner, r, topLeftColor, topRightColor, bottomRightColor, bottomLeftColor, 0f, 1f);
+        }
+
+        private void AddRoundedFillClipped(VertexHelper vh, Rect r, float radius, float inset, Color topLeftColor, Color topRightColor, Color bottomRightColor, Color bottomLeftColor)
+        {
+            int cornerSegments = KeyViewerRoundedRectMesh.CalculateCornerSegments(radius);
+            Rect clippedRect = KeyViewerRoundedRectMesh.Inset(r, inset);
+            KeyViewerRoundedRectMesh.Build(clippedRect, Mathf.Max(0f, radius - inset), cornerSegments, _inner);
+            AddRoundedFill(vh, _inner, r, topLeftColor, topRightColor, bottomRightColor, bottomLeftColor);
+        }
+
+        private static float CalculateBorderAa(Rect r, float thickness)
+        {
+            return Mathf.Min(
+                KeyViewerRoundedRectMesh.AntiAliasHalfWidth,
+                Mathf.Min(thickness * 0.5f, Mathf.Min(r.width, r.height) * 0.25f));
+        }
+
+        private void AddRoundedBorderAA(VertexHelper vh, Rect r, float radius, float thickness, CheryRectCommand cmd)
+        {
+            if (thickness <= 0.01f) return;
+
+            int cornerSegments = KeyViewerRoundedRectMesh.CalculateCornerSegments(radius);
+            float aa = CalculateBorderAa(r, thickness);
+            Rect innerRect = KeyViewerRoundedRectMesh.Inset(r, thickness);
+            float innerRadius = Mathf.Max(0f, radius - thickness);
+
+            if (innerRect.width <= 0.01f || innerRect.height <= 0.01f)
+            {
+                AddRoundedFillAA(vh, r, radius, cmd.BorderTopLeftColor, cmd.BorderTopRightColor, cmd.BorderBottomRightColor, cmd.BorderBottomLeftColor);
+                return;
+            }
+
+            KeyViewerRoundedRectMesh.Build(KeyViewerRoundedRectMesh.Expand(r, aa), radius + aa, cornerSegments, _aaOuter);
+            KeyViewerRoundedRectMesh.Build(KeyViewerRoundedRectMesh.Inset(r, aa), Mathf.Max(0f, radius - aa), cornerSegments, _outer);
+            KeyViewerRoundedRectMesh.Build(KeyViewerRoundedRectMesh.Expand(innerRect, aa), innerRadius + aa, cornerSegments, _inner);
+            KeyViewerRoundedRectMesh.Build(KeyViewerRoundedRectMesh.Inset(innerRect, aa), Mathf.Max(0f, innerRadius - aa), cornerSegments, _aaInner);
+
+            AddRoundedColorRing(vh, _aaOuter, _outer, r, cmd.BorderTopLeftColor, cmd.BorderTopRightColor, cmd.BorderBottomRightColor, cmd.BorderBottomLeftColor, 0f, 1f);
+            AddRoundedColorRing(vh, _outer, _inner, r, cmd.BorderTopLeftColor, cmd.BorderTopRightColor, cmd.BorderBottomRightColor, cmd.BorderBottomLeftColor, 1f, 1f);
+            AddRoundedColorRing(vh, _inner, _aaInner, r, cmd.BorderTopLeftColor, cmd.BorderTopRightColor, cmd.BorderBottomRightColor, cmd.BorderBottomLeftColor, 1f, 0f);
+        }
+
+        private static void AddRoundedColorRing(VertexHelper vh, List<Vector2> outer, List<Vector2> inner, Rect r, Color topLeftColor, Color topRightColor, Color bottomRightColor, Color bottomLeftColor, float outerAlpha, float innerAlpha)
         {
             int count = Mathf.Min(outer.Count, inner.Count);
+            if (count < 2) return;
+
+            int outerStart = vh.currentVertCount;
+            for (int i = 0; i < count; i++)
+            {
+                Color color = EvaluateFillColor(outer[i], r, topLeftColor, topRightColor, bottomRightColor, bottomLeftColor);
+                color.a *= outerAlpha;
+                vh.AddVert(outer[i], color, Vector2.zero);
+            }
+
+            int innerStart = vh.currentVertCount;
+            for (int i = 0; i < count; i++)
+            {
+                Color color = EvaluateFillColor(inner[i], r, topLeftColor, topRightColor, bottomRightColor, bottomLeftColor);
+                color.a *= innerAlpha;
+                vh.AddVert(inner[i], color, Vector2.zero);
+            }
+
             for (int i = 0; i < count; i++)
             {
                 int next = (i + 1) % count;
-                int start = vh.currentVertCount;
+                vh.AddTriangle(outerStart + i, outerStart + next, innerStart + next);
+                vh.AddTriangle(outerStart + i, innerStart + next, innerStart + i);
+            }
+        }
 
-                vh.AddVert(outer[i], EvaluateBorderColor(outer[i].x, outer[i].y, r, cmd), Vector2.zero);
-                vh.AddVert(outer[next], EvaluateBorderColor(outer[next].x, outer[next].y, r, cmd), Vector2.zero);
-                vh.AddVert(inner[next], EvaluateBorderColor(inner[next].x, inner[next].y, r, cmd), Vector2.zero);
-                vh.AddVert(inner[i], EvaluateBorderColor(inner[i].x, inner[i].y, r, cmd), Vector2.zero);
+        private static void AddKeyRainCurveFringe(VertexHelper vh, List<Vector2> outer, List<Vector2> inner, Rect r, CheryRectCommand cmd)
+        {
+            int count = Mathf.Min(outer.Count, inner.Count);
+            if (count < 2) return;
 
-                vh.AddTriangle(start, start + 1, start + 2);
-                vh.AddTriangle(start, start + 2, start + 3);
+            int outerStart = vh.currentVertCount;
+            for (int i = 0; i < count; i++)
+            {
+                Vector2 point = outer[i];
+                float xT = r.width <= 0f ? 0f : Mathf.InverseLerp(r.xMin, r.xMax, point.x);
+                Color color = EvaluateKeyRainCurveColor(point.y, r, cmd, xT);
+                color.a = 0f;
+                vh.AddVert(point, color, Vector2.zero);
+            }
+
+            int innerStart = vh.currentVertCount;
+            for (int i = 0; i < count; i++)
+            {
+                Vector2 point = inner[i];
+                float xT = r.width <= 0f ? 0f : Mathf.InverseLerp(r.xMin, r.xMax, point.x);
+                vh.AddVert(point, EvaluateKeyRainCurveColor(point.y, r, cmd, xT), Vector2.zero);
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                int next = (i + 1) % count;
+                vh.AddTriangle(outerStart + i, outerStart + next, innerStart + next);
+                vh.AddTriangle(outerStart + i, innerStart + next, innerStart + i);
             }
         }
 
@@ -1208,39 +1403,11 @@ namespace CheryTools
             return Color.Lerp(bottom, top, ty);
         }
 
-        private static Color EvaluateBorderColor(float x, float y, Rect r, RectCommand cmd)
+        private static Color EvaluateBorderColor(float x, float y, Rect r, CheryRectCommand cmd)
         {
             return EvaluateFillColor(new Vector2(x, y), r, cmd.BorderTopLeftColor, cmd.BorderTopRightColor, cmd.BorderBottomRightColor, cmd.BorderBottomLeftColor);
         }
 
-        private static void BuildRoundedRect(Rect r, float radius, List<Vector2> points)
-        {
-            points.Clear();
-            if (radius <= 0.01f)
-            {
-                points.Add(new Vector2(r.xMin, r.yMax));
-                points.Add(new Vector2(r.xMax, r.yMax));
-                points.Add(new Vector2(r.xMax, r.yMin));
-                points.Add(new Vector2(r.xMin, r.yMin));
-                return;
-            }
-
-            AddArc(points, new Vector2(r.xMax - radius, r.yMax - radius), radius, 90f, 0f);
-            AddArc(points, new Vector2(r.xMax - radius, r.yMin + radius), radius, 0f, -90f);
-            AddArc(points, new Vector2(r.xMin + radius, r.yMin + radius), radius, -90f, -180f);
-            AddArc(points, new Vector2(r.xMin + radius, r.yMax - radius), radius, 180f, 90f);
-        }
-
-        private static void AddArc(List<Vector2> points, Vector2 center, float radius, float startDeg, float endDeg)
-        {
-            for (int i = 0; i <= CornerSegments; i++)
-            {
-                float t = i / (float)CornerSegments;
-                float deg = Mathf.Lerp(startDeg, endDeg, t);
-                float rad = deg * Mathf.Deg2Rad;
-                points.Add(new Vector2(center.x + Mathf.Cos(rad) * radius, center.y + Mathf.Sin(rad) * radius));
-            }
-        }
     }
 
     internal class CheryShadowBatchGraphic : MaskableGraphic
@@ -1317,8 +1484,9 @@ namespace CheryTools
                 _lastHadCommands = true;
                 _lastCommandCount = _commands.Count;
                 _lastCommandHash = commandHash;
+                // The material and its static gaussian texture never change after
+                // creation, so only the vertices need re-dirtying here.
                 SetVerticesDirty();
-                SetMaterialDirty();
             }
         }
 
@@ -1342,11 +1510,22 @@ namespace CheryTools
             }
         }
 
+        // Reused across AddCommand calls (main-thread only) to avoid four array
+        // allocations per shadow per mesh rebuild.
+        private static readonly float[] _sliceXs = new float[4];
+        private static readonly float[] _sliceYs = new float[4];
+        private static readonly float[] _sliceUs = new float[4];
+        private static readonly float[] _sliceVs = new float[4];
+        private static float _screenHalfWidth;
+        private static float _screenHalfHeight;
+
         protected override void OnPopulateMesh(VertexHelper vh)
         {
             vh.Clear();
             if (_commands.Count == 0) return;
 
+            _screenHalfWidth = Screen.width * 0.5f;
+            _screenHalfHeight = Screen.height * 0.5f;
             for (int i = 0; i < _commands.Count; i++)
             {
                 AddCommand(vh, _commands[i]);
@@ -1361,10 +1540,14 @@ namespace CheryTools
             float border = Mathf.Max(1f, cmd.Softness);
             float uvBorder = TextureBorder / (float)TextureSize;
 
-            float[] xs = new float[] { inner.xMin - border, inner.xMin, inner.xMax, inner.xMax + border };
-            float[] ys = new float[] { inner.yMin - border, inner.yMin, inner.yMax, inner.yMax + border };
-            float[] us = new float[] { 0f, uvBorder, 1f - uvBorder, 1f };
-            float[] vs = new float[] { 0f, uvBorder, 1f - uvBorder, 1f };
+            float[] xs = _sliceXs;
+            float[] ys = _sliceYs;
+            float[] us = _sliceUs;
+            float[] vs = _sliceVs;
+            xs[0] = inner.xMin - border; xs[1] = inner.xMin; xs[2] = inner.xMax; xs[3] = inner.xMax + border;
+            ys[0] = inner.yMin - border; ys[1] = inner.yMin; ys[2] = inner.yMax; ys[3] = inner.yMax + border;
+            us[0] = 0f; us[1] = uvBorder; us[2] = 1f - uvBorder; us[3] = 1f;
+            vs[0] = 0f; vs[1] = uvBorder; vs[2] = 1f - uvBorder; vs[3] = 1f;
 
             for (int y = 0; y < 3; y++)
             {
@@ -1405,8 +1588,8 @@ namespace CheryTools
         {
             float width = Mathf.Max(1f, size.x);
             float height = Mathf.Max(1f, size.y);
-            float left = Mathf.Round(topLeft.x) - Screen.width * 0.5f;
-            float top = Screen.height * 0.5f - Mathf.Round(topLeft.y);
+            float left = Mathf.Round(topLeft.x) - _screenHalfWidth;
+            float top = _screenHalfHeight - Mathf.Round(topLeft.y);
             return new Rect(left, top - height, width, height);
         }
 
@@ -1460,136 +1643,6 @@ namespace CheryTools
             float t = 1f / (1f + 0.3275911f * x);
             float y = 1f - (((((1.061405429f * t - 1.453152027f) * t) + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t * Mathf.Exp(-x * x);
             return sign * y;
-        }
-    }
-
-    internal class KeyViewerRectGraphic : MaskableGraphic
-    {
-        private const int CornerSegments = 8;
-
-        private Color _topColor = Color.white;
-        private Color _bottomColor = Color.white;
-        private Color _borderColor = Color.clear;
-        private float _borderThickness;
-        private float _cornerRadius;
-
-        public void SetStyle(Color topColor, Color bottomColor, Color borderColor, float borderThickness, float cornerRadius)
-        {
-            float safeBorderThickness = Mathf.Max(0f, borderThickness);
-            float safeCornerRadius = Mathf.Max(0f, cornerRadius);
-            if (_topColor == topColor
-                && _bottomColor == bottomColor
-                && _borderColor == borderColor
-                && Mathf.Approximately(_borderThickness, safeBorderThickness)
-                && Mathf.Approximately(_cornerRadius, safeCornerRadius))
-            {
-                return;
-            }
-
-            _topColor = topColor;
-            _bottomColor = bottomColor;
-            _borderColor = borderColor;
-            _borderThickness = safeBorderThickness;
-            _cornerRadius = safeCornerRadius;
-            SetVerticesDirty();
-        }
-
-        protected override void OnPopulateMesh(VertexHelper vh)
-        {
-            vh.Clear();
-
-            Rect r = rectTransform.rect;
-            if (r.width <= 0f || r.height <= 0f) return;
-
-            float radius = Mathf.Min(_cornerRadius, Mathf.Min(r.width, r.height) * 0.5f);
-            List<Vector2> outer = BuildRoundedRect(r, radius);
-
-            if (_topColor.a > 0f || _bottomColor.a > 0f)
-            {
-                AddFill(vh, outer, r);
-            }
-
-            if (_borderThickness > 0f && _borderColor.a > 0f)
-            {
-                float inset = Mathf.Min(_borderThickness, Mathf.Min(r.width, r.height) * 0.5f);
-                Rect innerRect = new Rect(r.xMin + inset, r.yMin + inset, Mathf.Max(0f, r.width - inset * 2f), Mathf.Max(0f, r.height - inset * 2f));
-                List<Vector2> inner = BuildRoundedRect(innerRect, Mathf.Max(0f, radius - inset));
-                AddBorder(vh, outer, inner);
-            }
-        }
-
-        private void AddFill(VertexHelper vh, List<Vector2> points, Rect r)
-        {
-            int centerIndex = vh.currentVertCount;
-            Vector2 center = r.center;
-            vh.AddVert(center, EvaluateFillColor(center.y, r), Vector2.zero);
-
-            for (int i = 0; i < points.Count; i++)
-            {
-                Vector2 p = points[i];
-                vh.AddVert(p, EvaluateFillColor(p.y, r), Vector2.zero);
-            }
-
-            for (int i = 0; i < points.Count; i++)
-            {
-                int next = i == points.Count - 1 ? 1 : i + 2;
-                vh.AddTriangle(centerIndex, centerIndex + i + 1, centerIndex + next);
-            }
-        }
-
-        private void AddBorder(VertexHelper vh, List<Vector2> outer, List<Vector2> inner)
-        {
-            int count = Mathf.Min(outer.Count, inner.Count);
-            for (int i = 0; i < count; i++)
-            {
-                int next = (i + 1) % count;
-                int start = vh.currentVertCount;
-
-                vh.AddVert(outer[i], _borderColor, Vector2.zero);
-                vh.AddVert(outer[next], _borderColor, Vector2.zero);
-                vh.AddVert(inner[next], _borderColor, Vector2.zero);
-                vh.AddVert(inner[i], _borderColor, Vector2.zero);
-
-                vh.AddTriangle(start, start + 1, start + 2);
-                vh.AddTriangle(start, start + 2, start + 3);
-            }
-        }
-
-        private Color EvaluateFillColor(float y, Rect r)
-        {
-            float t = r.height <= 0f ? 1f : Mathf.InverseLerp(r.yMin, r.yMax, y);
-            return Color.Lerp(_bottomColor, _topColor, t);
-        }
-
-        private static List<Vector2> BuildRoundedRect(Rect r, float radius)
-        {
-            List<Vector2> points = new List<Vector2>(CornerSegments * 4 + 4);
-
-            if (radius <= 0.01f)
-            {
-                points.Add(new Vector2(r.xMin, r.yMax));
-                points.Add(new Vector2(r.xMax, r.yMax));
-                points.Add(new Vector2(r.xMax, r.yMin));
-                points.Add(new Vector2(r.xMin, r.yMin));
-                return points;
-            }
-
-            AddArc(points, new Vector2(r.xMax - radius, r.yMax - radius), radius, 90f, 0f);
-            AddArc(points, new Vector2(r.xMax - radius, r.yMin + radius), radius, 0f, -90f);
-            AddArc(points, new Vector2(r.xMin + radius, r.yMin + radius), radius, -90f, -180f);
-            AddArc(points, new Vector2(r.xMin + radius, r.yMax - radius), radius, 180f, 90f);
-            return points;
-        }
-
-        private static void AddArc(List<Vector2> points, Vector2 center, float radius, float startDeg, float endDeg)
-        {
-            for (int i = 0; i <= CornerSegments; i++)
-            {
-                float t = i / (float)CornerSegments;
-                float deg = Mathf.Lerp(startDeg, endDeg, t);
-                float rad = deg * Mathf.Deg2Rad;
-                points.Add(new Vector2(center.x + Mathf.Cos(rad) * radius, center.y + Mathf.Sin(rad) * radius));
-            }
         }
     }
 }

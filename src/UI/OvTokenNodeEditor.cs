@@ -283,8 +283,12 @@ namespace CheryTools
             {
                 Vector2 graphPosition = (io.MousePos - canvasMin - _pan) / _zoom;
                 if (ImGui.MenuItem(IsImageMode ? "输入 / 当前图片" : "输入 / Token 选择")) AddNode(OvAnimationNodeKind.TokenInput, graphPosition);
-                if (!IsImageMode && ImGui.MenuItem("修改 / Token 内容")) AddModify(graphPosition);
-                if (!IsImageMode && ImGui.MenuItem("修改 / 数值格式")) AddNumberFormat(graphPosition);
+                if (!IsImageMode && ImGui.BeginMenu("修改"))
+                {
+                    if (ImGui.MenuItem("Token 内容")) AddModify(graphPosition);
+                    if (ImGui.MenuItem("数值格式")) AddNumberFormat(graphPosition);
+                    ImGui.EndMenu();
+                }
                 if (ImGui.MenuItem("布局 / 分组框")) AddGroupFrame(graphPosition);
                 if (ImGui.BeginMenu("触发器"))
                 {
@@ -312,9 +316,10 @@ namespace CheryTools
                     if (ImGui.MenuItem("透明度")) AddTween(OvTokenTweenProperty.Opacity, graphPosition);
                     ImGui.EndMenu();
                 }
-                if (!IsImageMode && ImGui.BeginMenu("持续效果"))
+                if (!IsImageMode && ImGui.BeginMenu("颜色"))
                 {
-                    if (ImGui.MenuItem("颜色映射 / 渐变")) AddColorEffect(graphPosition);
+                    if (ImGui.MenuItem("颜色渐变")) AddColorEffect(graphPosition);
+                    if (ImGui.MenuItem("改变颜色")) AddColorChange(graphPosition);
                     ImGui.EndMenu();
                 }
                 ImGui.EndPopup();
@@ -534,8 +539,8 @@ namespace CheryTools
                          ? Color(0.12f, 0.32f, 0.22f, 1f)
                          : node.Kind == OvAnimationNodeKind.NumberFormat
                              ? Color(0.18f, 0.30f, 0.18f, 1f)
-                         : node.Kind == OvAnimationNodeKind.Effect
-                             ? Color(0.10f, 0.34f, 0.30f, 1f)
+                         : node.Kind == OvAnimationNodeKind.Effect || node.Kind == OvAnimationNodeKind.ColorChange
+                              ? Color(0.10f, 0.34f, 0.30f, 1f)
                          : Color(0.20f, 0.16f, 0.34f, 1f);
             draw.AddRectFilled(g.Min, g.Max, body, 5f);
             draw.AddRectFilled(g.Min, new Vector2(g.Max.X, g.Min.Y + HeaderHeight * _zoom), header, 5f);
@@ -576,6 +581,7 @@ namespace CheryTools
             else if (node.Kind == OvAnimationNodeKind.Modify) DrawModifyInspector(node);
             else if (node.Kind == OvAnimationNodeKind.NumberFormat) DrawNumberFormatInspector(node);
             else if (node.Kind == OvAnimationNodeKind.Effect) DrawEffectInspector(node);
+            else if (node.Kind == OvAnimationNodeKind.ColorChange) DrawColorChangeInspector(node);
             else DrawTweenInspector(node);
 
             if (node.Kind != OvAnimationNodeKind.GroupFrame)
@@ -980,7 +986,8 @@ namespace CheryTools
 
         private static void DrawEffectInspector(OvAnimationNode node)
         {
-            ImGui.TextWrapped("持续读取数值，并把颜色映射到所选 Token。字颜色、描边颜色和阴影颜色是三个独立通道。");
+            ImGui.TextWrapped("持续读取数值，并把颜色渐变映射到所选 Token。字颜色、描边颜色和阴影颜色是三个独立通道。");
+            ImGui.TextDisabled("未连接触发器时始终生效；连接触发器后，仅在触发条件成立期间生效。");
 
             int source = (int)node.EffectValueSource;
             if (ImGui.Combo("数值来源", ref source, "Tag\0常数\0"))
@@ -1106,10 +1113,63 @@ namespace CheryTools
                 MarkGraphChanged();
             }
 
+            if (ImGui.Button("断开触发器连接##effect"))
+            {
+                CurrentGraph.Links.RemoveAll(link => link != null
+                    && link.ToNodeId == node.Id && link.ToPort == "flow");
+                MarkGraphChanged();
+            }
             if (ImGui.Button("断开 Token 连接##effect"))
             {
                 CurrentGraph.Links.RemoveAll(link => link != null
                     && link.ToNodeId == node.Id && link.ToPort == "targets");
+                MarkGraphChanged();
+            }
+        }
+
+        private static void DrawColorChangeInspector(OvAnimationNode node)
+        {
+            ImGui.TextWrapped("仅在上游触发条件成立期间覆盖所选 Token 的颜色；条件失效后立即恢复颜色渐变。该节点的颜色优先级高于颜色渐变。");
+
+            ImGui.SeparatorText("作用通道");
+            bool textColor = node.ColorChangeText;
+            bool outlineColor = node.ColorChangeOutline;
+            bool shadowColor = node.ColorChangeShadow;
+            bool channelChanged = false;
+            if (ImGui.Checkbox("字颜色", ref textColor)) channelChanged = true;
+            ImGui.SameLine();
+            if (ImGui.Checkbox("描边颜色", ref outlineColor)) channelChanged = true;
+            ImGui.SameLine();
+            if (ImGui.Checkbox("阴影颜色", ref shadowColor)) channelChanged = true;
+            if (channelChanged)
+            {
+                if (!textColor && !outlineColor && !shadowColor) textColor = true;
+                node.ColorChangeText = textColor;
+                node.ColorChangeOutline = outlineColor;
+                node.ColorChangeShadow = shadowColor;
+                MarkGraphChanged();
+            }
+
+            ImGui.SeparatorText("颜色");
+            if (node.ColorChangeText
+                && EditColorArray("字颜色##color_change", ref node.ColorChangeTextColor, new Vector4(1f, 1f, 1f, 1f)))
+            {
+                MarkGraphChanged();
+            }
+            if (node.ColorChangeOutline
+                && EditColorArray("描边颜色##color_change", ref node.ColorChangeOutlineColor, new Vector4(0f, 0f, 0f, 1f)))
+            {
+                MarkGraphChanged();
+            }
+            if (node.ColorChangeShadow
+                && EditColorArray("阴影颜色##color_change", ref node.ColorChangeShadowColor, new Vector4(0f, 0f, 0f, 0.75f)))
+            {
+                MarkGraphChanged();
+            }
+
+            if (ImGui.Button("断开输入连接##color_change"))
+            {
+                CurrentGraph.Links.RemoveAll(link => link != null && link.ToNodeId == node.Id);
                 MarkGraphChanged();
             }
         }
@@ -1300,6 +1360,27 @@ namespace CheryTools
             MarkGraphChanged();
         }
 
+        private static void AddColorChange(Vector2 position)
+        {
+            var node = new OvAnimationNode
+            {
+                Id = OvAnimationGraph.NewId(),
+                Kind = OvAnimationNodeKind.ColorChange,
+                Name = "Change Color",
+                ColorChangeText = true,
+                ColorChangeOutline = false,
+                ColorChangeShadow = false,
+                ColorChangeTextColor = new float[] { 1f, 1f, 1f, 1f },
+                ColorChangeOutlineColor = new float[] { 0f, 0f, 0f, 1f },
+                ColorChangeShadowColor = new float[] { 0f, 0f, 0f, 0.75f },
+                EditorX = position.X,
+                EditorY = position.Y
+            };
+            CurrentGraph.Nodes.Add(node);
+            SelectOnly(node.Id);
+            MarkGraphChanged();
+        }
+
         private static void AddNumberFormat(Vector2 position)
         {
             var node = new OvAnimationNode
@@ -1390,6 +1471,7 @@ namespace CheryTools
                 ? new Vector2(Math.Max(180f, node.EditorWidth), Math.Max(120f, node.EditorHeight))
                 : node.Kind == OvAnimationNodeKind.Tween || node.Kind == OvAnimationNodeKind.Modify
                     || node.Kind == OvAnimationNodeKind.Effect || node.Kind == OvAnimationNodeKind.NumberFormat
+                    || node.Kind == OvAnimationNodeKind.ColorChange
                     ? new Vector2(230f, string.IsNullOrWhiteSpace(node.EditorNote) ? 118f : 142f)
                     : new Vector2(210f, string.IsNullOrWhiteSpace(node.EditorNote) ? 96f : 126f);
             Vector2 min = canvasMin + _pan + new Vector2(node.EditorX, node.EditorY) * _zoom;
@@ -1412,7 +1494,8 @@ namespace CheryTools
             if (node.Kind == OvAnimationNodeKind.Trigger) return "事件：" + TriggerLabel(node.Trigger);
             if (node.Kind == OvAnimationNodeKind.Modify) return "修改：Token 内容";
             if (node.Kind == OvAnimationNodeKind.NumberFormat) return "修改：数值格式";
-            if (node.Kind == OvAnimationNodeKind.Effect) return "效果：颜色映射";
+            if (node.Kind == OvAnimationNodeKind.Effect) return "颜色：颜色渐变";
+            if (node.Kind == OvAnimationNodeKind.ColorChange) return "颜色：改变颜色";
             return "动画：" + TweenLabel(node.TweenProperty);
         }
 
@@ -1425,6 +1508,7 @@ namespace CheryTools
             if (node.Kind == OvAnimationNodeKind.Modify) return SummarizeModifyText(node.ModifyText);
             if (node.Kind == OvAnimationNodeKind.NumberFormat) return NumberFormatSummary(node);
             if (node.Kind == OvAnimationNodeKind.Effect) return EffectSummary(node);
+            if (node.Kind == OvAnimationNodeKind.ColorChange) return ColorChangeSummary(node);
             return node.Duration.ToString("0.00") + " 秒  " + (node.Easing ?? "linear")
                 + (node.TreatSelectedTokensAsGroup ? " · 整体" : string.Empty);
         }
@@ -1438,6 +1522,15 @@ namespace CheryTools
             if (channels.Length == 0) channels = "无通道";
             return (node.ColorMapMode == OvColorMapMode.Gradient ? "渐变" : "阶梯")
                 + " · " + channels + " · " + (node.ColorPoints?.Count ?? 0) + " 点";
+        }
+
+        private static string ColorChangeSummary(OvAnimationNode node)
+        {
+            string channels = string.Empty;
+            if (node.ColorChangeText) channels += "字";
+            if (node.ColorChangeOutline) channels += "描";
+            if (node.ColorChangeShadow) channels += "影";
+            return channels.Length == 0 ? "字颜色" : channels + "颜色";
         }
 
         private static string NumberFormatSummary(OvAnimationNode node)
@@ -1878,9 +1971,11 @@ namespace CheryTools
 
         private static bool HasInput(OvAnimationNode node, string port)
         {
-            return ((node.Kind == OvAnimationNodeKind.Tween || node.Kind == OvAnimationNodeKind.Modify)
+            return ((node.Kind == OvAnimationNodeKind.Tween || node.Kind == OvAnimationNodeKind.Modify
+                        || node.Kind == OvAnimationNodeKind.ColorChange)
                     && (port == "flow" || port == "targets"))
                 || (node.Kind == OvAnimationNodeKind.Effect && port == "targets")
+                || (node.Kind == OvAnimationNodeKind.Effect && port == "flow")
                 || (node.Kind == OvAnimationNodeKind.NumberFormat && port == "targets");
         }
 
@@ -1888,7 +1983,8 @@ namespace CheryTools
         {
             return (port == "flow" && (node.Kind == OvAnimationNodeKind.Trigger
                     || node.Kind == OvAnimationNodeKind.Tween
-                    || node.Kind == OvAnimationNodeKind.Modify))
+                    || node.Kind == OvAnimationNodeKind.Modify
+                    || node.Kind == OvAnimationNodeKind.ColorChange))
                 || (port == "targets" && node.Kind == OvAnimationNodeKind.TokenInput);
         }
 

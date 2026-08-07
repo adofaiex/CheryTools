@@ -10,7 +10,6 @@ namespace CheryTools
         public KVConfiguration Config;
         public float StartTime;
         public float? EndTime;
-        public string RenderId;
     }
 
     public class KeyViewerManager : MonoBehaviour
@@ -36,7 +35,7 @@ namespace CheryTools
         private readonly Dictionary<KVNode, KVConfiguration> _animationNodeConfigMap = new Dictionary<KVNode, KVConfiguration>();
         private readonly List<KVNode> _animationKeysBuffer = new List<KVNode>();
         private readonly List<KVNode> _visualPressedKeysBuffer = new List<KVNode>();
-        private int _nextDropRenderId = 1;
+        private readonly List<KVNode> _pressedRemovalBuffer = new List<KVNode>();
         private bool _renderDirty = true;
         private long _activeNodesRevision = -1;
         private long _lastRenderedRevision = -1;
@@ -329,7 +328,7 @@ namespace CheryTools
                 float current = 0f;
                 KeyPressAnimationProgress.TryGetValue(node, out current);
                 float target = pressed ? 1f : 0f;
-                float step = Time.unscaledDeltaTime / Mathf.Max(0.01f, animationSettings.Duration);
+                float step = RenderTimelineClock.DeltaTime / Mathf.Max(0.01f, animationSettings.Duration);
                 float next = Mathf.MoveTowards(current, target, step);
                 if (Mathf.Abs(next - current) > 0.0001f)
                 {
@@ -444,7 +443,10 @@ namespace CheryTools
 
             if (!Main.IsEnabled || Main.Settings == null || !Main.Settings.EnableKeyViewer) return;
 
-            float currentTime = Time.unscaledTime;
+            // Key rain, visual hold, KPS windows and key press interpolation share
+            // the captured gameplay timeline. Editor Tweaks fixes Time.deltaTime
+            // while rendering, so these values remain frame-accurate in exports.
+            float currentTime = RenderTimelineClock.Time;
             bool hasInputActivity = Input.anyKey || Input.anyKeyDown;
             if (!hasInputActivity && _pressedNodes.Count == 0 && ActiveDrops.Count == 0
                 && !HasPendingKpsSamples() && KeyPressAnimationProgress.Count == 0 && _visualPressedUntil.Count == 0)
@@ -465,9 +467,22 @@ namespace CheryTools
 
                     if (_pressedNodes.Count > 0)
                     {
-                        int removedPressed = _pressedNodes.RemoveWhere(node => node == null || !_activeNodeSet.Contains(node));
-                        if (removedPressed > 0)
+                        // Manual two-pass removal instead of RemoveWhere: the lambda
+                        // would capture _activeNodeSet and allocate every frame.
+                        _pressedRemovalBuffer.Clear();
+                        foreach (KVNode node in _pressedNodes)
                         {
+                            if (node == null || !_activeNodeSet.Contains(node))
+                            {
+                                _pressedRemovalBuffer.Add(node);
+                            }
+                        }
+                        if (_pressedRemovalBuffer.Count > 0)
+                        {
+                            for (int i = 0; i < _pressedRemovalBuffer.Count; i++)
+                            {
+                                _pressedNodes.Remove(_pressedRemovalBuffer[i]);
+                            }
                             MarkRenderDirty();
                         }
                     }
@@ -563,7 +578,7 @@ namespace CheryTools
                             }
                             if (IsKeyRainEnabled(ownerConfig, node))
                             {
-                                ActiveDrops.Add(new KeyDrop { Node = node, Config = ownerConfig, StartTime = currentTime, EndTime = null, RenderId = "rain_" + (_nextDropRenderId++).ToString() });
+                                ActiveDrops.Add(new KeyDrop { Node = node, Config = ownerConfig, StartTime = currentTime, EndTime = null });
                                 MarkRenderDirty();
                             }
                         }

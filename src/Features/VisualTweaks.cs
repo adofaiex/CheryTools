@@ -59,7 +59,7 @@ namespace CheryTools
                 controller.planetBlue.planetRenderer.LoadPlanetColor(false);
 
             if (controller.planetGreen != null && controller.planetGreen.planetRenderer != null)
-                controller.planetGreen.planetRenderer.LoadPlanetColor(false);
+                controller.planetGreen.planetRenderer.SetColor(new PlanetColor(new Color(0.3f, 0.7f, 0f, 1f)));
         }
 
         private static Color FloatArrayToColor(float[] arr)
@@ -97,6 +97,26 @@ namespace CheryTools
         {
             // Call ApplyCustomColors after the game loads the default planet color.
             // This ensures our custom colors override the default ones at the start of a level.
+            VisualTweaks.ApplyCustomColors();
+        }
+    }
+
+    [HarmonyPatch(typeof(PlanetarySystem), "LoadPlanetColors")]
+    public static class PlanetarySystem_LoadPlanetColors_Patch
+    {
+        public static void Postfix()
+        {
+            VisualTweaks.ApplyCustomColors();
+        }
+    }
+
+    [HarmonyPatch(typeof(PlanetarySystem), "ApplyMultiplanetColors")]
+    public static class PlanetarySystem_ApplyMultiplanetColors_Patch
+    {
+        public static void Postfix()
+        {
+            // The game reapplies its built-in green color whenever the active planet
+            // count changes. Reapply CT's wind-planet color after that operation.
             VisualTweaks.ApplyCustomColors();
         }
     }

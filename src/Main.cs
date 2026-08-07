@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
-using System.Reflection.Emit;
 using HarmonyLib;
 using UnityEngine;
 using UnityModManagerNet;
@@ -13,6 +11,7 @@ namespace CheryTools
     {
         public bool IsEnabled = true;
         public bool ShowInGame = true;
+        public bool OnlyShowPlaying = false;
         public string ImagePath = "";
         public float PositionX = 200f;
         public float PositionY = 200f;
@@ -39,6 +38,7 @@ namespace CheryTools
         public string Name = "新视频";
         public bool IsEnabled = true;
         public bool ShowInGame = true;
+        public bool OnlyShowPlaying = false;
         public string VideoPath = "";
         public bool Loop = true;
         public float ContentScale = 1.0f;
@@ -110,6 +110,7 @@ namespace CheryTools
         public string Name = "新进度条";
         public bool IsEnabled = true;
         public bool ShowInGame = true;
+        public bool OnlyShowPlaying = false;
 
         public OverlayerProgressValueSource ValueSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Progress);
         public OverlayerProgressValueSource MinSource = new OverlayerProgressValueSource(OverlayerProgressValueKind.Constant, 0.0);
@@ -244,7 +245,12 @@ namespace CheryTools
         public float KeyPressAnimationOffsetY = 0f;
 
         public int HitCount = 0;
-        
+
+        [System.Xml.Serialization.XmlIgnore]
+        public int CachedHitCountValue = int.MinValue;
+        [System.Xml.Serialization.XmlIgnore]
+        public string CachedHitCountText;
+
         public KVNode() {}
         public KVNode(string bind, float px, float py) {
             KeyBind = bind;
@@ -266,8 +272,18 @@ namespace CheryTools
         public string Name = "新配置";
         public bool IsEnabled = true;
         public bool ShowInGame = true;
+        public bool OnlyShowPlaying = false;
         public int TotalHits = 0;
         public System.Collections.Generic.List<KVNode> Nodes = new System.Collections.Generic.List<KVNode>();
+
+        [System.Xml.Serialization.XmlIgnore]
+        public int CachedTotalHitsValue = int.MinValue;
+        [System.Xml.Serialization.XmlIgnore]
+        public string CachedTotalHitsText;
+        [System.Xml.Serialization.XmlIgnore]
+        public int CachedKpsValue = int.MinValue;
+        [System.Xml.Serialization.XmlIgnore]
+        public string CachedKpsText;
 
         public string FontPath = "";
         public float Scale = 1.0f;
@@ -342,6 +358,7 @@ namespace CheryTools
         public string Name = "新模块";
         public bool IsEnabled = true;
         public bool ShowInGame = true;
+        public bool OnlyShowPlaying = false;
         public string TextFormat = "<color=#DA59FFFF>{fo}</color>  <color=#FF0000FF>{te}</color>  <color=#FF8E00FF>{ve}</color>  <color=#D7FF27FF>{ep}</color>  <color=#4DFF2DFF>{p}</color>  <color=#D7FF27FF>{lp}</color>  <color=#FF8E00FF>{vl}</color>  <color=#FF0000FF>{tl}</color>  <color=#DA59FFFF>{fm}</color>";
         public float PositionX = 50f;
         public float PositionY = 50f;
@@ -449,10 +466,34 @@ namespace CheryTools
         public KeyCode ToggleMenuKey = KeyCode.Insert;
         public string Language = LocalizationManager.DefaultLanguage;
         public float ImGuiPanelScale = 1.0f;
+        public int ImGuiPanelScaleBaselineVersion = 0;
+        public bool ImGuiPanelBlurEnabled = true;
+        public int ImGuiPanelBlurStrength = 10;
+        public float ImGuiPanelBlurTransitionDuration = 0.5f;
+        public string ImGuiPanelBlurTransitionEasing = "smootherstep";
+        public float FreeMakePropertyPanelWidth = 420.0f;
         public float OverlayUpdateRate = 240.0f;
+        // Numeric OV content ({accuracy}, {progress}, {combo}, progress bars, ...) is
+        // indistinguishable to the eye above ~60 Hz, while animations (key rain, press
+        // animations, token animations) must track OverlayUpdateRate to stay smooth.
+        // Keeping the two rates separate lets the data side throttle without making
+        // motion choppy. Set this equal to OverlayUpdateRate to restore old behaviour.
+        public float OverlayerDataUpdateRate = 60.0f;
         public float KeyViewerKpsRefreshInterval = 0.25f;
         public float OverlayerFpsTagRefreshInterval = 0.25f;
         public float ImageRenderScale = 1.0f;
+        // Keeps the static OV bake alive across ordinary settings invalidations.
+        // Dynamic tags and token animations are still evaluated normally.
+        public bool OverlayerManualBakeEnabled = false;
+        public bool ShowPerfHud = false;
+
+        // Resolution adaptation: remembers the screen resolution the current layout
+        // was last adapted to. Used by the runtime resolution watcher to rescale
+        // KV/OV layouts when the game resolution changes, and stamped into exported
+        // .cyt packages so importing them can adapt to the local resolution.
+        public int LastKnownScreenWidth = 0;
+        public int LastKnownScreenHeight = 0;
+        public bool ResolutionAutoAdaptEnabled = true;
 
         // Gameplay UI Settings
         public bool GameUIControlEnabled = false;
@@ -466,7 +507,6 @@ namespace CheryTools
         public float ToolsAntiBounceIntervalMs = 50f;
         public bool ToolsLimitInput = false;
         public System.Collections.Generic.List<KeyCode> ToolsLimitedKeys = new System.Collections.Generic.List<KeyCode>();
-        public bool EnableOfficialLevelEditorExperimental = false;
         public bool EnableEditorLevelLibrary = false;
 
         // Level editor library
@@ -474,6 +514,13 @@ namespace CheryTools
 
         // Integration Settings
         public bool XPerfectIntegrationEnabled = false;
+
+        // Sponsor benefits. Only the SHA-256 of the entered Sponsor Key is persisted.
+        public string SponsorKeyHash = "";
+        public bool SponsorTitleEnabled = false;
+        public bool SponsorCustomTitleEnabled = false;
+        public string SponsorCustomTitle = "";
+        public string SponsorCustomSubtitle = "";
 
         // KeyViewer Settings
         public bool EnableKeyViewer = true;
@@ -507,30 +554,17 @@ namespace CheryTools
             }
         }
 
-        public bool UploadToCloud(UnityModManager.ModEntry modEntry)
+        public bool EnsureImGuiPanelScaleBaseline(bool migrateLegacyValue)
         {
-            if (!CloudSettingsManager.IsSteamAvailable)
+            if (ImGuiPanelScaleBaselineVersion >= 1)
                 return false;
 
-            Save(modEntry);
-            return CloudSettingsManager.WriteToCloud(this, modEntry);
-        }
+            if (migrateLegacyValue)
+                ImGuiPanelScale /= ImGuiController.PanelBaselineScale;
 
-        public bool DownloadFromCloud(UnityModManager.ModEntry modEntry)
-        {
-            if (!CloudSettingsManager.IsSteamAvailable)
-                return false;
-
-            if (!CloudSettingsManager.HasCloudFile())
-                return false;
-
-            if (CloudSettingsManager.TryReadFromCloud(this, modEntry))
-            {
-                InitNulls();
-                Save(modEntry);
-                return true;
-            }
-            return false;
+            ImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, ImGuiPanelScale));
+            ImGuiPanelScaleBaselineVersion = 1;
+            return true;
         }
 
         public void InitNulls()
@@ -549,9 +583,21 @@ namespace CheryTools
             if (ImGuiPanelScale <= 0f || float.IsNaN(ImGuiPanelScale) || float.IsInfinity(ImGuiPanelScale))
                 ImGuiPanelScale = 1.0f;
             ImGuiPanelScale = Math.Max(0.6f, Math.Min(2.0f, ImGuiPanelScale));
+            ImGuiPanelBlurStrength = Math.Max(1, Math.Min(20, ImGuiPanelBlurStrength));
+            if (float.IsNaN(ImGuiPanelBlurTransitionDuration) || float.IsInfinity(ImGuiPanelBlurTransitionDuration))
+                ImGuiPanelBlurTransitionDuration = 0.5f;
+            ImGuiPanelBlurTransitionDuration = Math.Max(0f, Math.Min(2f, ImGuiPanelBlurTransitionDuration));
+            if (string.IsNullOrWhiteSpace(ImGuiPanelBlurTransitionEasing))
+                ImGuiPanelBlurTransitionEasing = "smootherstep";
+            if (FreeMakePropertyPanelWidth <= 0f || float.IsNaN(FreeMakePropertyPanelWidth) || float.IsInfinity(FreeMakePropertyPanelWidth))
+                FreeMakePropertyPanelWidth = 420.0f;
+            FreeMakePropertyPanelWidth = Math.Max(300.0f, Math.Min(1200.0f, FreeMakePropertyPanelWidth));
             if (OverlayUpdateRate <= 0f || float.IsNaN(OverlayUpdateRate) || float.IsInfinity(OverlayUpdateRate))
                 OverlayUpdateRate = 240.0f;
             OverlayUpdateRate = Math.Max(30.0f, Math.Min(360.0f, OverlayUpdateRate));
+            if (OverlayerDataUpdateRate <= 0f || float.IsNaN(OverlayerDataUpdateRate) || float.IsInfinity(OverlayerDataUpdateRate))
+                OverlayerDataUpdateRate = 60.0f;
+            OverlayerDataUpdateRate = Math.Max(15.0f, Math.Min(360.0f, OverlayerDataUpdateRate));
             if (KeyViewerKpsRefreshInterval <= 0f || float.IsNaN(KeyViewerKpsRefreshInterval) || float.IsInfinity(KeyViewerKpsRefreshInterval))
                 KeyViewerKpsRefreshInterval = 0.25f;
             KeyViewerKpsRefreshInterval = Math.Max(0.05f, Math.Min(2.0f, KeyViewerKpsRefreshInterval));
@@ -561,6 +607,11 @@ namespace CheryTools
             if (ImageRenderScale <= 0f || float.IsNaN(ImageRenderScale) || float.IsInfinity(ImageRenderScale))
                 ImageRenderScale = 1.0f;
             ImageRenderScale = Math.Max(0.25f, Math.Min(2.0f, ImageRenderScale));
+            if (LastKnownScreenWidth < 0) LastKnownScreenWidth = 0;
+            if (LastKnownScreenHeight < 0) LastKnownScreenHeight = 0;
+            if (SponsorKeyHash == null) SponsorKeyHash = "";
+            if (SponsorCustomTitle == null) SponsorCustomTitle = "";
+            if (SponsorCustomSubtitle == null) SponsorCustomSubtitle = "";
             EnsureGameUIElementSettings();
             
             if (RedPlanetColor == null || RedPlanetColor.Length != 4) RedPlanetColor = new float[] { 1f, 0f, 0f, 1f };
@@ -918,6 +969,7 @@ namespace CheryTools
                 Name = string.IsNullOrEmpty(source.Name) ? "KV 配置 副本" : source.Name + " 副本",
                 IsEnabled = source.IsEnabled,
                 ShowInGame = source.ShowInGame,
+                OnlyShowPlaying = source.OnlyShowPlaying,
                 TotalHits = 0,
                 Nodes = CloneKeyViewerNodes(source.Nodes),
                 FontPath = source.FontPath,
@@ -997,6 +1049,7 @@ namespace CheryTools
                 Name = string.IsNullOrEmpty(source.Name) ? "文本 副本" : source.Name + " 副本",
                 IsEnabled = source.IsEnabled,
                 ShowInGame = source.ShowInGame,
+                OnlyShowPlaying = source.OnlyShowPlaying,
                 TextFormat = source.TextFormat,
                 PositionX = source.PositionX + 16f,
                 PositionY = source.PositionY + 16f,
@@ -1036,6 +1089,7 @@ namespace CheryTools
             {
                 IsEnabled = source.IsEnabled,
                 ShowInGame = source.ShowInGame,
+                OnlyShowPlaying = source.OnlyShowPlaying,
                 ImagePath = source.ImagePath,
                 PositionX = source.PositionX + 16f,
                 PositionY = source.PositionY + 16f,
@@ -1061,6 +1115,7 @@ namespace CheryTools
                 Name = string.IsNullOrEmpty(source.Name) ? "视频 副本" : source.Name + " 副本",
                 IsEnabled = source.IsEnabled,
                 ShowInGame = source.ShowInGame,
+                OnlyShowPlaying = source.OnlyShowPlaying,
                 VideoPath = source.VideoPath,
                 Loop = source.Loop,
                 ContentScale = source.ContentScale,
@@ -1089,6 +1144,7 @@ namespace CheryTools
                 Name = string.IsNullOrEmpty(source.Name) ? "进度条 副本" : source.Name + " 副本",
                 IsEnabled = source.IsEnabled,
                 ShowInGame = source.ShowInGame,
+                OnlyShowPlaying = source.OnlyShowPlaying,
                 ValueSource = CloneProgressValueSource(source.ValueSource),
                 MinSource = CloneProgressValueSource(source.MinSource),
                 MaxSource = CloneProgressValueSource(source.MaxSource),
@@ -1668,14 +1724,74 @@ namespace CheryTools
         [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr LoadLibrary(string lpFileName);
 
+        private const string BundledDefaultConfigFileName = "CheryTools_Default_Jipper.cyt";
+
+        private static bool TryInstallBundledDefaultConfig(UnityModManager.ModEntry modEntry,
+            out int sourceWidth, out int sourceHeight)
+        {
+            sourceWidth = 0;
+            sourceHeight = 0;
+            if (modEntry == null || string.IsNullOrEmpty(modEntry.Path)) return false;
+
+            string settingsPath = System.IO.Path.Combine(modEntry.Path, "Settings.xml");
+            // Existing users must never be overwritten. The bundled template is
+            // installed only when UMM has no CheryTools settings file yet.
+            if (System.IO.File.Exists(settingsPath)) return false;
+
+            string packagePath = System.IO.Path.Combine(
+                modEntry.Path,
+                "Resources",
+                "Defaults",
+                BundledDefaultConfigFileName);
+            if (!System.IO.File.Exists(packagePath))
+            {
+                Logger?.Log("Bundled default config not found; using code defaults: " + packagePath);
+                return false;
+            }
+
+            try
+            {
+                CheryToolsAssets.ImportCytPackage(packagePath, settingsPath, out sourceWidth, out sourceHeight);
+                Logger?.Log("Installed bundled CheryTools default config: " + BundledDefaultConfigFileName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger?.Log("Failed to install bundled default config; using code defaults: " + ex.Message);
+                sourceWidth = 0;
+                sourceHeight = 0;
+                return false;
+            }
+        }
+
         static bool Load(UnityModManager.ModEntry modEntry)
         {
             Logger = modEntry.Logger;
             ModEntry = modEntry;
+            string settingsPath = System.IO.Path.Combine(modEntry.Path, "Settings.xml");
+            bool hadExistingSettings = System.IO.File.Exists(settingsPath);
+            int defaultSourceWidth;
+            int defaultSourceHeight;
+            bool installedBundledDefault = TryInstallBundledDefaultConfig(
+                modEntry,
+                out defaultSourceWidth,
+                out defaultSourceHeight);
             Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
             Settings.InitNulls();
+            bool migratedPanelScale = Settings.EnsureImGuiPanelScaleBaseline(hadExistingSettings && !installedBundledDefault);
+            if (installedBundledDefault)
+            {
+                if (defaultSourceWidth > 0 && defaultSourceHeight > 0)
+                {
+                    CheryToolsAssets.TryAdaptSettingsToCurrentResolution(
+                        Settings,
+                        defaultSourceWidth,
+                        defaultSourceHeight);
+                }
+                CheryToolsAssets.UpdateBaselineToCurrentResolution(Settings);
+            }
             LocalizationManager.Initialize(Settings.Language);
-            if (CheryToolsAssets.ImportSettingsAssets(Settings))
+            if (CheryToolsAssets.ImportSettingsAssets(Settings) || installedBundledDefault || migratedPanelScale)
             {
                 Settings.Save(modEntry);
                 LocalizationManager.Reload(Settings.Language);
@@ -1733,6 +1849,7 @@ namespace CheryTools
             IsEnabled = value;
             if (value)
             {
+                SponsorManager.EnsureLoaded();
                 harmony.PatchAll(System.Reflection.Assembly.GetExecutingAssembly());
                 
                 if (_imguiGameObject == null)
@@ -1754,12 +1871,19 @@ namespace CheryTools
                     if (_imguiGameObject.GetComponent<OverlayerManager>() == null)
                         _imguiGameObject.AddComponent<OverlayerManager>();
 
+                    if (_imguiGameObject.GetComponent<OvLevelStatsTracker>() == null)
+                        _imguiGameObject.AddComponent<OvLevelStatsTracker>();
+
                     if (_imguiGameObject.GetComponent<GameUIManager>() == null)
                         _imguiGameObject.AddComponent<GameUIManager>();
+
+                    if (_imguiGameObject.GetComponent<ResolutionWatcher>() == null)
+                        _imguiGameObject.AddComponent<ResolutionWatcher>();
 
                     controller.OnImGuiLayout += _imguiGameObject.GetComponent<CheryToolsMenu>().RenderUI;
                     controller.OnOverlayLayout += _imguiGameObject.GetComponent<KeyViewerOverlay>().RenderUI;
                     controller.OnOverlayLayout += _imguiGameObject.GetComponent<OverlayerManager>().RenderUI;
+                    controller.OnOverlayLayout += PerfHud.RenderUI;
                     Logger.Log("ImGuiController, CheryToolsMenu, KeyViewer, Overlayer components added to GameObject.");
                 }
                 
@@ -1967,121 +2091,6 @@ namespace CheryTools
         public static void Postfix(scrEnableIfBeta __instance)
         {
             GameUIManager.RegisterBuildWatermark(__instance);
-        }
-    }
-
-    public static class EditorInputOptimizationPatches
-    {
-        private static readonly FieldInfo ScnEditorPlayModeField = AccessTools.Field(typeof(scnEditor), "playMode");
-        private static readonly PropertyInfo ScnEditorPlayModeProperty = AccessTools.Property(typeof(scnEditor), "playMode");
-
-        internal static bool GetKeyDownForAutoplayPause(KeyCode key)
-        {
-            if (key == KeyCode.Space
-                && Main.IsEnabled
-                && Main.Settings != null
-                && Main.Settings.DisableAutoplaySpacePause
-                && ADOBase.isLevelEditor
-                && RDC.auto)
-            {
-                return false;
-            }
-
-            return Input.GetKeyDown(key);
-        }
-
-        internal static bool ShouldBlockPlayModeScrollZoom(scnEditor editor)
-        {
-            if (!Main.IsEnabled || Main.Settings == null || !Main.Settings.DisablePlayModeScrollZoom)
-                return false;
-            if (!ADOBase.isLevelEditor || editor == null)
-                return false;
-
-            if (ScnEditorPlayModeField != null && ScnEditorPlayModeField.FieldType == typeof(bool))
-            {
-                return (bool)ScnEditorPlayModeField.GetValue(editor);
-            }
-
-            if (ScnEditorPlayModeProperty != null && ScnEditorPlayModeProperty.PropertyType == typeof(bool))
-            {
-                return (bool)ScnEditorPlayModeProperty.GetValue(editor, null);
-            }
-
-            return scrController.instance != null && scrController.instance.gameworld && !scrController.instance.paused;
-        }
-
-        internal static void ZoomCameraFromMouseWheel(scnEditor editor, float delta, bool anchorAtPointer, bool instant)
-        {
-            if (ShouldBlockPlayModeScrollZoom(editor))
-                return;
-
-            editor.ZoomCamera(delta, anchorAtPointer, instant);
-        }
-
-        internal static bool LoadsKeyCode(CodeInstruction instruction, KeyCode key)
-        {
-            if (instruction == null)
-                return false;
-
-            int expected = (int)key;
-            if (instruction.opcode == OpCodes.Ldc_I4_M1) return expected == -1;
-            if (instruction.opcode == OpCodes.Ldc_I4_0) return expected == 0;
-            if (instruction.opcode == OpCodes.Ldc_I4_1) return expected == 1;
-            if (instruction.opcode == OpCodes.Ldc_I4_2) return expected == 2;
-            if (instruction.opcode == OpCodes.Ldc_I4_3) return expected == 3;
-            if (instruction.opcode == OpCodes.Ldc_I4_4) return expected == 4;
-            if (instruction.opcode == OpCodes.Ldc_I4_5) return expected == 5;
-            if (instruction.opcode == OpCodes.Ldc_I4_6) return expected == 6;
-            if (instruction.opcode == OpCodes.Ldc_I4_7) return expected == 7;
-            if (instruction.opcode == OpCodes.Ldc_I4_8) return expected == 8;
-
-            if ((instruction.opcode == OpCodes.Ldc_I4 || instruction.opcode == OpCodes.Ldc_I4_S) && instruction.operand != null)
-            {
-                try
-                {
-                    return Convert.ToInt32(instruction.operand) == expected;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
-
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(scnEditor), "Update")]
-    public static class scnEditor_Update_AutoplayPause_Patch
-    {
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            MethodInfo getKeyDown = AccessTools.Method(typeof(Input), nameof(Input.GetKeyDown), new[] { typeof(KeyCode) });
-            MethodInfo guardedGetKeyDown = AccessTools.Method(typeof(EditorInputOptimizationPatches), nameof(EditorInputOptimizationPatches.GetKeyDownForAutoplayPause));
-            MethodInfo zoomCamera = AccessTools.Method(typeof(scnEditor), nameof(scnEditor.ZoomCamera), new[] { typeof(float), typeof(bool), typeof(bool) });
-            MethodInfo guardedZoomCamera = AccessTools.Method(typeof(EditorInputOptimizationPatches), nameof(EditorInputOptimizationPatches.ZoomCameraFromMouseWheel));
-            var list = new List<CodeInstruction>(instructions);
-            bool replacedSpacePause = false;
-            bool replacedMouseWheelZoom = false;
-
-            for (int i = 1; i < list.Count; i++)
-            {
-                if (!replacedSpacePause && list[i].Calls(getKeyDown) && EditorInputOptimizationPatches.LoadsKeyCode(list[i - 1], KeyCode.Space))
-                {
-                    list[i].operand = guardedGetKeyDown;
-                    replacedSpacePause = true;
-                    continue;
-                }
-
-                if (!replacedMouseWheelZoom && list[i].Calls(zoomCamera))
-                {
-                    list[i].opcode = OpCodes.Call;
-                    list[i].operand = guardedZoomCamera;
-                    replacedMouseWheelZoom = true;
-                }
-            }
-
-            return list;
         }
     }
 

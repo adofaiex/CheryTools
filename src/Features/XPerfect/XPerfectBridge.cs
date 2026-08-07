@@ -23,6 +23,17 @@ namespace CheryTools
         private static MemberInfo _minusCountMember;
         private static PropertyInfo _enabledProperty;
 
+        // Compiled accessors: the {xperfect:*} tags read these every overlay refresh,
+        // so PropertyInfo.GetValue/FieldInfo.GetValue (reflection + boxing per call)
+        // are replaced with expression-compiled delegates built once at resolve time.
+        // The MemberInfo fields above remain as a fallback if compilation fails.
+        private static Func<bool> _enabledGetter;
+        private static Func<int> _lastJudgeGetter;
+        private static Func<int> _lastJudgeForTextGetter;
+        private static Func<int> _xCountGetter;
+        private static Func<int> _plusCountGetter;
+        private static Func<int> _minusCountGetter;
+
         public static bool Installed
         {
             get
@@ -40,6 +51,7 @@ namespace CheryTools
                 try
                 {
                     if (_enabledProperty == null) return true;
+                    if (_enabledGetter != null) return _enabledGetter();
                     object value = _enabledProperty.GetValue(null, null);
                     return value is bool enabled && enabled;
                 }
@@ -61,43 +73,57 @@ namespace CheryTools
             _plusCountMember = null;
             _minusCountMember = null;
             _enabledProperty = null;
+            _enabledGetter = null;
+            _lastJudgeGetter = null;
+            _lastJudgeForTextGetter = null;
+            _xCountGetter = null;
+            _plusCountGetter = null;
+            _minusCountGetter = null;
             EnsureResolved();
         }
 
         public static Judge LastJudge()
         {
-            return ReadJudgeMember(_lastJudgeMember);
+            return ReadJudgeMember(_lastJudgeMember, _lastJudgeGetter);
         }
 
         public static Judge LastJudgeForText()
         {
-            Judge judge = ReadJudgeMember(_lastJudgeForTextMember);
+            Judge judge = ReadJudgeMember(_lastJudgeForTextMember, _lastJudgeForTextGetter);
             return judge != Judge.None ? judge : LastJudge();
         }
 
         public static int XPerfectCount()
         {
-            return ReadIntMember(_xCountMember);
+            return ReadIntMember(_xCountMember, _xCountGetter);
         }
 
         public static int PlusPerfectCount()
         {
-            return ReadIntMember(_plusCountMember);
+            return ReadIntMember(_plusCountMember, _plusCountGetter);
         }
 
         public static int MinusPerfectCount()
         {
-            return ReadIntMember(_minusCountMember);
+            return ReadIntMember(_minusCountMember, _minusCountGetter);
         }
 
-        private static Judge ReadJudgeMember(MemberInfo member)
+        private static Judge ReadJudgeMember(MemberInfo member, Func<int> getter)
         {
             if (!Active || member == null) return Judge.None;
             try
             {
-                object value = ReadStaticMember(member);
-                if (value == null) return Judge.None;
-                int raw = Convert.ToInt32(value);
+                int raw;
+                if (getter != null)
+                {
+                    raw = getter();
+                }
+                else
+                {
+                    object value = ReadStaticMember(member);
+                    if (value == null) return Judge.None;
+                    raw = Convert.ToInt32(value);
+                }
                 if (raw < 0 || raw > 3) return Judge.None;
                 return (Judge)raw;
             }
@@ -107,17 +133,59 @@ namespace CheryTools
             }
         }
 
-        private static int ReadIntMember(MemberInfo member)
+        private static int ReadIntMember(MemberInfo member, Func<int> getter)
         {
             if (!Active || member == null) return 0;
             try
             {
+                if (getter != null) return getter();
                 object value = ReadStaticMember(member);
                 return value == null ? 0 : Convert.ToInt32(value);
             }
             catch
             {
                 return 0;
+            }
+        }
+
+        private static Func<int> CreateIntGetter(MemberInfo member)
+        {
+            if (member == null) return null;
+            try
+            {
+                System.Linq.Expressions.Expression access;
+                if (member is PropertyInfo property)
+                {
+                    access = System.Linq.Expressions.Expression.Property(null, property);
+                }
+                else if (member is FieldInfo field)
+                {
+                    access = System.Linq.Expressions.Expression.Field(null, field);
+                }
+                else
+                {
+                    return null;
+                }
+                return System.Linq.Expressions.Expression.Lambda<Func<int>>(
+                    System.Linq.Expressions.Expression.Convert(access, typeof(int))).Compile();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static Func<bool> CreateBoolGetter(PropertyInfo property)
+        {
+            if (property == null || property.PropertyType != typeof(bool)) return null;
+            try
+            {
+                return System.Linq.Expressions.Expression.Lambda<Func<bool>>(
+                    System.Linq.Expressions.Expression.Property(null, property)).Compile();
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -182,6 +250,13 @@ namespace CheryTools
                 {
                     _enabledProperty = mainType.GetProperty("Enabled", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
                 }
+
+                _lastJudgeGetter = CreateIntGetter(_lastJudgeMember);
+                _lastJudgeForTextGetter = CreateIntGetter(_lastJudgeForTextMember);
+                _xCountGetter = CreateIntGetter(_xCountMember);
+                _plusCountGetter = CreateIntGetter(_plusCountMember);
+                _minusCountGetter = CreateIntGetter(_minusCountMember);
+                _enabledGetter = CreateBoolGetter(_enabledProperty);
 
                 _installed = _xCountMember != null
                     && _plusCountMember != null

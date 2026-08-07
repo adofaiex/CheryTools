@@ -128,6 +128,10 @@ namespace CheryTools
             }
             
             if (easeLower.Contains("linear")) return t;
+
+            // UI-friendly polynomial curves used by control-panel transitions.
+            if (easeLower == "smoothstep") return t * t * (3f - 2f * t);
+            if (easeLower == "smootherstep") return t * t * t * (t * (t * 6f - 15f) + 10f);
             
             // Sine
             if (easeLower == "easeinsine") return 1f - (float)Math.Cos(t * Math.PI / 2.0);

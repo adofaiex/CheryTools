@@ -2,7 +2,7 @@
   "Id": "CheryTools",
   "DisplayName": "Chery Tools",
   "Author": "Chery",
-  "Version": "26.2 Alpha",
+  "Version": "26.4 Alpha",
   "AssemblyName": "CheryTools.dll",
   "EntryMethod": "CheryTools.Main.Load",
   "HomePage": "",

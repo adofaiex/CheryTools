@@ -19,11 +19,22 @@ namespace CheryTools
                 Instance = this;
                 _tokenTriggerFrame.ResolveTagValue = ResolveTokenTriggerTagValue;
                 _tokenTriggerFrame.ResolveTagNumber = ResolveTokenEffectTagNumber;
+                _asyncRuntime = new OvAsyncRuntimePipeline();
+                _asyncRuntime.Start();
             }
         }
 
+        private void OnDestroy()
+        {
+            if (!ReferenceEquals(Instance, this)) return;
+            _asyncRuntime?.Dispose();
+            _asyncRuntime = null;
+            _bakedOvTexts.Clear();
+            _bakedOvImages.Clear();
+            Instance = null;
+        }
+
         private static float _cachedFps = 0f;
-        private static float _lastFpsSampleTime = -1f;
         private static int _draggingIndex = -1;
         private static int _draggingIndexImg = -1;
         private static int _draggingIndexBar = -1;
@@ -82,7 +93,16 @@ namespace CheryTools
             Timing,
             XPerfectXpp,
             XPerfectEpp,
-            XPerfectLpp
+            XPerfectLpp,
+            Attempts,
+            CheckpointsUsed,
+            CurrentCheckpoints,
+            TotalCheckpoints,
+            GameVersion,
+            CheryToolsVersion,
+            TotalPlaytime,
+            MinFps,
+            MaxFps
         }
 
         private struct OvTagToken
@@ -95,6 +115,10 @@ namespace CheryTools
         private static double _lastHitTimingMs;
         private static bool _hasLastHitTiming;
         private static readonly Dictionary<int, HitMargin> ScoreFirstJudgements = new Dictionary<int, HitMargin>();
+        // Running sum of GetScoreJudgementWeight over ScoreFirstJudgements. Kept in
+        // sync at record/clear time so {score} evaluation is O(1) instead of scanning
+        // every judged tile per frame (tens of thousands of iterations on long maps).
+        private static double _scoreWeightedSum;
         private static scrController _scoreController;
         private static scrMarginTracker _scoreMarginTracker;
         private static int _scoreLastMarginCount;
@@ -104,6 +128,10 @@ namespace CheryTools
         {
             public string Format;
             public OvTagToken[] Tokens;
+            // Last string this plan resolved to. When the freshly built content matches it,
+            // the cached instance is returned so the per-frame ToString() allocation is skipped
+            // (the common case: the bake fast path only needs the value for a string comparison).
+            public string LastResolved;
             public bool HasTags;
             public bool HasFpsTags;
             public bool HasClockTags;
@@ -115,7 +143,8 @@ namespace CheryTools
         private readonly System.Collections.Generic.Dictionary<string, OvTagPlan> _transientOvTagPlans = new System.Collections.Generic.Dictionary<string, OvTagPlan>();
         private readonly StringBuilder _ovTagBuilder = new StringBuilder(256);
         private readonly StringBuilder _ovTokenTextBuilder = new StringBuilder(256);
-        private readonly StringBuilder _layoutKeyBuilder = new StringBuilder(256);
+        // Same purpose as OvTagPlan.LastResolved, for the token-graph render path.
+        private readonly System.Collections.Generic.Dictionary<OverlayerText, string> _ovTokenTextMemo = new System.Collections.Generic.Dictionary<OverlayerText, string>();
         private readonly System.Collections.Generic.List<OvSnapCandidate> _snapXRefsBuffer = new System.Collections.Generic.List<OvSnapCandidate>(32);
         private readonly System.Collections.Generic.List<OvSnapCandidate> _snapYRefsBuffer = new System.Collections.Generic.List<OvSnapCandidate>(32);
         private bool _renderMusicCacheReady;
@@ -140,13 +169,19 @@ namespace CheryTools
 
         private static readonly System.Collections.Generic.List<OvAlignLine> _activeOvAlignLines = new System.Collections.Generic.List<OvAlignLine>();
 
-        private int _lastHitCount = 0;
         private int _currentPureCombo = 0;
         private int _currentPerfectCombo = 0;
         private bool _renderDirty = true;
         private long _lastRenderedRevision = -1;
         private long _dynamicScanRevision = -1;
+        // Tag-driven numeric content ({accuracy}, {progress}, progress bar sources, ...).
+        // Refreshed at OverlayerDataUpdateRate: above ~60 Hz these are indistinguishable.
         private bool _hasRateDynamicContent;
+        // Frame-driven animation content (per-text/per-image animation tracks). Kept on
+        // the full OverlayUpdateRate so motion stays smooth. Playing animations drive
+        // redraws through MarkRenderDirty() in Update() and do not rely on this interval;
+        // the flag only governs the idle periodic refresh.
+        private bool _hasAnimationDynamicContent;
         private bool _hasFpsDynamicContent;
         private bool _hasClockDynamicContent;
         private float _nextPeriodicOverlayUpdateTime = 0f;
@@ -161,13 +196,22 @@ namespace CheryTools
         private bool _hasTokenAnimations;
         private bool _hasTokenAnyKeyAnimations;
         private bool _hasTokenBeatAnimations;
-        private scrMarginTracker _trackedMarginTracker;
-        private bool _hitTrackerInitialized;
-        private scrController _trackedController;
-        private States _lastControllerState = States.None;
-        private bool _controllerStateInitialized;
-        private scrConductor _trackedConductor;
-        private int _lastTriggeredBeatNumber = int.MinValue;
+        private readonly HashSet<KeyCode> _watchedTokenKeys = new HashSet<KeyCode>();
+        private readonly List<KeyCode> _capturedKeysDown = new List<KeyCode>(8);
+        private readonly List<KeyCode> _capturedKeysUp = new List<KeyCode>(8);
+        private OvAsyncRuntimePipeline _asyncRuntime;
+        private long _asyncRuntimeFrameId;
+        private bool _asyncRuntimeActive;
+        private bool _asyncRuntimeStateReady;
+        private bool _asyncRuntimeErrorLogged;
+        private float _nextOvRuntimeTickTime;
+        private float _lastOvTokenUpdateTime;
+        private int _runtimeTrackerInstanceId;
+        private int _runtimeTrackerCount;
+        private int _runtimeTrackerGeneration;
+        private bool _runtimeAutoplayEnabled;
+        private bool _runtimeNoFailEnabled;
+        private int _runtimeJudgementMode = (int)OvJudgementMode.Normal;
         private readonly OvAnimationTriggerFrame _tokenTriggerFrame = new OvAnimationTriggerFrame();
         private readonly OvTokenAnimationRuntime _tokenAnimationRuntime = new OvTokenAnimationRuntime();
         private readonly System.Collections.Generic.Dictionary<OverlayerImage, OverlayerText> _imageAnimationProxies
@@ -223,7 +267,7 @@ namespace CheryTools
 
             float interval = GetPeriodicOverlayInterval(rate);
             _nextPeriodicOverlayUpdateTime = interval > 0f
-                ? Time.unscaledTime + interval
+                ? RenderTimelineClock.Time + interval
                 : float.PositiveInfinity;
         }
 
@@ -245,9 +289,19 @@ namespace CheryTools
             }
 
             ScanDynamicOverlayFlags();
-            if (_hasRateDynamicContent && Main.IsGamePlaying())
+
+            // Animation content needs the full rate to stay smooth; numeric tag content
+            // does not. When both are present the faster interval wins, so animations
+            // are never slowed down by the data rate.
+            bool playing = Main.IsGamePlaying();
+            if (_hasAnimationDynamicContent && playing)
             {
                 return 1f / Mathf.Clamp(rate, 30f, 360f);
+            }
+
+            if (_hasRateDynamicContent && playing)
+            {
+                return 1f / GetDataUpdateRate();
             }
 
             if (_hasFpsDynamicContent)
@@ -261,6 +315,21 @@ namespace CheryTools
             }
 
             return -1f;
+        }
+
+        private static float GetDataUpdateRate()
+        {
+            if (Main.Settings == null)
+            {
+                return 60f;
+            }
+
+            float dataRate = Main.Settings.OverlayerDataUpdateRate;
+            if (dataRate <= 0f || float.IsNaN(dataRate) || float.IsInfinity(dataRate))
+            {
+                dataRate = 60f;
+            }
+            return Mathf.Clamp(dataRate, 15f, 360f);
         }
 
         private static float GetFpsTagRefreshInterval()
@@ -278,26 +347,6 @@ namespace CheryTools
             return Math.Max(0.05f, Math.Min(2.0f, interval));
         }
 
-        private void UpdateCachedFps(float now)
-        {
-            float interval = GetFpsTagRefreshInterval();
-            if (_cachedFps > 0f && _lastFpsSampleTime >= 0f && now - _lastFpsSampleTime < interval)
-            {
-                return;
-            }
-
-            float delta = UnityEngine.Time.unscaledDeltaTime;
-            if (delta > 0.000001f && !float.IsNaN(delta) && !float.IsInfinity(delta))
-            {
-                _cachedFps = 1.0f / delta;
-                _lastFpsSampleTime = now;
-                if (_hasFpsDynamicContent)
-                {
-                    MarkRenderDirty();
-                }
-            }
-        }
-
         private void ScanDynamicOverlayFlags()
         {
             long revision = OverlayRenderInvalidator.Revision;
@@ -308,6 +357,7 @@ namespace CheryTools
 
             _dynamicScanRevision = revision;
             _hasRateDynamicContent = false;
+            _hasAnimationDynamicContent = false;
             _hasFpsDynamicContent = false;
             _hasClockDynamicContent = false;
 
@@ -374,7 +424,7 @@ namespace CheryTools
                         {
                             if (text.Animations[j] != null && text.Animations[j].IsEnabled)
                             {
-                                _hasRateDynamicContent = true;
+                                _hasAnimationDynamicContent = true;
                                 break;
                             }
                         }
@@ -393,7 +443,7 @@ namespace CheryTools
                     {
                         if (image.Animations[j] != null && image.Animations[j].IsEnabled)
                         {
-                            _hasRateDynamicContent = true;
+                            _hasAnimationDynamicContent = true;
                             break;
                         }
                     }
@@ -441,6 +491,7 @@ namespace CheryTools
             _hasTokenAnimations = false;
             _hasTokenAnyKeyAnimations = false;
             _hasTokenBeatAnimations = false;
+            _watchedTokenKeys.Clear();
 
             if (Main.Settings == null)
             {
@@ -536,6 +587,16 @@ namespace CheryTools
                 {
                     _needsComboTracker = true;
                 }
+                else if (node.Trigger == OvAnimationTriggerKind.SpecificKey && node.TriggerKeys != null)
+                {
+                    for (int k = 0; k < node.TriggerKeys.Count; k++)
+                    {
+                        if (Enum.TryParse(node.TriggerKeys[k], true, out KeyCode key) && key != KeyCode.None)
+                        {
+                            _watchedTokenKeys.Add(key);
+                        }
+                    }
+                }
             }
         }
 
@@ -596,14 +657,28 @@ namespace CheryTools
                 seconds = 0.0;
 
             int totalSeconds = (int)Math.Floor(seconds);
+            // Output only depends on the whole second, so duration tags allocate at most
+            // once per second instead of once per frame. Same cap policy as the numeric cache.
+            if (_durationCache.TryGetValue(totalSeconds, out string cached))
+            {
+                return cached;
+            }
+
             int hours = totalSeconds / 3600;
             int minutes = (totalSeconds / 60) % 60;
             int secs = totalSeconds % 60;
 
-            if (hours > 0)
-                return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}:{2:00}", hours, minutes, secs);
+            if (_durationCache.Count >= NumericFormatCacheLimit)
+            {
+                _durationCache.Clear();
+            }
 
-            return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}", minutes, secs);
+            string formatted = hours > 0
+                ? string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}:{2:00}", hours, minutes, secs)
+                : string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}", minutes, secs);
+
+            _durationCache[totalSeconds] = formatted;
+            return formatted;
         }
 
         private string GetMusicText()
@@ -694,6 +769,22 @@ namespace CheryTools
             return speed.ToString("0.##", CultureInfo.InvariantCulture);
         }
 
+        // Index = decimal count; avoids composing "0.###" format strings per call.
+        private static readonly string[] TrimZeroFormats =
+        {
+            "0", "0.#", "0.##", "0.###", "0.####", "0.#####", "0.######"
+        };
+
+        private static readonly string[] FixedFormats =
+        {
+            "F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"
+        };
+
+        private static string GetFixedFormat(int decimals)
+        {
+            return FixedFormats[Math.Max(0, Math.Min(FixedFormats.Length - 1, decimals))];
+        }
+
         private static string FormatNumberTrimZeros(double value, int decimals)
         {
             decimals = Math.Max(0, Math.Min(6, decimals));
@@ -708,13 +799,89 @@ namespace CheryTools
                 rounded = 0.0;
             }
 
-            if (decimals == 0)
+            // The rounded value fully determines the output, so memoize per decimals slot.
+            // Values that repeat frame to frame (every tag on a bake hit) then cost no allocation.
+            // On overflow the slot is dropped and refills immediately: the live value set in any
+            // one frame is tiny, and refilling costs a single ToString() -- unlike the bake/plan
+            // caches, this one is cheap to rebuild, so clearing is safe here.
+            var slot = _trimZeroCaches[decimals];
+            if (slot == null)
             {
-                return rounded.ToString("0", CultureInfo.InvariantCulture);
+                slot = new System.Collections.Generic.Dictionary<double, string>();
+                _trimZeroCaches[decimals] = slot;
+            }
+            if (slot.TryGetValue(rounded, out string cached))
+            {
+                return cached;
             }
 
-            return rounded.ToString("0." + new string('#', decimals), CultureInfo.InvariantCulture);
+            if (slot.Count >= NumericFormatCacheLimit)
+            {
+                slot.Clear();
+            }
+
+            string formatted = rounded.ToString(TrimZeroFormats[decimals], CultureInfo.InvariantCulture);
+            slot[rounded] = formatted;
+            return formatted;
         }
+
+        // Clock/date tag output is constant within a whole second (or a whole day for the date
+        // parts), but was reformatted every overlay pass. One memo slot per format is enough:
+        // each format appears at most once per resolve, so slots never contend.
+        private const int ClockSlotYear = 0;
+        private const int ClockSlotMonth = 1;
+        private const int ClockSlotDay = 2;
+        private const int ClockSlotTime24 = 3;
+        private const int ClockSlotTime12 = 4;
+        private static readonly long[] _clockMemoKeys = new long[5] { -1L, -1L, -1L, -1L, -1L };
+        private static readonly string[] _clockMemoValues = new string[5];
+
+        private static string FormatClock(DateTime now, string format, int slot)
+        {
+            // Date parts only change at midnight; the time parts change once per second.
+            long key = slot <= ClockSlotDay
+                ? now.Date.Ticks
+                : now.Ticks / TimeSpan.TicksPerSecond;
+
+            if (_clockMemoKeys[slot] == key && _clockMemoValues[slot] != null)
+            {
+                return _clockMemoValues[slot];
+            }
+
+            string formatted = now.ToString(format, CultureInfo.InvariantCulture);
+            _clockMemoKeys[slot] = key;
+            _clockMemoValues[slot] = formatted;
+            return formatted;
+        }
+
+        // Integer tags (tile counts, deaths, combos, checkpoints, hit counts) hold the same
+        // value across many frames, so memoizing removes their per-frame allocation entirely.
+        private static string FormatInt(int value)
+        {
+            if (_intFormatCache.TryGetValue(value, out string cached))
+            {
+                return cached;
+            }
+
+            if (_intFormatCache.Count >= IntFormatCacheLimit)
+            {
+                _intFormatCache.Clear();
+            }
+
+            string formatted = value.ToString(CultureInfo.InvariantCulture);
+            _intFormatCache[value] = formatted;
+            return formatted;
+        }
+
+        private const int IntFormatCacheLimit = 1024;
+        private static readonly System.Collections.Generic.Dictionary<int, string> _intFormatCache
+            = new System.Collections.Generic.Dictionary<int, string>();
+
+        private const int NumericFormatCacheLimit = 512;
+        private static readonly System.Collections.Generic.Dictionary<double, string>[] _trimZeroCaches
+            = new System.Collections.Generic.Dictionary<double, string>[7];
+        private static readonly System.Collections.Generic.Dictionary<int, string> _durationCache
+            = new System.Collections.Generic.Dictionary<int, string>();
 
         private OvTagPlan GetOvTagPlan(OverlayerText ovText, string format)
         {
@@ -733,34 +900,51 @@ namespace CheryTools
             return plan;
         }
 
+        // Last frame each transient plan was requested. Eviction removes the least
+        // recently used half but never anything used this frame, so 128+ live tags
+        // no longer thrash the cache (the old dictionary-order eviction could drop a
+        // plan that was requested moments earlier and recompile it every frame).
+        private readonly System.Collections.Generic.Dictionary<string, int> _transientOvTagPlanLastUse
+            = new System.Collections.Generic.Dictionary<string, int>();
+        private readonly System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int>> _transientEvictionBuffer
+            = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int>>(128);
+
         private OvTagPlan GetTransientOvTagPlan(string format)
         {
             string safeFormat = format ?? string.Empty;
+            int currentFrame = Time.frameCount;
             if (_transientOvTagPlans.TryGetValue(safeFormat, out OvTagPlan cached))
             {
+                _transientOvTagPlanLastUse[safeFormat] = currentFrame;
                 return cached;
             }
 
             if (_transientOvTagPlans.Count >= 128)
             {
-                // Improved cache eviction: remove half instead of clearing all
-                // This prevents performance spikes when cache limit is reached
-                int removeCount = 64;
-                var keysToRemove = new System.Collections.Generic.List<string>(removeCount);
-                foreach (var key in _transientOvTagPlans.Keys)
+                _transientEvictionBuffer.Clear();
+                foreach (var pair in _transientOvTagPlans)
                 {
-                    keysToRemove.Add(key);
-                    if (keysToRemove.Count >= removeCount)
-                        break;
+                    _transientOvTagPlanLastUse.TryGetValue(pair.Key, out int lastUse);
+                    if (lastUse != currentFrame)
+                    {
+                        _transientEvictionBuffer.Add(
+                            new System.Collections.Generic.KeyValuePair<string, int>(pair.Key, lastUse));
+                    }
                 }
-                foreach (var key in keysToRemove)
+                _transientEvictionBuffer.Sort((a, b) => a.Value.CompareTo(b.Value));
+
+                int removeCount = Math.Min(64, _transientEvictionBuffer.Count);
+                for (int i = 0; i < removeCount; i++)
                 {
+                    string key = _transientEvictionBuffer[i].Key;
                     _transientOvTagPlans.Remove(key);
+                    _transientOvTagPlanLastUse.Remove(key);
                 }
             }
 
             OvTagPlan plan = CompileOvTagPlan(safeFormat);
             _transientOvTagPlans[safeFormat] = plan;
+            _transientOvTagPlanLastUse[safeFormat] = currentFrame;
             return plan;
         }
 
@@ -810,6 +994,8 @@ namespace CheryTools
                     switch (kind)
                     {
                         case OvTagKind.Fps:
+                        case OvTagKind.MinFps:
+                        case OvTagKind.MaxFps:
                             hasFps = true;
                             break;
                         case OvTagKind.WorldTime:
@@ -831,6 +1017,11 @@ namespace CheryTools
                         case OvTagKind.XPerfectXpp:
                         case OvTagKind.XPerfectEpp:
                         case OvTagKind.XPerfectLpp:
+                        case OvTagKind.Attempts:
+                        case OvTagKind.CheckpointsUsed:
+                        case OvTagKind.CurrentCheckpoints:
+                        case OvTagKind.TotalCheckpoints:
+                        case OvTagKind.TotalPlaytime:
                             hasRate = true;
                             break;
                         case OvTagKind.Score:
@@ -888,7 +1079,8 @@ namespace CheryTools
                 return false;
             }
 
-            switch (tagBody)
+            string normalizedTagBody = tagBody.ToLowerInvariant();
+            switch (normalizedTagBody)
             {
                 case "ttile": kind = OvTagKind.TotalTiles; return true;
                 case "atile": kind = OvTagKind.PassedTiles; return true;
@@ -928,44 +1120,61 @@ namespace CheryTools
                     kind = OvTagKind.XPerfectEpp; return true;
                 case "xperfect:lpp":
                     kind = OvTagKind.XPerfectLpp; return true;
+                case "attempts": kind = OvTagKind.Attempts; return true;
+                case "checkpointused": kind = OvTagKind.CheckpointsUsed; return true;
+                case "curcheckpoint": kind = OvTagKind.CurrentCheckpoints; return true;
+                case "totalcheckpoint": kind = OvTagKind.TotalCheckpoints; return true;
+                case "gameversion": kind = OvTagKind.GameVersion; return true;
+                case "cherytoolsversion": kind = OvTagKind.CheryToolsVersion; return true;
+                case "totalplaytime": kind = OvTagKind.TotalPlaytime; return true;
             }
 
-            if (TryParseDecimalTag(tagBody, "fps", 0, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "fps", 0, out decimals))
             {
                 kind = OvTagKind.Fps;
                 return true;
             }
-            if (TryParseDecimalTag(tagBody, "acc", 2, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "minfps", 0, out decimals))
+            {
+                kind = OvTagKind.MinFps;
+                return true;
+            }
+            if (TryParseDecimalTag(normalizedTagBody, "maxfps", 0, out decimals))
+            {
+                kind = OvTagKind.MaxFps;
+                return true;
+            }
+            if (TryParseDecimalTag(normalizedTagBody, "acc", 2, out decimals))
             {
                 kind = OvTagKind.Accuracy;
                 return true;
             }
-            if (TryParseDecimalTag(tagBody, "xacc", 2, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "xacc", 2, out decimals))
             {
                 kind = OvTagKind.XAccuracy;
                 return true;
             }
-            if (TryParseDecimalTag(tagBody, "progress", 2, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "progress", 2, out decimals))
             {
                 kind = OvTagKind.Progress;
                 return true;
             }
-            if (TryParseDecimalTag(tagBody, "bpm", 2, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "bpm", 2, out decimals))
             {
                 kind = OvTagKind.Bpm;
                 return true;
             }
-            if (TryParseDecimalTag(tagBody, "tbpm", 2, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "tbpm", 2, out decimals))
             {
                 kind = OvTagKind.TrackBpm;
                 return true;
             }
-            if (TryParseDecimalTag(tagBody, "cbpm", 2, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "cbpm", 2, out decimals))
             {
                 kind = OvTagKind.CurrentBpm;
                 return true;
             }
-            if (TryParseDecimalTag(tagBody, "timing", 0, out decimals))
+            if (TryParseDecimalTag(normalizedTagBody, "timing", 0, out decimals))
             {
                 kind = OvTagKind.Timing;
                 return true;
@@ -1033,7 +1242,28 @@ namespace CheryTools
                 _ovTagBuilder.Append(EvaluateOvTag(token, ref now, ref nowReady, ref tracker, ref trackerReady, ref bpmReady, ref baseBpm, ref trackBpm, ref currentBpm));
             }
 
-            return _ovTagBuilder.ToString();
+            if (BuilderContentEquals(_ovTagBuilder, plan.LastResolved))
+            {
+                return plan.LastResolved;
+            }
+
+            plan.LastResolved = _ovTagBuilder.ToString();
+            return plan.LastResolved;
+        }
+
+        // Ordinal comparison against a StringBuilder without materializing it.
+        private static bool BuilderContentEquals(StringBuilder builder, string value)
+        {
+            if (value == null || builder.Length != value.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (builder[i] != value[i]) return false;
+            }
+            return true;
         }
 
         private string EvaluateOvTag(
@@ -1050,9 +1280,9 @@ namespace CheryTools
             switch (token.Kind)
             {
                 case OvTagKind.TotalTiles:
-                    return GetTotalTileCount().ToString(CultureInfo.InvariantCulture);
+                    return FormatInt(GetTotalTileCount());
                 case OvTagKind.PassedTiles:
-                    return GetPassedTileCount().ToString(CultureInfo.InvariantCulture);
+                    return FormatInt(GetPassedTileCount());
                 case OvTagKind.LevelAuthor:
                     return GetLevelAuthorText();
                 case OvTagKind.Speed:
@@ -1075,19 +1305,19 @@ namespace CheryTools
                     return GetCurrentTimingWindowScaleText();
                 case OvTagKind.DateYear:
                     EnsureNow(ref now, ref nowReady);
-                    return now.ToString("yyyy", CultureInfo.InvariantCulture);
+                    return FormatClock(now, "yyyy", ClockSlotYear);
                 case OvTagKind.DateMonth:
                     EnsureNow(ref now, ref nowReady);
-                    return now.ToString("MM", CultureInfo.InvariantCulture);
+                    return FormatClock(now, "MM", ClockSlotMonth);
                 case OvTagKind.DateDay:
                     EnsureNow(ref now, ref nowReady);
-                    return now.ToString("dd", CultureInfo.InvariantCulture);
+                    return FormatClock(now, "dd", ClockSlotDay);
                 case OvTagKind.WorldTime:
                     EnsureNow(ref now, ref nowReady);
-                    return now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+                    return FormatClock(now, "HH:mm:ss", ClockSlotTime24);
                 case OvTagKind.WorldTime12:
                     EnsureNow(ref now, ref nowReady);
-                    return now.ToString("hh:mm:ss tt", CultureInfo.InvariantCulture);
+                    return FormatClock(now, "hh:mm:ss tt", ClockSlotTime12);
                 case OvTagKind.Bpm:
                     EnsureBpmValues(ref bpmReady, ref baseBpm, ref trackBpm, ref currentBpm);
                     return FormatNumberTrimZeros(baseBpm, token.Decimals);
@@ -1115,7 +1345,7 @@ namespace CheryTools
                     return GetTrackerHitCount(ref tracker, ref trackerReady, HitMargin.TooLate);
                 case OvTagKind.Miss:
                     EnsureTracker(ref tracker, ref trackerReady);
-                    return tracker != null ? tracker.GetDeaths().ToString(CultureInfo.InvariantCulture) : "0";
+                    return tracker != null ? FormatInt(tracker.GetDeaths()) : "0";
                 case OvTagKind.FailMiss:
                     return GetTrackerHitCount(ref tracker, ref trackerReady, HitMargin.FailMiss);
                 case OvTagKind.FailOverload:
@@ -1135,9 +1365,9 @@ namespace CheryTools
                     }
                     return FormatNumberTrimZeros(progress, token.Decimals);
                 case OvTagKind.PureCombo:
-                    return _currentPureCombo.ToString(CultureInfo.InvariantCulture);
+                    return FormatInt(_currentPureCombo);
                 case OvTagKind.PerfectCombo:
-                    return _currentPerfectCombo.ToString(CultureInfo.InvariantCulture);
+                    return FormatInt(_currentPerfectCombo);
                 case OvTagKind.Score:
                     return GetScoreValue(ref tracker, ref trackerReady).ToString("0", CultureInfo.InvariantCulture);
                 case OvTagKind.Music:
@@ -1149,19 +1379,51 @@ namespace CheryTools
                     SplitMusicText(out _, out string title);
                     return title;
                 case OvTagKind.XPerfectXpp:
-                    return IsXPerfectIntegrationActive() ? XPerfectBridge.XPerfectCount().ToString(CultureInfo.InvariantCulture) : "0";
+                    return IsXPerfectIntegrationActive() ? FormatInt(XPerfectBridge.XPerfectCount()) : "0";
                 case OvTagKind.XPerfectEpp:
-                    return IsXPerfectIntegrationActive() ? XPerfectBridge.PlusPerfectCount().ToString(CultureInfo.InvariantCulture) : "0";
+                    return IsXPerfectIntegrationActive() ? FormatInt(XPerfectBridge.PlusPerfectCount()) : "0";
                 case OvTagKind.XPerfectLpp:
-                    return IsXPerfectIntegrationActive() ? XPerfectBridge.MinusPerfectCount().ToString(CultureInfo.InvariantCulture) : "0";
+                    return IsXPerfectIntegrationActive() ? FormatInt(XPerfectBridge.MinusPerfectCount()) : "0";
+                case OvTagKind.Attempts:
+                    return FormatInt(OvLevelStatsTracker.GetCurrentLevelAttempts());
+                case OvTagKind.CheckpointsUsed:
+                    return FormatInt(Math.Max(0, scrController.checkpointsUsed));
+                case OvTagKind.CurrentCheckpoints:
+                    return FormatInt(OvLevelStatsTracker.CurrentCheckpointCount);
+                case OvTagKind.TotalCheckpoints:
+                    return FormatInt(OvLevelStatsTracker.TotalCheckpointCount);
+                case OvTagKind.GameVersion:
+                    return Application.version ?? string.Empty;
+                case OvTagKind.CheryToolsVersion:
+                    return Main.ModEntry != null && Main.ModEntry.Info != null
+                        ? Main.ModEntry.Info.Version.ToString()
+                        : string.Empty;
+                case OvTagKind.TotalPlaytime:
+                    return FormatDuration(OvLevelStatsTracker.CurrentLevelPlaytimeSeconds);
+                case OvTagKind.MinFps:
+                    return FormatNumberTrimZeros(OvLevelStatsTracker.CurrentMinFps, token.Decimals);
+                case OvTagKind.MaxFps:
+                    return FormatNumberTrimZeros(OvLevelStatsTracker.CurrentMaxFps, token.Decimals);
                 default:
                     return token.Literal ?? string.Empty;
             }
         }
 
+        // Both normalizers run for every effect/token tag on every overlay refresh, and
+        // the tag vocabulary is tiny, so the string surgery is memoized. Capacity-capped
+        // (drop-new-on-full) so user-typed garbage can't grow the maps unboundedly.
+        private static readonly System.Collections.Generic.Dictionary<string, string> _tagReferenceCache
+            = new System.Collections.Generic.Dictionary<string, string>();
+        private static readonly System.Collections.Generic.Dictionary<string, string> _lowerTagNameCache
+            = new System.Collections.Generic.Dictionary<string, string>();
+        private const int TagNameCacheCapacity = 256;
+
         private static string NormalizeTagReference(string tag)
         {
-            string source = (tag ?? string.Empty).Trim();
+            if (tag == null) return string.Empty;
+            if (_tagReferenceCache.TryGetValue(tag, out string cached)) return cached;
+
+            string source = tag.Trim();
             if (source.Length >= 2 && source[0] == '{' && source[source.Length - 1] == '}')
             {
                 source = source.Substring(1, source.Length - 2).Trim();
@@ -1172,7 +1434,22 @@ namespace CheryTools
             {
                 source = source.Substring(0, colon);
             }
+            if (_tagReferenceCache.Count < TagNameCacheCapacity)
+            {
+                _tagReferenceCache[tag] = source;
+            }
             return source;
+        }
+
+        private static string NormalizeTagNameLower(string name)
+        {
+            if (_lowerTagNameCache.TryGetValue(name, out string cached)) return cached;
+            string normalized = name.Trim().ToLowerInvariant();
+            if (_lowerTagNameCache.Count < TagNameCacheCapacity)
+            {
+                _lowerTagNameCache[name] = normalized;
+            }
+            return normalized;
         }
 
         private double ResolveNumericTagValue(
@@ -1189,10 +1466,24 @@ namespace CheryTools
                 return 0.0;
             }
 
-            switch (name.Trim().ToLowerInvariant())
+            switch (NormalizeTagNameLower(name))
             {
                 case "fps":
                     return _cachedFps;
+                case "minfps":
+                    return OvLevelStatsTracker.CurrentMinFps;
+                case "maxfps":
+                    return OvLevelStatsTracker.CurrentMaxFps;
+                case "attempts":
+                    return OvLevelStatsTracker.GetCurrentLevelAttempts();
+                case "checkpointused":
+                    return Math.Max(0, scrController.checkpointsUsed);
+                case "curcheckpoint":
+                    return OvLevelStatsTracker.CurrentCheckpointCount;
+                case "totalcheckpoint":
+                    return OvLevelStatsTracker.TotalCheckpointCount;
+                case "totalplaytime":
+                    return OvLevelStatsTracker.CurrentLevelPlaytimeSeconds;
                 case "ttile":
                     return GetTotalTileCount();
                 case "atile":
@@ -1328,6 +1619,7 @@ namespace CheryTools
         internal static void RecordScoreJudgement(scrMarginTracker tracker, HitMargin margin)
         {
             EnsureScoreRun(tracker);
+            Instance?.EnqueueRuntimeJudgement(tracker, margin);
             int targetSeqId = _activeScoreTargetSeqId;
             if (targetSeqId < 0)
             {
@@ -1342,10 +1634,27 @@ namespace CheryTools
 
             if (RecordFirstTileJudgement(ScoreFirstJudgements, targetSeqId, margin))
             {
+                _scoreWeightedSum += GetScoreJudgementWeight(margin);
                 Instance?.MarkRenderDirty();
             }
             int currentCount = tracker != null && tracker.hitMargins != null ? tracker.hitMargins.Count : 0;
             _scoreLastMarginCount = currentCount + 1;
+        }
+
+        private void EnqueueRuntimeJudgement(scrMarginTracker tracker, HitMargin margin)
+        {
+            OvAsyncRuntimePipeline runtime = _asyncRuntime;
+            if (runtime == null || tracker == null) return;
+            int trackerId;
+            try
+            {
+                trackerId = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(tracker);
+            }
+            catch
+            {
+                return;
+            }
+            runtime.EnqueueJudgement(trackerId, (int)margin);
         }
 
         private static int ResolveScoreTargetSeqId(scrPlayer player)
@@ -1376,6 +1685,7 @@ namespace CheryTools
             if (identityChanged || fullRestart)
             {
                 ScoreFirstJudgements.Clear();
+                _scoreWeightedSum = 0.0;
             }
             _scoreController = controller;
             _scoreMarginTracker = tracker;
@@ -1394,7 +1704,7 @@ namespace CheryTools
         {
             EnsureTracker(ref tracker, ref trackerReady);
             EnsureScoreRun(tracker);
-            return CalculateScoreValue(GetScoreTileCount(), ScoreFirstJudgements.Values, _currentPerfectCombo);
+            return CalculateScoreValue(GetScoreTileCount(), _scoreWeightedSum, _currentPerfectCombo);
         }
 
         private static int GetScoreTileCount()
@@ -1407,18 +1717,10 @@ namespace CheryTools
             return Math.Max(0, totalTiles - 1);
         }
 
-        private static double CalculateScoreValue(int totalTiles, IEnumerable<HitMargin> firstJudgements,
+        private static double CalculateScoreValue(int totalTiles, double weightedJudgements,
             int perfectCombo)
         {
             if (totalTiles <= 0) return 0.0;
-            double weightedJudgements = 0.0;
-            if (firstJudgements != null)
-            {
-                foreach (HitMargin margin in firstJudgements)
-                {
-                    weightedJudgements += GetScoreJudgementWeight(margin);
-                }
-            }
             weightedJudgements = Math.Max(0.0, Math.Min(totalTiles, weightedJudgements));
             int safeCombo = Math.Max(0, Math.Min(totalTiles, perfectCombo));
             double judgementScore = 900000.0 * weightedJudgements / totalTiles;
@@ -1451,7 +1753,7 @@ namespace CheryTools
         private static string GetTrackerHitCount(ref scrMarginTracker tracker, ref bool trackerReady, HitMargin margin)
         {
             EnsureTracker(ref tracker, ref trackerReady);
-            return tracker != null ? tracker.GetHits(margin).ToString(CultureInfo.InvariantCulture) : "0";
+            return tracker != null ? FormatInt(tracker.GetHits(margin)) : "0";
         }
 
         private static double GetTrackerHitCountValue(ref scrMarginTracker tracker, ref bool trackerReady, HitMargin margin)
@@ -1506,30 +1808,74 @@ namespace CheryTools
             _hasLastHitTiming = true;
         }
 
-        private string BuildOvTextLayoutKey(OverlayerText ovText, string renderedText)
+        // Value-type layout key: the previous string key needed six float.ToString("R")
+        // calls plus a builder ToString per text per frame just to detect "unchanged".
+        internal readonly struct OvTextLayoutKey : IEquatable<OvTextLayoutKey>
         {
-            _layoutKeyBuilder.Clear();
-            _layoutKeyBuilder.Append(ovText.FontPath ?? string.Empty);
-            _layoutKeyBuilder.Append('|');
-            _layoutKeyBuilder.Append(renderedText ?? string.Empty);
-            _layoutKeyBuilder.Append('|');
-            _layoutKeyBuilder.Append(ovText.FontSize.ToString("R", CultureInfo.InvariantCulture));
-            _layoutKeyBuilder.Append('|');
-            _layoutKeyBuilder.Append(ovText.LetterSpacing.ToString("R", CultureInfo.InvariantCulture));
-            _layoutKeyBuilder.Append('|');
-            _layoutKeyBuilder.Append(ovText.LineHeightOffset.ToString("R", CultureInfo.InvariantCulture));
-            _layoutKeyBuilder.Append('|');
-            _layoutKeyBuilder.Append(ovText.Alignment.ToString(CultureInfo.InvariantCulture));
-            _layoutKeyBuilder.Append('|');
-            _layoutKeyBuilder.Append(ovText.PivotX.ToString("R", CultureInfo.InvariantCulture));
-            _layoutKeyBuilder.Append('|');
-            _layoutKeyBuilder.Append(ovText.PivotY.ToString("R", CultureInfo.InvariantCulture));
-            _layoutKeyBuilder.Append('|');
+            private readonly string _fontPath;
+            private readonly string _text;
+            private readonly float _fontSize;
+            private readonly float _letterSpacing;
+            private readonly float _lineHeightOffset;
+            private readonly int _alignment;
+            private readonly float _pivotX;
+            private readonly float _pivotY;
+            private readonly int _displayWidth;
+            private readonly int _displayHeight;
+
+            public OvTextLayoutKey(OverlayerText ovText, string renderedText, int displayWidth, int displayHeight)
+            {
+                _fontPath = ovText.FontPath ?? string.Empty;
+                _text = renderedText ?? string.Empty;
+                _fontSize = ovText.FontSize;
+                _letterSpacing = ovText.LetterSpacing;
+                _lineHeightOffset = ovText.LineHeightOffset;
+                _alignment = ovText.Alignment;
+                _pivotX = ovText.PivotX;
+                _pivotY = ovText.PivotY;
+                _displayWidth = displayWidth;
+                _displayHeight = displayHeight;
+            }
+
+            public bool Equals(OvTextLayoutKey other)
+            {
+                return _fontSize == other._fontSize
+                    && _letterSpacing == other._letterSpacing
+                    && _lineHeightOffset == other._lineHeightOffset
+                    && _alignment == other._alignment
+                    && _pivotX == other._pivotX
+                    && _pivotY == other._pivotY
+                    && _displayWidth == other._displayWidth
+                    && _displayHeight == other._displayHeight
+                    && string.Equals(_text, other._text, StringComparison.Ordinal)
+                    && string.Equals(_fontPath, other._fontPath, StringComparison.Ordinal);
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is OvTextLayoutKey other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = _text != null ? _text.GetHashCode() : 0;
+                    hash = hash * 31 + _fontSize.GetHashCode();
+                    hash = hash * 31 + _alignment;
+                    return hash;
+                }
+            }
+        }
+
+        private OvTextLayoutKey BuildOvTextLayoutKey(OverlayerText ovText, string renderedText)
+        {
             System.Numerics.Vector2 displaySize = ImGuiController.ScreenDisplaySize;
-            _layoutKeyBuilder.Append(Mathf.RoundToInt(displaySize.X).ToString(CultureInfo.InvariantCulture));
-            _layoutKeyBuilder.Append('x');
-            _layoutKeyBuilder.Append(Mathf.RoundToInt(displaySize.Y).ToString(CultureInfo.InvariantCulture));
-            return _layoutKeyBuilder.ToString();
+            return new OvTextLayoutKey(
+                ovText,
+                renderedText,
+                Mathf.RoundToInt(displaySize.X),
+                Mathf.RoundToInt(displaySize.Y));
         }
 
         private static bool TryGetCurrentFloor(out scrFloor currentFloor)
@@ -1682,13 +2028,36 @@ namespace CheryTools
         }
         
         private System.Collections.Generic.Dictionary<OverlayerAnimation, AnimPlaybackState> _animStates = new System.Collections.Generic.Dictionary<OverlayerAnimation, AnimPlaybackState>();
-        private readonly System.Collections.Generic.Dictionary<OverlayerText, string> _ovTextLayoutKeys = new System.Collections.Generic.Dictionary<OverlayerText, string>();
+        private readonly System.Collections.Generic.Dictionary<OverlayerText, OvTextLayoutKey> _ovTextLayoutKeys = new System.Collections.Generic.Dictionary<OverlayerText, OvTextLayoutKey>();
         private readonly System.Collections.Generic.Dictionary<OverlayerText, UnityEngine.Vector2> _ovTextStableSizes = new System.Collections.Generic.Dictionary<OverlayerText, UnityEngine.Vector2>();
         private readonly System.Collections.Generic.List<string> _ovTextRenderIds = new System.Collections.Generic.List<string>();
         private readonly System.Collections.Generic.List<string> _ovTextSelectIds = new System.Collections.Generic.List<string>();
         private readonly System.Collections.Generic.List<OvImageRenderIds> _ovImageRenderIds = new System.Collections.Generic.List<OvImageRenderIds>();
         private readonly System.Collections.Generic.List<OvImageRenderIds> _ovVideoRenderIds = new System.Collections.Generic.List<OvImageRenderIds>();
         private readonly System.Collections.Generic.List<OvProgressBarRenderIds> _ovProgressBarRenderIds = new System.Collections.Generic.List<OvProgressBarRenderIds>();
+        private readonly System.Collections.Generic.Dictionary<OverlayerText, BakedOvText> _bakedOvTexts
+            = new System.Collections.Generic.Dictionary<OverlayerText, BakedOvText>();
+        private readonly System.Collections.Generic.Dictionary<OverlayerImage, BakedOvImage> _bakedOvImages
+            = new System.Collections.Generic.Dictionary<OverlayerImage, BakedOvImage>();
+        private long _ovBakeRevision = -1;
+        private bool _ovBakeWasEditMode;
+        private bool _ovBakeManualMode;
+
+        private sealed class BakedOvText
+        {
+            public string RenderId;
+            public string RenderedText;
+            public int SortingOrder;
+            public long TokenVisualRevision;
+            public SdfTextRenderer.TextBounds Bounds;
+        }
+
+        private sealed class BakedOvImage
+        {
+            public string RenderId;
+            public int SortingOrder;
+            public long TokenVisualRevision;
+        }
 
         private sealed class OvImageRenderIds
         {
@@ -1713,6 +2082,96 @@ namespace CheryTools
                 ids.Add(prefix + ids.Count.ToString());
             }
             return ids[index];
+        }
+
+        public void SetManualBakeMode(bool enabled)
+        {
+            if (_ovBakeManualMode == enabled) return;
+
+            _ovBakeManualMode = enabled;
+            ClearOvRuntimeBake();
+        }
+
+        public void RequestManualBake()
+        {
+            // Rebuild on the next overlay pass. This keeps dynamic tags,
+            // judgement data and token animation evaluation live.
+            ClearOvRuntimeBake();
+        }
+
+        private void ClearOvRuntimeBake()
+        {
+            _bakedOvTexts.Clear();
+            _bakedOvImages.Clear();
+            _ovBakeRevision = OverlayRenderInvalidator.Revision;
+            _ovBakeWasEditMode = Main.Settings != null && Main.Settings.OverlayerEditMode;
+            _renderDirty = true;
+        }
+
+        private void PrepareOvRuntimeBake(bool editMode)
+        {
+            bool configuredManualMode = Main.Settings != null && Main.Settings.OverlayerManualBakeEnabled;
+            if (_ovBakeManualMode != configuredManualMode)
+            {
+                _ovBakeManualMode = configuredManualMode;
+                ClearOvRuntimeBake();
+            }
+
+            long revision = OverlayRenderInvalidator.Revision;
+            bool editModeChanged = editMode != _ovBakeWasEditMode;
+            bool revisionChanged = _ovBakeRevision != revision;
+            if (editModeChanged || (revisionChanged && !_ovBakeManualMode))
+            {
+                _bakedOvTexts.Clear();
+                _bakedOvImages.Clear();
+                _ovBakeRevision = revision;
+                _ovBakeWasEditMode = editMode;
+            }
+        }
+
+        private bool CanBakeOvText(OverlayerText text, bool editMode)
+        {
+            if (text == null || editMode)
+            {
+                return false;
+            }
+
+            if (text.Animations != null)
+            {
+                for (int i = 0; i < text.Animations.Count; i++)
+                {
+                    OverlayerAnimation animation = text.Animations[i];
+                    if (animation != null && animation.IsEnabled) return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool CanBakeOvImage(OverlayerImage image, bool editMode)
+        {
+            if (image == null || editMode)
+            {
+                return false;
+            }
+
+            if (image.Animations != null)
+            {
+                for (int i = 0; i < image.Animations.Count; i++)
+                {
+                    OverlayerAnimation animation = image.Animations[i];
+                    if (animation != null && animation.IsEnabled) return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool HasEnabledImageNodeGraph(OverlayerImage image)
+        {
+            OvAnimationGraph graph = image != null ? image.NodeAnimation : null;
+            return graph != null
+                && graph.Enabled
+                && graph.Nodes != null
+                && graph.Nodes.Count > 0;
         }
 
         private OvImageRenderIds GetOvImageRenderIds(int index)
@@ -1827,9 +2286,9 @@ namespace CheryTools
                         || (formatNode.PercentageInputKind == OvPercentageInputKind.Auto
                             && !IsNativePercentageTag(tag));
                     if (ratioInput) value *= 100.0;
-                    return value.ToString("F" + decimals.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) + "%";
+                    return value.ToString(GetFixedFormat(decimals), CultureInfo.InvariantCulture) + "%";
                 case OvNumberFormatKind.FixedDecimals:
-                    return value.ToString("F" + decimals.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+                    return value.ToString(GetFixedFormat(decimals), CultureInfo.InvariantCulture);
                 case OvNumberFormatKind.ZeroPaddedInteger:
                     int width = Math.Max(1, Math.Min(16, formatNode.NumberFormatWidth));
                     double rounded = Math.Round(value, 0, MidpointRounding.AwayFromZero);
@@ -1845,93 +2304,280 @@ namespace CheryTools
             return OvNumericTagUnits.IsPercentage(tag);
         }
 
-        private static bool IsTerminalLevelState(States state)
+        private OvRuntimeMainSnapshot CaptureRuntimeSnapshot(bool trackJudgements)
         {
-            return state == States.Won || state == States.Fail || state == States.Fail2;
+            var snapshot = new OvRuntimeMainSnapshot
+            {
+                FrameId = ++_asyncRuntimeFrameId,
+                Active = true,
+                TrackJudgements = trackJudgements,
+                TimelineTime = RenderTimelineClock.Time,
+                TimelineDeltaTime = RenderTimelineClock.DeltaTime,
+                CalculateFps = _hasFpsDynamicContent,
+                FpsRefreshInterval = GetFpsTagRefreshInterval(),
+                JudgementMode = (int)OvJudgementMode.Normal
+            };
+
+            scrController controller = null;
+            try
+            {
+                controller = scrController.instance;
+                if (_hasTokenAnimations && controller != null)
+                {
+                    snapshot.ControllerInstanceId = controller.GetInstanceID();
+                    snapshot.ControllerState = (int)controller.state;
+                }
+                snapshot.NoFailEnabled = controller != null ? controller.noFail : GCS.useNoFail;
+            }
+            catch
+            {
+            }
+            try
+            {
+                snapshot.AutoplayEnabled = RDC.auto;
+            }
+            catch
+            {
+            }
+            try
+            {
+                snapshot.JudgementMode = (int)GCS.difficulty;
+            }
+            catch
+            {
+            }
+
+            bool captureAnyKey = _hasClickAnimations || _hasTokenAnyKeyAnimations;
+            if (captureAnyKey)
+            {
+                try
+                {
+                    snapshot.AnyKeyDown = Input.anyKeyDown;
+                }
+                catch
+                {
+                }
+            }
+            CaptureSpecificKeys(ref snapshot);
+
+            if (_hasTokenBeatAnimations)
+            {
+                try
+                {
+                    scrConductor conductor = scrConductor.instance;
+                    if (conductor != null && conductor.onBeatHappened)
+                    {
+                        snapshot.BeatEvents = new[]
+                        {
+                            new OvRuntimeBeatEvent
+                            {
+                                ConductorInstanceId = conductor.GetInstanceID(),
+                                BeatNumber = conductor.beatNumber
+                            }
+                        };
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            CaptureTrackerBootstrap(controller, trackJudgements, ref snapshot);
+            return snapshot;
         }
 
-        private void UpdateTokenLevelEvents()
+        private void CaptureSpecificKeys(ref OvRuntimeMainSnapshot snapshot)
         {
-            scrController controller = scrController.instance;
-            if (!ReferenceEquals(controller, _trackedController))
+            if (_watchedTokenKeys.Count == 0) return;
+            _capturedKeysDown.Clear();
+            _capturedKeysUp.Clear();
+            foreach (KeyCode key in _watchedTokenKeys)
             {
-                if (_trackedController != null
-                    && _controllerStateInitialized
-                    && !IsTerminalLevelState(_lastControllerState)
-                    && controller == null)
+                try
                 {
-                    _tokenTriggerFrame.LevelEnded = true;
+                    if (Input.GetKeyDown(key)) _capturedKeysDown.Add(key);
+                    if (Input.GetKeyUp(key)) _capturedKeysUp.Add(key);
+                }
+                catch
+                {
+                }
+            }
+            if (_capturedKeysDown.Count > 0) snapshot.KeysDown = _capturedKeysDown.ToArray();
+            if (_capturedKeysUp.Count > 0) snapshot.KeysUp = _capturedKeysUp.ToArray();
+        }
+
+        private void CaptureTrackerBootstrap(scrController controller, bool trackJudgements,
+            ref OvRuntimeMainSnapshot snapshot)
+        {
+            scrMarginTracker tracker = null;
+            if (trackJudgements && controller != null && controller.playerOne != null)
+            {
+                tracker = controller.playerOne.marginTracker;
+            }
+
+            int trackerId = 0;
+            int hitCount = 0;
+            if (tracker != null)
+            {
+                try
+                {
+                    trackerId = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(tracker);
+                    hitCount = tracker.hitMargins != null ? tracker.hitMargins.Count : 0;
+                }
+                catch
+                {
+                    tracker = null;
+                    trackerId = 0;
+                    hitCount = 0;
+                }
+            }
+
+            bool reset = trackerId != _runtimeTrackerInstanceId
+                || (trackerId != 0 && hitCount < _runtimeTrackerCount);
+            if (reset)
+            {
+                _runtimeTrackerGeneration++;
+                _runtimeTrackerInstanceId = trackerId;
+                if (tracker != null && hitCount > 0)
+                {
+                    int[] bootstrap = new int[hitCount];
+                    for (int i = 0; i < hitCount; i++) bootstrap[i] = (int)tracker.hitMargins[i];
+                    snapshot.BootstrapJudgements = bootstrap;
+                }
+                else
+                {
+                    snapshot.BootstrapJudgements = Array.Empty<int>();
+                }
+                snapshot.BootstrapJudgementSequence = _asyncRuntime != null
+                    ? _asyncRuntime.LastEnqueuedJudgementSequence
+                    : 0L;
+            }
+
+            _runtimeTrackerCount = hitCount;
+            snapshot.TrackerInstanceId = trackerId;
+            snapshot.TrackerGeneration = _runtimeTrackerGeneration;
+        }
+
+        private bool ConsumeAsyncRuntimeResults()
+        {
+            bool consumed = false;
+            _anyKeyPressedThisFrame = false;
+            _comboIncreasedThisFrame = false;
+            _tokenTriggerFrame.AutoplayEnabled = _runtimeAutoplayEnabled;
+            _tokenTriggerFrame.NoFailEnabled = _runtimeNoFailEnabled;
+            _tokenTriggerFrame.JudgementMode = _runtimeJudgementMode;
+
+            OvAsyncRuntimePipeline runtime = _asyncRuntime;
+            if (runtime == null) return false;
+            while (runtime.TryDequeue(out OvRuntimeComputedFrame result))
+            {
+                consumed = true;
+                if (result.Reset)
+                {
+                    _currentPureCombo = 0;
+                    _currentPerfectCombo = 0;
+                    _asyncRuntimeStateReady = false;
+                    continue;
                 }
 
-                _trackedController = controller;
-                _controllerStateInitialized = false;
-                _lastControllerState = States.None;
+                _asyncRuntimeStateReady = true;
+                _runtimeAutoplayEnabled = result.AutoplayEnabled;
+                _runtimeNoFailEnabled = result.NoFailEnabled;
+                _runtimeJudgementMode = result.JudgementMode;
+                _tokenTriggerFrame.AutoplayEnabled = _runtimeAutoplayEnabled;
+                _tokenTriggerFrame.NoFailEnabled = _runtimeNoFailEnabled;
+                _tokenTriggerFrame.JudgementMode = _runtimeJudgementMode;
+
+                _currentPureCombo = result.PureCombo;
+                _currentPerfectCombo = result.PerfectCombo;
+                _comboIncreasedThisFrame |= result.ComboIncreased;
+                _tokenTriggerFrame.PureComboBroken |= result.PureComboBroken;
+                _tokenTriggerFrame.PerfectComboBroken |= result.PerfectComboBroken;
+                _tokenTriggerFrame.LevelStarted |= result.LevelStarted;
+                _tokenTriggerFrame.LevelEnded |= result.LevelEnded;
+                _anyKeyPressedThisFrame |= result.AnyKeyDown;
+                _tokenTriggerFrame.AnyKeyDown |= result.AnyKeyDown;
+
+                if (result.BeatHappened)
+                {
+                    _tokenTriggerFrame.BeatHappened = true;
+                    _tokenTriggerFrame.BeatNumber = result.BeatNumber;
+                }
+                if (result.Judgements != null)
+                {
+                    for (int i = 0; i < result.Judgements.Length; i++)
+                    {
+                        _tokenTriggerFrame.Judgements.Add(result.Judgements[i]);
+                    }
+                }
+                if (result.KeysDown != null)
+                {
+                    for (int i = 0; i < result.KeysDown.Length; i++)
+                    {
+                        _tokenTriggerFrame.KeysDown.Add(result.KeysDown[i]);
+                    }
+                }
+                if (result.KeysUp != null)
+                {
+                    for (int i = 0; i < result.KeysUp.Length; i++)
+                    {
+                        _tokenTriggerFrame.KeysUp.Add(result.KeysUp[i]);
+                    }
+                }
+                if (result.FpsUpdated)
+                {
+                    _cachedFps = result.Fps;
+                    OvLevelStatsTracker.RecordFps(result.Fps);
+                }
+                if (result.RenderStateChanged) MarkRenderDirty();
             }
 
-            if (controller == null) return;
-            States currentState = controller.state;
-            if (!_controllerStateInitialized)
+            _tokenTriggerFrame.ComboIncreased = _comboIncreasedThisFrame;
+            string error = runtime.ConsumeError();
+            if (!_asyncRuntimeErrorLogged && !string.IsNullOrEmpty(error))
             {
-                _controllerStateInitialized = true;
-                _lastControllerState = currentState;
-                return;
+                _asyncRuntimeErrorLogged = true;
+                Main.Logger?.Log("[CheryTools] OV async runtime error (reported once): " + error);
             }
-
-            if (currentState == _lastControllerState) return;
-            if (currentState == States.PlayerControl && _lastControllerState != States.PlayerControl)
-            {
-                _tokenTriggerFrame.LevelStarted = true;
-                _lastTriggeredBeatNumber = int.MinValue;
-            }
-            if (IsTerminalLevelState(currentState) && !IsTerminalLevelState(_lastControllerState))
-            {
-                _tokenTriggerFrame.LevelEnded = true;
-            }
-            _lastControllerState = currentState;
+            return consumed;
         }
 
-        private void UpdateTokenBeatEvent()
+        private static float GetOvRuntimeInterval()
         {
-            scrConductor conductor = scrConductor.instance;
-            if (!ReferenceEquals(conductor, _trackedConductor))
+            float rate = Main.Settings != null ? Main.Settings.OverlayUpdateRate : 240f;
+            if (float.IsNaN(rate) || float.IsInfinity(rate) || rate <= 0f)
             {
-                _trackedConductor = conductor;
-                _lastTriggeredBeatNumber = int.MinValue;
+                rate = 240f;
             }
-            if (conductor == null || !conductor.onBeatHappened) return;
-
-            int beatNumber = conductor.beatNumber;
-            if (beatNumber == _lastTriggeredBeatNumber) return;
-            _lastTriggeredBeatNumber = beatNumber;
-            _tokenTriggerFrame.BeatHappened = true;
-            _tokenTriggerFrame.BeatNumber = beatNumber;
+            return 1f / Mathf.Clamp(rate, 30f, 360f);
         }
 
-        private void UpdateTokenStateValues()
+        private static bool HasTransientRuntimeInput(OvRuntimeMainSnapshot snapshot)
         {
-            try
+            return snapshot.AnyKeyDown
+                || (snapshot.KeysDown != null && snapshot.KeysDown.Length > 0)
+                || (snapshot.KeysUp != null && snapshot.KeysUp.Length > 0)
+                || (snapshot.BeatEvents != null && snapshot.BeatEvents.Length > 0);
+        }
+
+        private void DeactivateAsyncRuntime()
+        {
+            if (!_asyncRuntimeActive || _asyncRuntime == null) return;
+            _asyncRuntimeActive = false;
+            _asyncRuntimeStateReady = false;
+            _nextOvRuntimeTickTime = 0f;
+            _lastOvTokenUpdateTime = 0f;
+            _runtimeTrackerInstanceId = 0;
+            _runtimeTrackerCount = 0;
+            _runtimeTrackerGeneration++;
+            _asyncRuntime.Publish(new OvRuntimeMainSnapshot
             {
-                _tokenTriggerFrame.AutoplayEnabled = RDC.auto;
-            }
-            catch
-            {
-            }
-            try
-            {
-                _tokenTriggerFrame.NoFailEnabled = scrController.instance != null
-                    ? scrController.instance.noFail
-                    : GCS.useNoFail;
-            }
-            catch
-            {
-            }
-            try
-            {
-                _tokenTriggerFrame.JudgementMode = (int)GCS.difficulty;
-            }
-            catch
-            {
-            }
+                FrameId = ++_asyncRuntimeFrameId,
+                Active = false,
+                JudgementMode = (int)OvJudgementMode.Normal
+            });
+            _currentPureCombo = 0;
+            _currentPerfectCombo = 0;
         }
 
         private (float x, float y, float sx, float sy, float opacity, float rotation) EvaluateAnimState(OverlayerAnimation anim, float currentTime)
@@ -1972,11 +2618,13 @@ namespace CheryTools
         {
             if (!Main.IsEnabled || Main.Settings == null || !Main.Settings.OverlayerSystemEnabled)
             {
+                DeactivateAsyncRuntime();
                 return;
             }
 
             if (Main.Settings.OverlayerOnlyShowPlaying && !Main.IsGamePlaying() && !Main.Settings.OverlayerEditMode)
             {
+                DeactivateAsyncRuntime();
                 return;
             }
 
@@ -1986,100 +2634,36 @@ namespace CheryTools
                 _lastUpdateScanRevision = currentRevision;
                 ScanRuntimeInterestFlags();
                 ScanDynamicOverlayFlags();
+                if (!_hasTokenAnimations)
+                {
+                    _lastOvTokenUpdateTime = 0f;
+                }
             }
 
             // Early exit if no dynamic content needs updating
             if (!_needsHitTracker && !_needsComboTracker && !_hasTextAnimations && !_hasImageAnimations && !_hasTokenAnimations && !_hasFpsDynamicContent)
             {
+                DeactivateAsyncRuntime();
                 return;
             }
 
-            if (_hasFpsDynamicContent)
-            {
-                UpdateCachedFps(Time.unscaledTime);
-            }
-
             _tokenTriggerFrame.Reset();
-            if (_hasTokenAnimations)
+            bool trackJudgements = _needsHitTracker || _needsComboTracker || _hasComboAnimations;
+            _asyncRuntimeActive = true;
+            float now = RenderTimelineClock.Time;
+            float runtimeInterval = GetOvRuntimeInterval();
+            OvRuntimeMainSnapshot snapshot = CaptureRuntimeSnapshot(trackJudgements);
+            bool hasTransientInput = HasTransientRuntimeInput(snapshot)
+                || (_asyncRuntime != null && _asyncRuntime.HasPendingJudgements);
+            bool runtimeTickDue = !_asyncRuntimeStateReady
+                || now >= _nextOvRuntimeTickTime
+                || hasTransientInput;
+            if (runtimeTickDue)
             {
-                UpdateTokenLevelEvents();
-                UpdateTokenStateValues();
+                _asyncRuntime?.Publish(snapshot);
+                _nextOvRuntimeTickTime = now + runtimeInterval;
             }
-            if (_hasTokenBeatAnimations) UpdateTokenBeatEvent();
-            _anyKeyPressedThisFrame = (_hasClickAnimations || _hasTokenAnyKeyAnimations) && Input.anyKeyDown;
-            _tokenTriggerFrame.AnyKeyDown = _hasTokenAnyKeyAnimations && _anyKeyPressedThisFrame;
-            _comboIncreasedThisFrame = false;
-
-            if ((_needsHitTracker || _needsComboTracker || _hasComboAnimations)
-                && scrController.instance != null
-                && scrController.instance.playerOne != null
-                && scrController.instance.playerOne.marginTracker != null)
-            {
-                scrMarginTracker marginTracker = scrController.instance.playerOne.marginTracker;
-                var hitMargins = marginTracker.hitMargins;
-                int currentHitCount = hitMargins.Count;
-
-                int startIndex = _lastHitCount;
-                bool emitEvents = _hitTrackerInitialized && ReferenceEquals(_trackedMarginTracker, marginTracker);
-                if (!ReferenceEquals(_trackedMarginTracker, marginTracker) || currentHitCount < _lastHitCount)
-                {
-                    _trackedMarginTracker = marginTracker;
-                    startIndex = 0;
-                    emitEvents = false;
-                    _currentPureCombo = 0;
-                    _currentPerfectCombo = 0;
-                    MarkRenderDirty();
-                }
-                if (currentHitCount > startIndex)
-                {
-                    for (int i = startIndex; i < currentHitCount; i++)
-                    {
-                        HitMargin hit = hitMargins[i];
-                        int previousPureCombo = _currentPureCombo;
-                        int previousPerfectCombo = _currentPerfectCombo;
-                        bool comboIncreased = false;
-                        if (hit == HitMargin.Perfect || hit == HitMargin.Auto)
-                        {
-                            _currentPureCombo++;
-                            _currentPerfectCombo++;
-                            comboIncreased = true;
-                        }
-                        else if (hit == HitMargin.EarlyPerfect || hit == HitMargin.LatePerfect)
-                        {
-                            _currentPureCombo = 0;
-                            _currentPerfectCombo++;
-                            comboIncreased = true;
-                        }
-                        else
-                        {
-                            _currentPureCombo = 0;
-                            _currentPerfectCombo = 0;
-                        }
-
-                        if (!emitEvents) continue;
-                        _tokenTriggerFrame.Judgements.Add((int)hit);
-                        if (comboIncreased) _comboIncreasedThisFrame = true;
-                        if (previousPureCombo > 0 && _currentPureCombo == 0) _tokenTriggerFrame.PureComboBroken = true;
-                        if (previousPerfectCombo > 0 && _currentPerfectCombo == 0) _tokenTriggerFrame.PerfectComboBroken = true;
-                    }
-                    MarkRenderDirty();
-                }
-                _lastHitCount = currentHitCount;
-                _hitTrackerInitialized = true;
-            }
-            else
-            {
-                if (_lastHitCount != 0 || _currentPureCombo != 0 || _currentPerfectCombo != 0)
-                {
-                    MarkRenderDirty();
-                }
-                _lastHitCount = 0;
-                _currentPureCombo = 0;
-                _currentPerfectCombo = 0;
-                _trackedMarginTracker = null;
-                _hitTrackerInitialized = false;
-            }
-            _tokenTriggerFrame.ComboIncreased = _comboIncreasedThisFrame;
+            bool consumedRuntimeResult = ConsumeAsyncRuntimeResults();
 
             // Advance animation frames and trigger check
             if (_hasTextAnimations && Main.Settings.OverlayerTexts != null)
@@ -2109,7 +2693,7 @@ namespace CheryTools
                         if (state.IsPlaying && anim.ParsedFrames != null && anim.ParsedFrames.Count > 0)
                         {
                             float maxTime = anim.ParsedFrames[anim.ParsedFrames.Count - 1].time;
-                            state.CurrentTime += UnityEngine.Time.unscaledDeltaTime;
+                            state.CurrentTime += RenderTimelineClock.DeltaTime;
                             MarkRenderDirty();
                             if (state.CurrentTime > maxTime)
                             {
@@ -2147,7 +2731,7 @@ namespace CheryTools
                         if (state.IsPlaying && anim.ParsedFrames != null && anim.ParsedFrames.Count > 0)
                         {
                             float maxTime = anim.ParsedFrames[anim.ParsedFrames.Count - 1].time;
-                            state.CurrentTime += UnityEngine.Time.unscaledDeltaTime;
+                            state.CurrentTime += RenderTimelineClock.DeltaTime;
                             MarkRenderDirty();
                             if (state.CurrentTime > maxTime)
                             {
@@ -2159,21 +2743,32 @@ namespace CheryTools
                 }
             }
 
-            if (_hasTokenAnimations && _tokenAnimationRuntime.Update(
-                Main.Settings.OverlayerTexts,
-                _tokenTriggerFrame,
-                UnityEngine.Time.unscaledDeltaTime,
-                OverlayRenderInvalidator.Revision))
+            bool shouldAdvanceTokenRuntime = _hasTokenAnimations
+                && _asyncRuntimeStateReady
+                && (runtimeTickDue || consumedRuntimeResult);
+            if (shouldAdvanceTokenRuntime)
             {
-                MarkRenderDirty();
-            }
-            if (_hasTokenAnimations && _tokenAnimationRuntime.Update(
-                BuildImageAnimationProxyList(),
-                _tokenTriggerFrame,
-                UnityEngine.Time.unscaledDeltaTime,
-                OverlayRenderInvalidator.Revision))
-            {
-                MarkRenderDirty();
+                float tokenDelta = _lastOvTokenUpdateTime > 0f
+                    ? Mathf.Max(0f, now - _lastOvTokenUpdateTime)
+                    : RenderTimelineClock.DeltaTime;
+                _lastOvTokenUpdateTime = now;
+                long renderRevision = OverlayRenderInvalidator.Revision;
+                if (_tokenAnimationRuntime.Update(
+                    Main.Settings.OverlayerTexts,
+                    _tokenTriggerFrame,
+                    tokenDelta,
+                    renderRevision))
+                {
+                    MarkRenderDirty();
+                }
+                if (_tokenAnimationRuntime.Update(
+                    BuildImageAnimationProxyList(),
+                    _tokenTriggerFrame,
+                    tokenDelta,
+                    renderRevision))
+                {
+                    MarkRenderDirty();
+                }
             }
         }
 
@@ -2224,7 +2819,7 @@ namespace CheryTools
             for (int i = 0; i < Main.Settings.OverlayerImages.Count; i++)
             {
                 OverlayerImage image = Main.Settings.OverlayerImages[i];
-                if (image == null) continue;
+                if (!HasEnabledImageNodeGraph(image)) continue;
                 OverlayerText proxy = GetImageAnimationProxy(image);
                 _imageAnimationProxyBuffer.Add(proxy);
             }
@@ -2239,8 +2834,8 @@ namespace CheryTools
             }
 
             System.Collections.Generic.List<OvTextSourcePart> parts = OvTextTokenService.EnsureBindings(ovText);
-            System.Collections.Generic.IReadOnlyDictionary<string, string> textOverrides = _tokenAnimationRuntime.GetTextOverrides(ovText);
-            System.Collections.Generic.IReadOnlyDictionary<string, OvAnimationNode> numberFormats = _tokenAnimationRuntime.GetNumberFormats(ovText);
+            System.Collections.Generic.Dictionary<string, string> textOverrides = _tokenAnimationRuntime.GetTextOverrides(ovText);
+            System.Collections.Generic.Dictionary<string, OvAnimationNode> numberFormats = _tokenAnimationRuntime.GetNumberFormats(ovText);
             _ovTokenTextBuilder.Length = 0;
             for (int i = 0; i < parts.Count; i++)
             {
@@ -2276,7 +2871,16 @@ namespace CheryTools
                 _ovTokenTextBuilder.Append(rendered);
                 _ovTokenTextBuilder.Append("</link>");
             }
-            return _ovTokenTextBuilder.ToString();
+
+            if (_ovTokenTextMemo.TryGetValue(ovText, out string memoized)
+                && BuilderContentEquals(_ovTokenTextBuilder, memoized))
+            {
+                return memoized;
+            }
+
+            string built = _ovTokenTextBuilder.ToString();
+            _ovTokenTextMemo[ovText] = built;
+            return built;
         }
 
         public void RenderUI()
@@ -2289,6 +2893,7 @@ namespace CheryTools
             }
 
             bool editMode = Main.Settings.OverlayerEditMode;
+            PrepareOvRuntimeBake(editMode);
             if (!editMode) _activeOvAlignLines.Clear();
             if (CheryToolsMenu.IsMenuOpen) _activeOvAlignLines.Clear();
             if (Main.Settings.OverlayerOnlyShowPlaying && !Main.IsGamePlaying() && !editMode)
@@ -2312,7 +2917,25 @@ namespace CheryTools
                 var ovText = texts[i];
                 if (ovText == null) continue;
                 if (!ovText.IsEnabled && !editMode) continue;
-                if (!ovText.ShowInGame && isPlaying && !editMode) continue;
+                if (!IsItemVisible(ovText.ShowInGame, ovText.OnlyShowPlaying, isPlaying, editMode)) continue;
+
+                string textRenderId = GetIndexedRenderId(_ovTextRenderIds, "ov_text_", i);
+                int textSortingOrder = RenderDepth.ToSortingOrder(ovText.Depth, RenderDepth.SublayerText);
+                bool canBakeText = CanBakeOvText(ovText, editMode);
+                long tokenVisualRevision = _tokenAnimationRuntime.GetVisualRevision(ovText);
+                string rawText = ResolveOvTextForRender(ovText, ovText.TextFormat ?? string.Empty);
+                if (canBakeText
+                    && _bakedOvTexts.TryGetValue(ovText, out BakedOvText bakedText)
+                    && string.Equals(bakedText.RenderId, textRenderId, StringComparison.Ordinal)
+                    && string.Equals(bakedText.RenderedText, rawText, StringComparison.Ordinal)
+                    && bakedText.SortingOrder == textSortingOrder
+                    && bakedText.TokenVisualRevision == tokenVisualRevision
+                    && SdfTextRenderer.KeepAlive(textRenderId, textSortingOrder))
+                {
+                    ovText.LastWidth = Mathf.Max(1f, bakedText.Bounds.ContentWidth);
+                    ovText.LastHeight = Mathf.Max(1f, bakedText.Bounds.ContentHeight);
+                    continue;
+                }
 
                 float animOffsetX = 0f;
                 float animOffsetY = 0f;
@@ -2338,7 +2961,6 @@ namespace CheryTools
                     }
                 }
 
-                string rawText = ResolveOvTextForRender(ovText, ovText.TextFormat ?? string.Empty);
                 System.Numerics.Vector2 screenDisplaySizeForText = ImGuiController.ScreenDisplaySize;
                 float textPivotX = Mathf.Clamp01(ovText.PivotX);
                 float textLayoutMinWidth = 0f;
@@ -2360,13 +2982,12 @@ namespace CheryTools
                 }
                 textLayoutMinWidth = Mathf.Max(0f, Mathf.Min(screenDisplaySizeForText.X, textLayoutMinWidth));
 
-                string layoutKey = BuildOvTextLayoutKey(ovText, rawText);
+                OvTextLayoutKey layoutKey = BuildOvTextLayoutKey(ovText, rawText);
                 UnityEngine.Vector2 cachedLayoutSize = UnityEngine.Vector2.zero;
-                bool useCachedLayoutSize = _ovTextLayoutKeys.TryGetValue(ovText, out string previousLayoutKey)
-                    && string.Equals(previousLayoutKey, layoutKey, StringComparison.Ordinal)
+                bool useCachedLayoutSize = _ovTextLayoutKeys.TryGetValue(ovText, out OvTextLayoutKey previousLayoutKey)
+                    && previousLayoutKey.Equals(layoutKey)
                     && _ovTextStableSizes.TryGetValue(ovText, out cachedLayoutSize);
 
-                string textRenderId = GetIndexedRenderId(_ovTextRenderIds, "ov_text_", i);
                 SdfTextRenderer.TextBounds textBounds = SdfTextRenderer.DrawOverlayerText(
                     textRenderId,
                     ovText,
@@ -2378,8 +2999,24 @@ namespace CheryTools
                     Mathf.Max(textLayoutMinWidth, useCachedLayoutSize ? cachedLayoutSize.x : 0f),
                     useCachedLayoutSize ? cachedLayoutSize.y : 0f,
                     useCachedLayoutSize,
-                    RenderDepth.ToSortingOrder(ovText.Depth, RenderDepth.SublayerText),
+                    textSortingOrder,
                     _tokenAnimationRuntime.GetPoses(ovText));
+
+                if (canBakeText)
+                {
+                    _bakedOvTexts[ovText] = new BakedOvText
+                    {
+                        RenderId = textRenderId,
+                        RenderedText = rawText,
+                        SortingOrder = textSortingOrder,
+                        TokenVisualRevision = tokenVisualRevision,
+                        Bounds = textBounds
+                    };
+                }
+                else
+                {
+                    _bakedOvTexts.Remove(ovText);
+                }
 
                 float contentWindowWidth = Mathf.Max(1f, textBounds.Width);
                 float contentWindowHeight = Mathf.Max(1f, textBounds.Height);
@@ -2414,6 +3051,11 @@ namespace CheryTools
                             _ovDragTotalDeltaX = 0f;
                             _ovDragTotalDeltaY = 0f;
                             _activeOvAlignLines.Clear();
+                            // Persist once on release. During the drag the edit-mode
+                            // path already forces a full-rate refresh, so the old
+                            // per-frame RequestSave only recompiled every token graph
+                            // and killed running animations.
+                            Main.RequestSave();
                         }
                     }
                     else if (_draggingIndex == -1 && _draggingIndexImg == -1 && _draggingIndexBar == -1 && _draggingIndexVideo == -1 && isTextHit && mouseClicked)
@@ -2434,7 +3076,6 @@ namespace CheryTools
                             _ovDragTotalDeltaX += delta.X;
                             _ovDragTotalDeltaY += delta.Y;
                             MoveOvTextWithSnapping(ovText, visualWidth, visualHeight, _ovDragStartX + _ovDragTotalDeltaX, _ovDragStartY + _ovDragTotalDeltaY, screenDisplaySize);
-                            Main.RequestSave();
                         }
                     }
                 }
@@ -2443,6 +3084,7 @@ namespace CheryTools
                     _draggingIndex = -1;
                     _ovDragTotalDeltaX = 0f;
                     _ovDragTotalDeltaY = 0f;
+                    Main.RequestSave();
                 }
 
                 if (editMode && !CheryToolsMenu.IsMenuOpen)
@@ -2467,9 +3109,40 @@ namespace CheryTools
                 var ovImg = images[i];
                 if (ovImg == null) continue;
                 if (!ovImg.IsEnabled && !editMode) continue;
-                if (!ovImg.ShowInGame && isPlaying && !editMode) continue;
+                if (!IsItemVisible(ovImg.ShowInGame, ovImg.OnlyShowPlaying, isPlaying, editMode)) continue;
+
+                bool canBakeImage = CanBakeOvImage(ovImg, editMode);
+                long tokenVisualRevision = 0;
+                if (HasEnabledImageNodeGraph(ovImg))
+                {
+                    tokenVisualRevision = _tokenAnimationRuntime.GetVisualRevision(GetImageAnimationProxy(ovImg));
+                }
+                OvImageRenderIds imageRenderIds = GetOvImageRenderIds(i);
+                int imageSortingOrder = RenderDepth.ToSortingOrder(ovImg.Depth, RenderDepth.SublayerGraphic);
+                if (canBakeImage
+                    && _bakedOvImages.TryGetValue(ovImg, out BakedOvImage bakedImage)
+                    && string.Equals(bakedImage.RenderId, imageRenderIds.Image, StringComparison.Ordinal)
+                    && bakedImage.SortingOrder == imageSortingOrder
+                    && bakedImage.TokenVisualRevision == tokenVisualRevision
+                    && OverlayerUnityRenderer.KeepImageAlive(imageRenderIds.Image, imageSortingOrder))
+                {
+                    continue;
+                }
 
                 RenderOvImageUnity(i, ovImg, editMode);
+                if (canBakeImage && OverlayerUnityRenderer.KeepImageAlive(imageRenderIds.Image, imageSortingOrder))
+                {
+                    _bakedOvImages[ovImg] = new BakedOvImage
+                    {
+                        RenderId = imageRenderIds.Image,
+                        SortingOrder = imageSortingOrder,
+                        TokenVisualRevision = tokenVisualRevision
+                    };
+                }
+                else
+                {
+                    _bakedOvImages.Remove(ovImg);
+                }
                 continue;
             }
 
@@ -2481,7 +3154,7 @@ namespace CheryTools
                     var ovVideo = videos[i];
                     if (ovVideo == null) continue;
                     if (!ovVideo.IsEnabled && !editMode) continue;
-                    if (!ovVideo.ShowInGame && isPlaying && !editMode) continue;
+                    if (!IsItemVisible(ovVideo.ShowInGame, ovVideo.OnlyShowPlaying, isPlaying, editMode)) continue;
 
                     BeginVideoFrameIfNeeded(ref hasVideoThisFrame);
                     RenderOvVideoUnity(i, ovVideo, editMode);
@@ -2496,7 +3169,7 @@ namespace CheryTools
                     var bar = progressBars[i];
                     if (bar == null) continue;
                     if (!bar.IsEnabled && !editMode) continue;
-                    if (!bar.ShowInGame && isPlaying && !editMode) continue;
+                    if (!IsItemVisible(bar.ShowInGame, bar.OnlyShowPlaying, isPlaying, editMode)) continue;
 
                     RenderOvProgressBarUnity(i, bar, editMode);
                 }
@@ -2540,6 +3213,14 @@ namespace CheryTools
             return false;
         }
 
+        private static bool IsItemVisible(bool showInGame, bool onlyShowPlaying, bool isPlaying, bool editMode)
+        {
+            if (editMode) return true;
+            if (!showInGame && isPlaying) return false;
+            if (onlyShowPlaying && !isPlaying) return false;
+            return true;
+        }
+
         private static bool HasVisibleOverlayerTexts(bool isPlaying, bool editMode)
         {
             var texts = Main.Settings != null ? Main.Settings.OverlayerTexts : null;
@@ -2549,7 +3230,7 @@ namespace CheryTools
                 OverlayerText text = texts[i];
                 if (text == null) continue;
                 if (!text.IsEnabled && !editMode) continue;
-                if (!text.ShowInGame && isPlaying && !editMode) continue;
+                if (!IsItemVisible(text.ShowInGame, text.OnlyShowPlaying, isPlaying, editMode)) continue;
                 return true;
             }
             return false;
@@ -2564,7 +3245,7 @@ namespace CheryTools
                 OverlayerImage image = images[i];
                 if (image == null) continue;
                 if (!image.IsEnabled && !editMode) continue;
-                if (!image.ShowInGame && isPlaying && !editMode) continue;
+                if (!IsItemVisible(image.ShowInGame, image.OnlyShowPlaying, isPlaying, editMode)) continue;
                 return true;
             }
             return false;
@@ -2579,7 +3260,7 @@ namespace CheryTools
                 OverlayerVideo video = videos[i];
                 if (video == null) continue;
                 if (!video.IsEnabled && !editMode) continue;
-                if (!video.ShowInGame && isPlaying && !editMode) continue;
+                if (!IsItemVisible(video.ShowInGame, video.OnlyShowPlaying, isPlaying, editMode)) continue;
                 return true;
             }
             return false;
@@ -2594,7 +3275,7 @@ namespace CheryTools
                 OverlayerProgressBar bar = bars[i];
                 if (bar == null) continue;
                 if (!bar.IsEnabled && !editMode) continue;
-                if (!bar.ShowInGame && isPlaying && !editMode) continue;
+                if (!IsItemVisible(bar.ShowInGame, bar.OnlyShowPlaying, isPlaying, editMode)) continue;
                 return true;
             }
             return false;
@@ -2625,9 +3306,11 @@ namespace CheryTools
             float animOpacityMult = 1f;
             float animRotationOffset = 0f;
 
-            OverlayerText imageAnimationProxy = GetImageAnimationProxy(ovImg);
-            System.Collections.Generic.IReadOnlyDictionary<string, OvTokenPose> imagePoses
-                = OvTokenAnimationRuntime.HasEnabledGraph(imageAnimationProxy)
+            OverlayerText imageAnimationProxy = HasEnabledImageNodeGraph(ovImg)
+                ? GetImageAnimationProxy(ovImg)
+                : null;
+            System.Collections.Generic.Dictionary<string, OvTokenPose> imagePoses
+                = imageAnimationProxy != null
                     ? _tokenAnimationRuntime.GetPoses(imageAnimationProxy)
                     : null;
             if (imagePoses != null
@@ -2784,6 +3467,7 @@ namespace CheryTools
                         _ovDragTotalDeltaX = 0f;
                         _ovDragTotalDeltaY = 0f;
                         _activeOvAlignLines.Clear();
+                        Main.RequestSave();
                     }
                 }
                 else if (_draggingIndexImg == -1 && _draggingIndex == -1 && _draggingIndexBar == -1 && _draggingIndexVideo == -1 && isImageHit && mouseClicked)
@@ -2804,7 +3488,6 @@ namespace CheryTools
                         _ovDragTotalDeltaX += delta.X;
                         _ovDragTotalDeltaY += delta.Y;
                         MoveOvImageWithSnapping(ovImg, boundW, boundH, _ovDragStartX + _ovDragTotalDeltaX, _ovDragStartY + _ovDragTotalDeltaY, screenDisplaySize);
-                        Main.RequestSave();
                     }
                 }
 
@@ -2815,6 +3498,7 @@ namespace CheryTools
                 _draggingIndexImg = -1;
                 _ovDragTotalDeltaX = 0f;
                 _ovDragTotalDeltaY = 0f;
+                Main.RequestSave();
             }
         }
 
@@ -2923,6 +3607,7 @@ namespace CheryTools
                         _ovDragTotalDeltaX = 0f;
                         _ovDragTotalDeltaY = 0f;
                         _activeOvAlignLines.Clear();
+                        Main.RequestSave();
                     }
                 }
                 else if (_draggingIndexVideo == -1 && _draggingIndexImg == -1 && _draggingIndex == -1 && _draggingIndexBar == -1 && isVideoHit && mouseClicked)
@@ -2943,7 +3628,6 @@ namespace CheryTools
                         _ovDragTotalDeltaX += delta.X;
                         _ovDragTotalDeltaY += delta.Y;
                         MoveOvVideoWithSnapping(video, boundW, boundH, _ovDragStartX + _ovDragTotalDeltaX, _ovDragStartY + _ovDragTotalDeltaY, screenDisplaySize);
-                        Main.RequestSave();
                     }
                 }
 
@@ -2954,6 +3638,7 @@ namespace CheryTools
                 _draggingIndexVideo = -1;
                 _ovDragTotalDeltaX = 0f;
                 _ovDragTotalDeltaY = 0f;
+                Main.RequestSave();
             }
         }
 
@@ -3060,6 +3745,7 @@ namespace CheryTools
                         _ovDragTotalDeltaX = 0f;
                         _ovDragTotalDeltaY = 0f;
                         _activeOvAlignLines.Clear();
+                        Main.RequestSave();
                     }
                 }
                 else if (_draggingIndexBar == -1 && _draggingIndex == -1 && _draggingIndexImg == -1 && _draggingIndexVideo == -1 && isBarHit && mouseClicked)
@@ -3080,7 +3766,6 @@ namespace CheryTools
                         _ovDragTotalDeltaX += delta.X;
                         _ovDragTotalDeltaY += delta.Y;
                         MoveOvProgressBarWithSnapping(bar, width, height, _ovDragStartX + _ovDragTotalDeltaX, _ovDragStartY + _ovDragTotalDeltaY, screenDisplaySize);
-                        Main.RequestSave();
                     }
                 }
 
@@ -3091,6 +3776,7 @@ namespace CheryTools
                 _draggingIndexBar = -1;
                 _ovDragTotalDeltaX = 0f;
                 _ovDragTotalDeltaY = 0f;
+                Main.RequestSave();
             }
         }
 
@@ -3112,30 +3798,18 @@ namespace CheryTools
                 return;
             }
 
-            int steps = Mathf.Clamp(Mathf.CeilToInt(softness / 1.5f), 3, 16);
-            for (int i = steps; i >= 1; i--)
-            {
-                float t = (i - 0.5f) / steps;
-                float expand = softness * t;
-                float alphaScale = 0.42f * Mathf.Pow(1f - t, 1.7f) / Mathf.Max(1f, steps * 0.45f);
-                var layerTopLeft = new UnityEngine.Vector2(shadowTopLeft.x - expand, shadowTopLeft.y - expand);
-                var layerSize = new UnityEngine.Vector2(size.x + expand * 2f, size.y + expand * 2f);
-                OverlayerUnityRenderer.DrawFilledRect(
-                    "ov_bar_shadow_" + index.ToString() + "_" + i.ToString(),
-                    layerTopLeft,
-                    layerSize,
-                    PackColor(bar.ShadowColor, opacity * Mathf.Clamp01(alphaScale)),
-                    cornerRadius + expand,
-                    sortingOrder);
-            }
-
-            OverlayerUnityRenderer.DrawFilledRect(
-                "ov_bar_shadow_core_" + index.ToString(),
+            // Soft shadows use the shared 9-slice gaussian batch (36 vertices, single
+            // draw) instead of the old stack of up to 17 translucent rounded rects.
+            // The shadow sublayer sits below the bar's graphic sublayer, and being a
+            // separate graphic it no longer re-triangulates when the fill width
+            // changes every frame.
+            int shadowSortingOrder = RenderDepth.ToSortingOrder(bar.Depth, RenderDepth.SublayerRainShadow);
+            OverlayerUnityRenderer.DrawSoftShadowRect(
                 shadowTopLeft,
                 size,
-                PackColor(bar.ShadowColor, opacity * 0.48f),
-                cornerRadius,
-                sortingOrder);
+                PackColor(bar.ShadowColor, opacity),
+                softness,
+                shadowSortingOrder);
         }
 
         private double ResolveProgressValue(OverlayerProgressValueSource source)
@@ -3525,262 +4199,5 @@ namespace CheryTools
             }
         }
 
-        private float CalculateRichTextWidth(string currentLine, float letterSpacing, float baseFontSize, OverlayerText ovText, float animScaleXMult)
-        {
-            float totalWidth = 0f;
-            var segments = RichTextParser.Parse(currentLine, new System.Numerics.Vector4(1,1,1,1));
-            
-            float safeBaseFontSize = (baseFontSize > 0) ? baseFontSize : 100f;
-
-            foreach (var seg in segments)
-            {
-                float targetSize = baseFontSize;
-                if (seg.HasSizeTag)
-                {
-                    if (seg.SizeValue > 0)
-                    {
-                        targetSize = seg.SizeValue;
-                    }
-                    else if (seg.SizeValue < 0)
-                    {
-                        targetSize = -seg.SizeValue * baseFontSize;
-                    }
-                }
-                
-                // Select font and base size for this segment
-                bool hasCustomFont = TryGetCustomFont(ovText.FontPath, false, out ImFontPtr customFont);
-                bool hasCustomLargeFont = TryGetCustomFont(ovText.FontPath, true, out ImFontPtr customLargeFont);
-                
-                ImFontPtr segFont;
-                float segFontBaseSize;
-                
-                if (targetSize > 72f)
-                {
-                    if (hasCustomLargeFont)
-                    {
-                        segFont = customLargeFont;
-                        segFontBaseSize = 128.0f;
-                    }
-                    else if (hasCustomFont)
-                    {
-                        segFont = customFont;
-                        segFontBaseSize = 48.0f;
-                    }
-                    else
-                    {
-                        segFont = ImGuiController.DefaultLargeFont;
-                        segFontBaseSize = 128.0f;
-                    }
-                }
-                else
-                {
-                    if (hasCustomFont)
-                    {
-                        segFont = customFont;
-                        segFontBaseSize = 48.0f;
-                    }
-                    else
-                    {
-                        segFont = ImGuiController.DefaultHighResFont;
-                        segFontBaseSize = 48.0f;
-                    }
-                }
-                
-                float segScale = (targetSize / segFontBaseSize) * animScaleXMult;
-                
-                ImGui.PushFont(segFont);
-                try
-                {
-                    if (letterSpacing == 0f)
-                    {
-                        totalWidth += ImGui.CalcTextSize(seg.RenderText).X * segScale;
-                    }
-                    else
-                    {
-                        for (int i = 0; i < seg.RenderText.Length; i++)
-                        {
-                            totalWidth += ImGui.CalcTextSize(seg.RenderText[i].ToString()).X * segScale;
-                            if (i < seg.RenderText.Length - 1) totalWidth += letterSpacing * segScale;
-                        }
-                    }
-                }
-                finally
-                {
-                    ImGui.PopFont();
-                }
-            }
-            return totalWidth;
-        }
-
-        private float CalcRawTextWidth(string text, float letterSpacing)
-        {
-            if (letterSpacing == 0f) return ImGui.CalcTextSize(text).X;
-            float w = 0;
-            for (int i = 0; i < text.Length; i++)
-            {
-                w += ImGui.CalcTextSize(text[i].ToString()).X;
-                if (i < text.Length - 1) w += letterSpacing;
-            }
-            return w;
-        }
-
-        private void RenderRawText(string text, float letterSpacing, System.Numerics.Vector4 color, bool outlineEnabled, System.Numerics.Vector4 outlineColor, float outlineThickness)
-        {
-            var drawList = ImGui.GetWindowDrawList();
-            var font = ImGui.GetFont();
-            float fontSize = ImGui.GetFontSize();
-            uint textColor = ImGui.ColorConvertFloat4ToU32(color);
-            uint outlineColorU32 = ImGui.ColorConvertFloat4ToU32(outlineColor);
-
-            if (letterSpacing == 0f)
-            {
-                TextStyleRenderer.AddText(drawList, font, fontSize, ImGui.GetCursorScreenPos(), textColor, text, outlineEnabled, outlineColorU32, outlineThickness);
-                ImGui.Dummy(font.CalcTextSizeA(fontSize, float.MaxValue, 0f, text));
-                ImGui.SameLine(0, 0);
-                return;
-            }
-
-            for (int i = 0; i < text.Length; i++)
-            {
-                string character = text[i].ToString();
-                TextStyleRenderer.AddText(drawList, font, fontSize, ImGui.GetCursorScreenPos(), textColor, character, outlineEnabled, outlineColorU32, outlineThickness);
-                ImGui.Dummy(font.CalcTextSizeA(fontSize, float.MaxValue, 0f, character));
-                if (i < text.Length - 1)
-                {
-                    ImGui.SameLine(0, letterSpacing);
-                }
-            }
-            ImGui.SameLine(0, 0);
-        }
-
-        private void RenderRichTextLine(string[] lines, System.Numerics.Vector4 defaultColor, int alignment, float maxLineWidth, float[] lineRenderWidths, float letterSpacing, float lineHeightOffset, bool isShadow, float scale, float baseFontSize, float xOffset, float windowWidth, OverlayerText ovText, float animScaleXMult)
-        {
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string currentLine = lines[i];
-                bool isFirstSegmentOnLine = true;
-                
-                float initialCursorY = ImGui.GetCursorPosY();
-
-                float thisLineWidth = lineRenderWidths[i];
-                float pad = ImGui.GetStyle().WindowPadding.X;
-
-                float startX = pad + xOffset;
-
-                if (alignment == 1) // Center
-                {
-                    startX = (windowWidth - thisLineWidth) / 2.0f + xOffset;
-                }
-                else if (alignment == 2) // Right
-                {
-                    startX = windowWidth - thisLineWidth - pad + xOffset;
-                }
-
-                ImGui.SetCursorPosX(startX);
-                isFirstSegmentOnLine = true;
-
-                var segments = RichTextParser.Parse(currentLine, defaultColor);
-                float safeBaseFontSize = (baseFontSize > 0) ? baseFontSize : 100f;
-
-                foreach (var seg in segments)
-                {
-                    if (!isFirstSegmentOnLine) ImGui.SameLine(0, 0);
-                    
-                    float targetSize = baseFontSize;
-                    if (seg.HasSizeTag && seg.SizeValue > 0)
-                    {
-                        targetSize = seg.SizeValue;
-                    }
-                    else if (seg.HasSizeTag && seg.SizeValue < 0)
-                    {
-                        targetSize = -seg.SizeValue * baseFontSize;
-                    }
-
-                    // Select font and base size for this segment
-                    bool hasCustomFont = TryGetCustomFont(ovText.FontPath, false, out ImFontPtr customFont);
-                    bool hasCustomLargeFont = TryGetCustomFont(ovText.FontPath, true, out ImFontPtr customLargeFont);
-                    
-                    ImFontPtr segFont;
-                    float segFontBaseSize;
-                    
-                    if (targetSize > 72f)
-                    {
-                        if (hasCustomLargeFont)
-                        {
-                            segFont = customLargeFont;
-                            segFontBaseSize = 128.0f;
-                        }
-                        else if (hasCustomFont)
-                        {
-                            segFont = customFont;
-                            segFontBaseSize = 48.0f;
-                        }
-                        else
-                        {
-                            segFont = ImGuiController.DefaultLargeFont;
-                            segFontBaseSize = 128.0f;
-                        }
-                    }
-                    else
-                    {
-                        if (hasCustomFont)
-                        {
-                            segFont = customFont;
-                            segFontBaseSize = 48.0f;
-                        }
-                        else
-                        {
-                            segFont = ImGuiController.DefaultHighResFont;
-                            segFontBaseSize = 48.0f;
-                        }
-                    }
-
-                    float segScale = (targetSize / segFontBaseSize) * animScaleXMult;
-
-                    ImGui.PushFont(segFont);
-                    try
-                    {
-                        ImGui.SetWindowFontScale(segScale);
-                        System.Numerics.Vector4 c = isShadow
-                            ? defaultColor
-                            : (seg.HasColorTag
-                                ? seg.Color
-                                : TextStyleRenderer.ColorArrayToVector4(ovText.TextColor, defaultColor));
-                        bool outlineEnabled = !isShadow && ovText.EnableOutline;
-                        System.Numerics.Vector4 outlineColor = TextStyleRenderer.ColorArrayToVector4(ovText.OutlineColor, new System.Numerics.Vector4(0f, 0f, 0f, 1f));
-                        RenderRawText(seg.RenderText, letterSpacing, c, outlineEnabled, outlineColor, ovText.OutlineThickness);
-                        isFirstSegmentOnLine = false;
-                    }
-                    finally
-                    {
-                        ImGui.PopFont();
-                        ImGui.SetWindowFontScale(scale); // Restore window scale
-                    }
-                }
-                
-                ImGui.SetCursorPosY(initialCursorY + ImGui.GetFontSize() + lineHeightOffset);
-                ImGui.SetCursorPosX(ImGui.GetStyle().WindowPadding.X);
-                ImGui.Dummy(new System.Numerics.Vector2(0, 0));
-            }
-        }
-
-        private System.Numerics.Vector4 ParseHexColor(string hex, System.Numerics.Vector4 fallback)
-        {
-            if (hex.Length == 6 || hex.Length == 8)
-            {
-                try
-                {
-                    float r = System.Convert.ToInt32(hex.Substring(0, 2), 16) / 255f;
-                    float g = System.Convert.ToInt32(hex.Substring(2, 2), 16) / 255f;
-                    float b = System.Convert.ToInt32(hex.Substring(4, 2), 16) / 255f;
-                    float a = 1f;
-                    if (hex.Length == 8)
-                        a = System.Convert.ToInt32(hex.Substring(6, 2), 16) / 255f;
-                    return new System.Numerics.Vector4(r, g, b, a);
-                }
-                catch { return fallback; }
-            }
-            return fallback;
-        }
     }
 }

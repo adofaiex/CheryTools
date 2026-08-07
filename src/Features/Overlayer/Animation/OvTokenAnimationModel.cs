@@ -20,7 +20,8 @@ namespace CheryTools
         StateCondition = 4,
         Effect = 5,
         NumberFormat = 6,
-        GroupFrame = 7
+        GroupFrame = 7,
+        ColorChange = 8
     }
 
     public enum OvAnimationTriggerKind
@@ -235,6 +236,13 @@ namespace CheryTools
         public bool EffectShadowColor;
         public List<OvColorPoint> ColorPoints = new List<OvColorPoint>();
 
+        public bool ColorChangeText = true;
+        public bool ColorChangeOutline;
+        public bool ColorChangeShadow;
+        public float[] ColorChangeTextColor = new float[] { 1f, 1f, 1f, 1f };
+        public float[] ColorChangeOutlineColor = new float[] { 0f, 0f, 0f, 1f };
+        public float[] ColorChangeShadowColor = new float[] { 0f, 0f, 0f, 0.75f };
+
         public OvNumberFormatKind NumberFormatKind = OvNumberFormatKind.Plain;
         public OvPercentageInputKind PercentageInputKind = OvPercentageInputKind.Auto;
         public int NumberFormatDecimals;
@@ -255,7 +263,7 @@ namespace CheryTools
     [Serializable]
     public sealed class OvAnimationGraph
     {
-        public int FormatVersion = 11;
+        public int FormatVersion = 12;
         public bool Enabled;
         public bool HoldFinalPose;
         public List<OvAnimationNode> Nodes = new List<OvAnimationNode>();
@@ -321,6 +329,14 @@ namespace CheryTools
                     node.ColorPoints.Add(CreateDefaultColorPoint(0f, 1f, 0.2f, 0.2f));
                     node.ColorPoints.Add(CreateDefaultColorPoint(100f, 0.2f, 1f, 0.35f));
                 }
+                node.ColorChangeTextColor = NormalizeColor(node.ColorChangeTextColor, 1f, 1f, 1f, 1f);
+                node.ColorChangeOutlineColor = NormalizeColor(node.ColorChangeOutlineColor, 0f, 0f, 0f, 1f);
+                node.ColorChangeShadowColor = NormalizeColor(node.ColorChangeShadowColor, 0f, 0f, 0f, 0.75f);
+                if (node.Kind == OvAnimationNodeKind.ColorChange
+                    && !node.ColorChangeText && !node.ColorChangeOutline && !node.ColorChangeShadow)
+                {
+                    node.ColorChangeText = true;
+                }
                 if (node.Kind == OvAnimationNodeKind.StateCondition)
                 {
                     node.Kind = OvAnimationNodeKind.Trigger;
@@ -352,7 +368,7 @@ namespace CheryTools
                 }
                 if (string.IsNullOrEmpty(link.Id)) link.Id = NewId();
             }
-            if (FormatVersion < 11) FormatVersion = 11;
+            if (FormatVersion < 12) FormatVersion = 12;
         }
 
         public static OvAnimationGraph CreateDefault()
@@ -478,6 +494,12 @@ namespace CheryTools
                 EffectOutlineColor = node.EffectOutlineColor,
                 EffectShadowColor = node.EffectShadowColor,
                 ColorPoints = CloneColorPoints(node.ColorPoints),
+                ColorChangeText = node.ColorChangeText,
+                ColorChangeOutline = node.ColorChangeOutline,
+                ColorChangeShadow = node.ColorChangeShadow,
+                ColorChangeTextColor = CloneColor(node.ColorChangeTextColor, 1f, 1f, 1f, 1f),
+                ColorChangeOutlineColor = CloneColor(node.ColorChangeOutlineColor, 0f, 0f, 0f, 1f),
+                ColorChangeShadowColor = CloneColor(node.ColorChangeShadowColor, 0f, 0f, 0f, 0.75f),
                 NumberFormatKind = node.NumberFormatKind,
                 PercentageInputKind = node.PercentageInputKind,
                 NumberFormatDecimals = node.NumberFormatDecimals,
@@ -515,6 +537,12 @@ namespace CheryTools
                 OutlineColor = new float[] { 0f, 0f, 0f, 1f },
                 ShadowColor = new float[] { 0f, 0f, 0f, 0.75f }
             };
+        }
+
+        private static float[] CloneColor(float[] color, float r, float g, float b, float a)
+        {
+            if (color == null || color.Length < 4) return new float[] { r, g, b, a };
+            return new float[] { color[0], color[1], color[2], color[3] };
         }
 
         private static float[] NormalizeColor(float[] color, float r, float g, float b, float a)

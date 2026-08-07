@@ -31,13 +31,17 @@ namespace CheryTools
                 case "maptime:p":
                 case "musictime":
                 case "musictime:p":
+                case "totalplaytime":
                     return OvNumericUnitKind.Seconds;
                 case "bpm":
                 case "tbpm":
                 case "cbpm":
                     return OvNumericUnitKind.BeatsPerMinute;
                 case "x": return OvNumericUnitKind.Multiplier;
-                case "fps": return OvNumericUnitKind.FramesPerSecond;
+                case "fps":
+                case "minfps":
+                case "maxfps":
+                    return OvNumericUnitKind.FramesPerSecond;
                 case "cur": return OvNumericUnitKind.PerSecond;
                 default: return OvNumericUnitKind.Number;
             }
@@ -109,9 +113,17 @@ namespace CheryTools
             }
         }
 
+        // GetUnit/IsPercentage run per token per overlay refresh; the tag vocabulary is
+        // small, so the trim/substring/lowercase work is memoized (capacity-capped).
+        private static readonly System.Collections.Generic.Dictionary<string, string> _normalizedNames
+            = new System.Collections.Generic.Dictionary<string, string>();
+
         private static string NormalizeTagName(string tag)
         {
-            string source = (tag ?? string.Empty).Trim();
+            if (tag == null) return string.Empty;
+            if (_normalizedNames.TryGetValue(tag, out string cached)) return cached;
+
+            string source = tag.Trim();
             if (source.Length >= 2 && source[0] == '{' && source[source.Length - 1] == '}')
                 source = source.Substring(1, source.Length - 2).Trim();
 
@@ -119,7 +131,12 @@ namespace CheryTools
             if (colon > 0 && int.TryParse(source.Substring(colon + 1), NumberStyles.Integer,
                 CultureInfo.InvariantCulture, out _))
                 source = source.Substring(0, colon);
-            return source.ToLowerInvariant();
+            source = source.ToLowerInvariant();
+            if (_normalizedNames.Count < 256)
+            {
+                _normalizedNames[tag] = source;
+            }
+            return source;
         }
     }
 }

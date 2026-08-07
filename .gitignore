@@ -34,3 +34,7 @@ imgui.ini
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Reverse-engineering and local package staging
+/Analysis/
+/PackageBuild/

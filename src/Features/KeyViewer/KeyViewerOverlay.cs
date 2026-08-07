@@ -16,6 +16,7 @@ namespace CheryTools
         {
             if (Instance == this)
             {
+                _bakedNodes.Clear();
                 Instance = null;
             }
         }
@@ -33,6 +34,11 @@ namespace CheryTools
         }
 
         private readonly System.Collections.Generic.Dictionary<KVNode, NodeRenderIds> _nodeRenderIds = new System.Collections.Generic.Dictionary<KVNode, NodeRenderIds>();
+        // Reused per DrawKeyRain call: drops are filtered once and split by row, so
+        // the config/node matching (including the O(n) Nodes.Contains fallback) no
+        // longer runs twice over every active drop.
+        private readonly System.Collections.Generic.List<KeyDrop> _rainRow1Buffer = new System.Collections.Generic.List<KeyDrop>();
+        private readonly System.Collections.Generic.List<KeyDrop> _rainRow2Buffer = new System.Collections.Generic.List<KeyDrop>();
         private readonly System.Collections.Generic.Dictionary<string, TextDrawState> _textDrawStates = new System.Collections.Generic.Dictionary<string, TextDrawState>();
         private int _nextNodeRenderId = 1;
         private bool _hadVideoLastFrame = false;
@@ -60,6 +66,82 @@ namespace CheryTools
             public float ShadowSoftness;
             public int SortingOrder;
         }
+
+        // Immutable, revision-scoped render data.  Editing remains fully free-form,
+        // but gameplay no longer resolves the same colors, fonts, geometry and
+        // animation settings for every node on every rain/animation frame.
+        private sealed class BakedKvNode
+        {
+            public KVConfiguration Owner;
+            public NodeRenderIds Ids;
+            public float FinalScale;
+            public Vector2 BasePosition;
+            public Vector2 BaseSize;
+            public uint BackgroundNormal;
+            public uint BackgroundPressed;
+            public uint BorderNormal;
+            public uint BorderPressed;
+            public uint TextNormal;
+            public uint TextPressed;
+            public bool KeyOutlineEnabled;
+            public bool CountOutlineEnabled;
+            public uint KeyOutlineColor;
+            public uint CountOutlineColor;
+            public float KeyOutlineThickness;
+            public float CountOutlineThickness;
+            public bool KeyShadowEnabled;
+            public bool CountShadowEnabled;
+            public uint KeyShadowColor;
+            public uint CountShadowColor;
+            public Vector2 KeyShadowOffset;
+            public Vector2 CountShadowOffset;
+            public float KeyShadowSoftness;
+            public float CountShadowSoftness;
+            public bool HideCountText;
+            public KeyPressAnimationSettings Animation;
+            public float BorderThickness;
+            public float CornerRadius;
+            public int GraphicSortingOrder;
+            public int TextSortingOrder;
+            public string KeyFontPath;
+            public string CountFontPath;
+            public string Label;
+            public bool RainEnabled;
+            public float RainWidthRatio;
+            public uint RainBaseColor;
+            public uint RainFarColor;
+            public bool RainGradientEnabled;
+            public bool RainHorizontalGradientEnabled;
+            public int RainGradientMode;
+            public uint RainHorizontalColor;
+            public float RainYOffset;
+            public float RainCornerRadius;
+            public float RainFadeHeight;
+            public float RainFadePower;
+            public float RainGradientHeight;
+            public float RainGradientPower;
+            public bool RainShadowEnabled;
+            public uint RainShadowColor;
+            public Vector2 RainShadowOffset;
+            public float RainShadowSoftness;
+            public float RainShadowStrength;
+            public int RainShadowSortingOrder;
+            public int RainSortingOrder;
+            public bool ImageBaked;
+            public float ImageBakedAlpha;
+            public bool KeyTextBaked;
+            public uint KeyTextBakedColor;
+            public bool CountTextBaked;
+            public uint CountTextBakedColor;
+            public int CountTextBakedValue;
+            public bool PairLabelBaked;
+        }
+
+        private readonly System.Collections.Generic.Dictionary<KVNode, BakedKvNode> _bakedNodes
+            = new System.Collections.Generic.Dictionary<KVNode, BakedKvNode>();
+        private long _kvBakeRevision = -1;
+        private int _kvBakeScreenWidth = -1;
+        private int _kvBakeScreenHeight = -1;
 
         private struct ColorCorners
         {
@@ -99,44 +181,6 @@ namespace CheryTools
             };
             _nodeRenderIds[node] = ids;
             return ids;
-        }
-
-        private string GetKeySymbol(KeyCode key)
-        {
-            if (key == KeyCode.None) return "";
-            string name = key.ToString();
-
-            if (name.StartsWith("Alpha")) return name.Substring(5);
-            if (name.StartsWith("Keypad")) return name.Substring(6);
-            switch (key)
-            {
-                case KeyCode.LeftShift: return "LS";
-                case KeyCode.RightShift: return "RS";
-                case KeyCode.LeftControl: return "LC";
-                case KeyCode.RightControl: return "RC";
-                case KeyCode.LeftAlt: return "LA";
-                case KeyCode.RightAlt: return "RA";
-                case KeyCode.Space: return "Spc";
-                case KeyCode.Return: return "Ent";
-                case KeyCode.Backspace: return "Bsp";
-                case KeyCode.Escape: return "Esc";
-                case KeyCode.UpArrow: return "Up";
-                case KeyCode.DownArrow: return "Down";
-                case KeyCode.LeftArrow: return "Left";
-                case KeyCode.RightArrow: return "Right";
-                case KeyCode.Tab: return "Tab";
-                case KeyCode.Equals: return "=";
-                case KeyCode.Minus: return "-";
-                case KeyCode.LeftBracket: return "[";
-                case KeyCode.RightBracket: return "]";
-                case KeyCode.Backslash: return "\\";
-                case KeyCode.Semicolon: return ";";
-                case KeyCode.Quote: return "'";
-                case KeyCode.Comma: return ",";
-                case KeyCode.Period: return ".";
-                case KeyCode.Slash: return "/";
-            }
-            return name;
         }
 
         private uint Vector4ToColor(float[] arr)
@@ -206,9 +250,8 @@ namespace CheryTools
                 && colors.TopLeft == colors.BottomLeft;
         }
 
-        private float GetKeyPressAnimationProgress(KVConfiguration config, KVNode node, bool pressed)
+        private float GetKeyPressAnimationProgress(KVNode node, bool pressed, KeyPressAnimationSettings animationSettings)
         {
-            KeyPressAnimationSettings animationSettings = KeyPressAnimationSettings.Resolve(config, node);
             if (node == null || !animationSettings.Enabled)
             {
                 return pressed ? 1f : 0f;
@@ -220,6 +263,136 @@ namespace CheryTools
                 progress = rawProgress;
             }
             return EasingUtil.EvaluateEasing(progress, animationSettings.Easing);
+        }
+
+        private void PrepareKvRuntimeBake()
+        {
+            long revision = OverlayRenderInvalidator.Revision;
+            if (_kvBakeRevision == revision
+                && _kvBakeScreenWidth == Screen.width
+                && _kvBakeScreenHeight == Screen.height)
+            {
+                return;
+            }
+
+            _bakedNodes.Clear();
+            _kvBakeRevision = revision;
+            _kvBakeScreenWidth = Screen.width;
+            _kvBakeScreenHeight = Screen.height;
+        }
+
+        private BakedKvNode GetBakedNode(KVConfiguration config, KVNode node, Vector2 center,
+            float globalScale, float rounding, float configBorderThickness)
+        {
+            if (_bakedNodes.TryGetValue(node, out BakedKvNode baked)
+                && ReferenceEquals(baked.Owner, config))
+            {
+                return baked;
+            }
+
+            bool useNodeColor = node.UseCustomColor;
+            bool useNodeOutline = node.UseCustomOutline;
+            bool useNodeShadow = node.UseCustomShadow;
+            float finalScale = globalScale * node.Scale;
+            baked = new BakedKvNode
+            {
+                Owner = config,
+                Ids = GetNodeRenderIds(node),
+                FinalScale = finalScale,
+                BasePosition = new Vector2(center.x + node.PositionX * globalScale, center.y + node.PositionY * globalScale),
+                BaseSize = new Vector2(node.Width * finalScale, node.Height * finalScale),
+                BackgroundNormal = Vector4ToColor(useNodeColor ? node.ColorBgNormal : config.ColorBgNormal),
+                BackgroundPressed = Vector4ToColor(useNodeColor ? node.ColorBgPressed : config.ColorBgPressed),
+                BorderNormal = Vector4ToColor(useNodeColor ? node.ColorBorderNormal : config.ColorBorderNormal),
+                BorderPressed = Vector4ToColor(useNodeColor ? node.ColorBorderPressed : config.ColorBorderPressed),
+                TextNormal = Vector4ToColor(useNodeColor ? node.ColorTextNormal : config.ColorTextNormal),
+                TextPressed = Vector4ToColor(useNodeColor ? node.ColorTextPressed : config.ColorTextPressed),
+                KeyOutlineEnabled = useNodeOutline ? node.KeyTextOutlineEnabled : config.KeyTextOutlineEnabled,
+                CountOutlineEnabled = useNodeOutline ? node.CountTextOutlineEnabled : config.CountTextOutlineEnabled,
+                KeyOutlineColor = useNodeOutline
+                    ? TextStyleRenderer.ColorArrayToU32(node.KeyTextOutlineColor, 0xFF000000)
+                    : TextStyleRenderer.ColorArrayToU32(config.KeyTextOutlineColor, 0xFF000000),
+                CountOutlineColor = useNodeOutline
+                    ? TextStyleRenderer.ColorArrayToU32(node.CountTextOutlineColor, 0xFF000000)
+                    : TextStyleRenderer.ColorArrayToU32(config.CountTextOutlineColor, 0xFF000000),
+                KeyOutlineThickness = useNodeOutline ? node.KeyTextOutlineThickness : config.KeyTextOutlineThickness,
+                CountOutlineThickness = useNodeOutline ? node.CountTextOutlineThickness : config.CountTextOutlineThickness,
+                KeyShadowEnabled = useNodeShadow ? node.KeyTextShadowEnabled : config.KeyTextShadowEnabled,
+                CountShadowEnabled = useNodeShadow ? node.CountTextShadowEnabled : config.CountTextShadowEnabled,
+                HideCountText = config.HideCountText || node.HideCountText,
+                Animation = KeyPressAnimationSettings.Resolve(config, node),
+                BorderThickness = node.BorderThickness >= 0f ? node.BorderThickness : configBorderThickness,
+                CornerRadius = ResolveNodeCornerRadius(node, rounding, globalScale),
+                GraphicSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerGraphic),
+                TextSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerText),
+                KeyFontPath = GetKeyFontPath(config, node),
+                CountFontPath = GetCountFontPath(config, node),
+                Label = !string.IsNullOrEmpty(node.CustomText)
+                    ? node.CustomText
+                    : node.NodeType == 0
+                        ? KeyDisplayNames.GetKeySymbol(node.KeyBind)
+                        : node.NodeType == 1 ? "KPS" : "Total"
+            };
+
+            if (baked.KeyShadowEnabled)
+            {
+                baked.KeyShadowColor = useNodeShadow
+                    ? TextStyleRenderer.ColorArrayToU32(node.KeyTextShadowColor, 0xB3000000)
+                    : TextStyleRenderer.ColorArrayToU32(config.KeyTextShadowColor, 0xB3000000);
+                float[] offset = useNodeShadow ? node.KeyTextShadowOffset : config.KeyTextShadowOffset;
+                baked.KeyShadowOffset = new Vector2(
+                    offset != null && offset.Length > 0 ? offset[0] : 2f,
+                    offset != null && offset.Length > 1 ? offset[1] : 2f);
+                baked.KeyShadowSoftness = useNodeShadow ? node.KeyTextShadowSoftness : config.KeyTextShadowSoftness;
+            }
+            if (baked.CountShadowEnabled)
+            {
+                baked.CountShadowColor = useNodeShadow
+                    ? TextStyleRenderer.ColorArrayToU32(node.CountTextShadowColor, 0xB3000000)
+                    : TextStyleRenderer.ColorArrayToU32(config.CountTextShadowColor, 0xB3000000);
+                float[] offset = useNodeShadow ? node.CountTextShadowOffset : config.CountTextShadowOffset;
+                baked.CountShadowOffset = new Vector2(
+                    offset != null && offset.Length > 0 ? offset[0] : 2f,
+                    offset != null && offset.Length > 1 ? offset[1] : 2f);
+                baked.CountShadowSoftness = useNodeShadow ? node.CountTextShadowSoftness : config.CountTextShadowSoftness;
+            }
+
+            bool row1 = node.RainRow == 1;
+            bool customRain = node.UseCustomRain;
+            baked.RainEnabled = customRain ? node.EnableKeyRain : config.EnableKeyRain;
+            baked.RainWidthRatio = customRain ? node.RainWidthRatio : (row1 ? config.KeyRainWidthRatio1 : config.KeyRainWidthRatio2);
+            baked.RainBaseColor = Vector4ToColor(customRain ? node.RainColor : (row1 ? config.KeyRainColorRow1 : config.KeyRainColorRow2));
+            baked.RainFarColor = Vector4ToColor(customRain ? node.RainGradientEndColor : (row1 ? config.KeyRainGradientEndColorRow1 : config.KeyRainGradientEndColorRow2));
+            baked.RainGradientEnabled = customRain ? node.RainGradientEnabled : config.KeyRainGradientEnabled;
+            baked.RainHorizontalGradientEnabled = customRain ? node.RainHorizontalGradientEnabled : config.KeyRainHorizontalGradientEnabled;
+            baked.RainGradientMode = customRain ? node.RainGradientMode : config.KeyRainGradientMode;
+            baked.RainHorizontalColor = MatchAlpha(
+                Vector4ToColor(customRain
+                    ? node.RainHorizontalGradientEndColor
+                    : (row1 ? config.KeyRainHorizontalGradientEndColorRow1 : config.KeyRainHorizontalGradientEndColorRow2)),
+                baked.RainBaseColor);
+            baked.RainYOffset = customRain ? node.RainYOffset : (row1 ? config.KeyRainYOffsetRow1 : config.KeyRainYOffsetRow2);
+            baked.RainCornerRadius = Mathf.Max(0f, customRain ? node.RainCornerRadius : config.KeyRainCornerRadius) * globalScale;
+            baked.RainFadeHeight = customRain ? node.RainFadeHeight : config.KeyRainFadeHeight;
+            baked.RainFadePower = customRain ? node.RainFadePower : config.KeyRainFadePower;
+            baked.RainGradientHeight = customRain ? node.RainGradientHeight : config.KeyRainGradientHeight;
+            baked.RainGradientPower = customRain ? node.RainGradientPower : config.KeyRainGradientPower;
+
+            bool customRainShadow = node.UseCustomRainShadow;
+            baked.RainShadowEnabled = customRainShadow ? node.RainShadowEnabled : config.KeyRainShadowEnabled;
+            baked.RainShadowStrength = Mathf.Clamp01(customRainShadow ? node.RainShadowStrength : config.KeyRainShadowStrength);
+            if (baked.RainShadowEnabled && baked.RainShadowStrength > 0f)
+            {
+                baked.RainShadowColor = Vector4ToColor(customRainShadow ? node.RainShadowColor : config.KeyRainShadowColor);
+                baked.RainShadowEnabled = Alpha01(baked.RainShadowColor) > 0f;
+                baked.RainShadowOffset = ResolvePair(customRainShadow ? node.RainShadowOffset : config.KeyRainShadowOffset, 0f, 0f) * globalScale;
+                baked.RainShadowSoftness = Mathf.Max(0f, customRainShadow ? node.RainShadowSoftness : config.KeyRainShadowSoftness) * globalScale;
+            }
+            baked.RainShadowSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerRainShadow);
+            baked.RainSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerRain);
+
+            _bakedNodes[node] = baked;
+            return baked;
         }
 
         private static float Alpha01(uint color)
@@ -381,6 +554,7 @@ namespace CheryTools
                 return;
             }
 
+            PrepareKvRuntimeBake();
             Vector2 center = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
             bool drewAny = false;
             bool hasVideoThisFrame = false;
@@ -392,7 +566,7 @@ namespace CheryTools
             {
                 if (config == null || !config.IsEnabled || config.Nodes == null || config.Nodes.Count == 0)
                     continue;
-                if (!config.ShowInGame && isPlaying && !editMode)
+                if (!IsConfigVisible(config, isPlaying, editMode))
                     continue;
 
                 float globalScale = config.Scale;
@@ -455,6 +629,15 @@ namespace CheryTools
             return true;
         }
 
+        private static bool IsConfigVisible(KVConfiguration config, bool isPlaying, bool editMode)
+        {
+            if (config == null) return false;
+            if (editMode) return true;
+            if (!config.ShowInGame && isPlaying) return false;
+            if (config.OnlyShowPlaying && !isPlaying) return false;
+            return true;
+        }
+
         public bool ShouldRenderOverlayNow()
         {
             if (!ShouldRender()) return false;
@@ -467,7 +650,7 @@ namespace CheryTools
                 KVConfiguration config = configs[i];
                 if (config == null || !config.IsEnabled || config.Nodes == null || config.Nodes.Count == 0)
                     continue;
-                if (!config.ShowInGame && isPlaying && !editMode)
+                if (!IsConfigVisible(config, isPlaying, editMode))
                     continue;
                 return true;
             }
@@ -484,11 +667,19 @@ namespace CheryTools
                 KeyViewerManager.Instance.IsNodePressed.TryGetValue(node, out pressed);
 
                 float alpha = node.UseCustomColor ? (pressed ? node.ColorBgPressed[3] : node.ColorBgNormal[3]) : node.Opacity;
-                float finalScale = globalScale * node.Scale;
-                Vector2 pos = new Vector2(center.x + node.PositionX * globalScale, center.y + node.PositionY * globalScale);
-                Vector2 size = new Vector2(node.Width * finalScale, node.Height * finalScale);
-                NodeRenderIds ids = GetNodeRenderIds(node);
+                BakedKvNode baked = GetBakedNode(config, node, center, globalScale, 0f, config.BorderThickness);
+                Vector2 pos = baked.BasePosition;
+                Vector2 size = baked.BaseSize;
+                NodeRenderIds ids = baked.Ids;
                 if (ids == null) continue;
+
+                if (node.NodeType == 3
+                    && baked.ImageBaked
+                    && Approximately(baked.ImageBakedAlpha, alpha)
+                    && KeyViewerUnityRenderer.KeepImageAlive(ids.BackgroundImage, baked.GraphicSortingOrder))
+                {
+                    continue;
+                }
 
                 Texture texture = null;
                 if (node.NodeType == 4)
@@ -509,9 +700,12 @@ namespace CheryTools
                 }
                 if (texture == null) continue;
 
-                int sortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerGraphic);
-                float cornerRadius = ResolveNodeCornerRadius(node, 0f, globalScale);
-                KeyViewerUnityRenderer.DrawImage(ids.BackgroundImage, texture, pos, size, alpha, cornerRadius, sortingOrder);
+                KeyViewerUnityRenderer.DrawImage(ids.BackgroundImage, texture, pos, size, alpha, baked.CornerRadius, baked.GraphicSortingOrder);
+                if (node.NodeType == 3)
+                {
+                    baked.ImageBaked = true;
+                    baked.ImageBakedAlpha = alpha;
+                }
             }
         }
 
@@ -521,66 +715,51 @@ namespace CheryTools
             {
                 if (node == null || node.NodeType == 3 || node.NodeType == 4) continue;
 
-                uint bgNormal = node.UseCustomColor ? Vector4ToColor(node.ColorBgNormal) : Vector4ToColor(config.ColorBgNormal);
-                uint bgPressed = node.UseCustomColor ? Vector4ToColor(node.ColorBgPressed) : Vector4ToColor(config.ColorBgPressed);
-                uint borderNormal = node.UseCustomColor ? Vector4ToColor(node.ColorBorderNormal) : Vector4ToColor(config.ColorBorderNormal);
-                uint borderPressed = node.UseCustomColor ? Vector4ToColor(node.ColorBorderPressed) : Vector4ToColor(config.ColorBorderPressed);
-                uint textNormal = node.UseCustomColor ? Vector4ToColor(node.ColorTextNormal) : Vector4ToColor(config.ColorTextNormal);
-                uint textPressed = node.UseCustomColor ? Vector4ToColor(node.ColorTextPressed) : Vector4ToColor(config.ColorTextPressed);
-                bool keyOutlineEnabled = node.UseCustomOutline ? node.KeyTextOutlineEnabled : config.KeyTextOutlineEnabled;
-                bool countOutlineEnabled = node.UseCustomOutline ? node.CountTextOutlineEnabled : config.CountTextOutlineEnabled;
-                uint keyOutlineColor = node.UseCustomOutline ? TextStyleRenderer.ColorArrayToU32(node.KeyTextOutlineColor, 0xFF000000) : TextStyleRenderer.ColorArrayToU32(config.KeyTextOutlineColor, 0xFF000000);
-                uint countOutlineColor = node.UseCustomOutline ? TextStyleRenderer.ColorArrayToU32(node.CountTextOutlineColor, 0xFF000000) : TextStyleRenderer.ColorArrayToU32(config.CountTextOutlineColor, 0xFF000000);
-                float keyOutlineThickness = node.UseCustomOutline ? node.KeyTextOutlineThickness : config.KeyTextOutlineThickness;
-                float countOutlineThickness = node.UseCustomOutline ? node.CountTextOutlineThickness : config.CountTextOutlineThickness;
-                bool keyShadowEnabled = node.UseCustomShadow ? node.KeyTextShadowEnabled : config.KeyTextShadowEnabled;
-                bool countShadowEnabled = node.UseCustomShadow ? node.CountTextShadowEnabled : config.CountTextShadowEnabled;
-                uint keyShadowColor = 0;
-                uint countShadowColor = 0;
-                Vector2 keyShadowOffset = Vector2.zero;
-                Vector2 countShadowOffset = Vector2.zero;
-                float keyShadowSoftness = 0f;
-                float countShadowSoftness = 0f;
-                if (keyShadowEnabled)
-                {
-                    keyShadowColor = node.UseCustomShadow ? TextStyleRenderer.ColorArrayToU32(node.KeyTextShadowColor, 0xB3000000) : TextStyleRenderer.ColorArrayToU32(config.KeyTextShadowColor, 0xB3000000);
-                    keyShadowOffset = node.UseCustomShadow
-                        ? new Vector2(node.KeyTextShadowOffset != null && node.KeyTextShadowOffset.Length > 0 ? node.KeyTextShadowOffset[0] : 2f, node.KeyTextShadowOffset != null && node.KeyTextShadowOffset.Length > 1 ? node.KeyTextShadowOffset[1] : 2f)
-                        : new Vector2(config.KeyTextShadowOffset != null && config.KeyTextShadowOffset.Length > 0 ? config.KeyTextShadowOffset[0] : 2f, config.KeyTextShadowOffset != null && config.KeyTextShadowOffset.Length > 1 ? config.KeyTextShadowOffset[1] : 2f);
-                    keyShadowSoftness = node.UseCustomShadow ? node.KeyTextShadowSoftness : config.KeyTextShadowSoftness;
-                }
-                if (countShadowEnabled)
-                {
-                    countShadowColor = node.UseCustomShadow ? TextStyleRenderer.ColorArrayToU32(node.CountTextShadowColor, 0xB3000000) : TextStyleRenderer.ColorArrayToU32(config.CountTextShadowColor, 0xB3000000);
-                    countShadowOffset = node.UseCustomShadow
-                        ? new Vector2(node.CountTextShadowOffset != null && node.CountTextShadowOffset.Length > 0 ? node.CountTextShadowOffset[0] : 2f, node.CountTextShadowOffset != null && node.CountTextShadowOffset.Length > 1 ? node.CountTextShadowOffset[1] : 2f)
-                        : new Vector2(config.CountTextShadowOffset != null && config.CountTextShadowOffset.Length > 0 ? config.CountTextShadowOffset[0] : 2f, config.CountTextShadowOffset != null && config.CountTextShadowOffset.Length > 1 ? config.CountTextShadowOffset[1] : 2f);
-                    countShadowSoftness = node.UseCustomShadow ? node.CountTextShadowSoftness : config.CountTextShadowSoftness;
-                }
-                bool hideCountText = config.HideCountText || node.HideCountText;
+                BakedKvNode baked = GetBakedNode(config, node, center, globalScale, rounding, borderThickness);
+                uint bgNormal = baked.BackgroundNormal;
+                uint bgPressed = baked.BackgroundPressed;
+                uint borderNormal = baked.BorderNormal;
+                uint borderPressed = baked.BorderPressed;
+                uint textNormal = baked.TextNormal;
+                uint textPressed = baked.TextPressed;
+                bool keyOutlineEnabled = baked.KeyOutlineEnabled;
+                bool countOutlineEnabled = baked.CountOutlineEnabled;
+                uint keyOutlineColor = baked.KeyOutlineColor;
+                uint countOutlineColor = baked.CountOutlineColor;
+                float keyOutlineThickness = baked.KeyOutlineThickness;
+                float countOutlineThickness = baked.CountOutlineThickness;
+                bool keyShadowEnabled = baked.KeyShadowEnabled;
+                bool countShadowEnabled = baked.CountShadowEnabled;
+                uint keyShadowColor = baked.KeyShadowColor;
+                uint countShadowColor = baked.CountShadowColor;
+                Vector2 keyShadowOffset = baked.KeyShadowOffset;
+                Vector2 countShadowOffset = baked.CountShadowOffset;
+                float keyShadowSoftness = baked.KeyShadowSoftness;
+                float countShadowSoftness = baked.CountShadowSoftness;
+                bool hideCountText = baked.HideCountText;
 
                 bool pressed = false;
                 KeyViewerManager.Instance.IsNodePressed.TryGetValue(node, out pressed);
-                KeyPressAnimationSettings animationSettings = KeyPressAnimationSettings.Resolve(config, node);
-                float animationProgress = node.NodeType == 0 ? GetKeyPressAnimationProgress(config, node, pressed) : 0f;
+                KeyPressAnimationSettings animationSettings = baked.Animation;
+                float animationProgress = node.NodeType == 0 ? GetKeyPressAnimationProgress(node, pressed, animationSettings) : 0f;
                 float pressScale = node.NodeType == 0 && animationSettings.Enabled
                     ? Mathf.Lerp(1f, animationSettings.Scale, animationProgress)
                     : 1f;
                 Vector2 animationOffset = node.NodeType == 0 && animationSettings.Enabled
                     ? new Vector2(animationSettings.OffsetX, animationSettings.OffsetY) * globalScale * animationProgress
                     : Vector2.zero;
-                float finalScale = globalScale * node.Scale;
+                float finalScale = baked.FinalScale;
                 float animatedFinalScale = finalScale * pressScale;
                 float animatedGlobalScale = globalScale * pressScale;
-                Vector2 basePos = new Vector2(center.x + node.PositionX * globalScale, center.y + node.PositionY * globalScale);
-                Vector2 baseSize = new Vector2(node.Width * finalScale, node.Height * finalScale);
+                Vector2 basePos = baked.BasePosition;
+                Vector2 baseSize = baked.BaseSize;
                 Vector2 size = new Vector2(node.Width * animatedFinalScale, node.Height * animatedFinalScale);
                 Vector2 pos = basePos + (baseSize - size) * 0.5f + animationOffset;
-                NodeRenderIds ids = GetNodeRenderIds(node);
+                NodeRenderIds ids = baked.Ids;
                 if (ids == null) continue;
-                int graphicSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerGraphic);
-                int textSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerText);
-                float cornerRadius = ResolveNodeCornerRadius(node, rounding, globalScale) * pressScale;
+                int graphicSortingOrder = baked.GraphicSortingOrder;
+                int textSortingOrder = baked.TextSortingOrder;
+                float cornerRadius = baked.CornerRadius * pressScale;
 
                 if (node.NodeType == 0)
                 {
@@ -588,79 +767,130 @@ namespace CheryTools
                     ColorCorners bgColors = LerpCorners(ColorCorners.Solid(bgNormal), ColorCorners.Solid(bgPressed), colorProgress);
                     ColorCorners borderColors = LerpCorners(ColorCorners.Solid(borderNormal), ColorCorners.Solid(borderPressed), colorProgress);
                     ColorCorners textColors = LerpCorners(ColorCorners.Solid(textNormal), ColorCorners.Solid(textPressed), colorProgress);
-                    float bThick = node.BorderThickness >= 0f ? node.BorderThickness : borderThickness;
-                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, bThick, cornerRadius, graphicSortingOrder);
+                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, baked.BorderThickness, cornerRadius, graphicSortingOrder);
 
-                    string labelStr = !string.IsNullOrEmpty(node.CustomText) ? node.CustomText : KeyDisplayNames.GetKeySymbol(node.KeyBind);
+                    string labelStr = baked.Label;
 
                     float keyFontSize = 20.0f * animatedGlobalScale * node.TextScale;
-                    string keyFontPath = GetKeyFontPath(config, node);
+                    string keyFontPath = baked.KeyFontPath;
                     float keyTextHeight = TextBoxHeight(keyFontSize);
                     Vector2 keyPos = new Vector2(
                         pos.x + node.TextOffsetX * animatedFinalScale,
                         hideCountText
                             ? pos.y + (size.y - keyTextHeight) * 0.5f + node.TextOffsetY * animatedFinalScale
                             : pos.y + 5 * animatedFinalScale + node.TextOffsetY * animatedFinalScale);
-                    DrawText(ids.KeyText, labelStr, keyFontPath, keyFontSize, keyPos, new Vector2(size.x, keyTextHeight), 1, textColors, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, textSortingOrder);
+                    bool keptKeyText = !animationSettings.Enabled
+                        && baked.KeyTextBaked
+                        && baked.KeyTextBakedColor == textColors.TopLeft
+                        && SdfTextRenderer.KeepAlive(ids.KeyText, textSortingOrder);
+                    if (!keptKeyText)
+                    {
+                        DrawText(ids.KeyText, labelStr, keyFontPath, keyFontSize, keyPos, new Vector2(size.x, keyTextHeight), 1, textColors, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, textSortingOrder);
+                        if (!animationSettings.Enabled)
+                        {
+                            baked.KeyTextBaked = true;
+                            baked.KeyTextBakedColor = textColors.TopLeft;
+                        }
+                    }
 
                     if (!hideCountText)
                     {
-                        string countStr = node.HitCount.ToString();
+                        if (node.CachedHitCountText == null || node.CachedHitCountValue != node.HitCount)
+                        {
+                            node.CachedHitCountValue = node.HitCount;
+                            node.CachedHitCountText = node.HitCount.ToString();
+                        }
+                        string countStr = node.CachedHitCountText;
                         float countFontSize = 20.0f * animatedGlobalScale * node.CountScale;
-                        string countFontPath = GetCountFontPath(config, node);
+                        string countFontPath = baked.CountFontPath;
                         float countTextHeight = TextBoxHeight(countFontSize);
                         Vector2 countPos = new Vector2(
                             pos.x + node.CountOffsetX * animatedFinalScale,
                             pos.y + size.y - countTextHeight - 5 * animatedFinalScale + node.CountOffsetY * animatedFinalScale);
-                        DrawText(ids.CountText, countStr, countFontPath, countFontSize, countPos, new Vector2(size.x, countTextHeight), ClampTextAlignment(node.CountTextAlignment, 1), textColors, countOutlineEnabled, countOutlineColor, countOutlineThickness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, textSortingOrder);
+                        bool keptCountText = !animationSettings.Enabled
+                            && baked.CountTextBaked
+                            && baked.CountTextBakedValue == node.HitCount
+                            && baked.CountTextBakedColor == textColors.TopLeft
+                            && SdfTextRenderer.KeepAlive(ids.CountText, textSortingOrder);
+                        if (!keptCountText)
+                        {
+                            DrawText(ids.CountText, countStr, countFontPath, countFontSize, countPos, new Vector2(size.x, countTextHeight), ClampTextAlignment(node.CountTextAlignment, 1), textColors, countOutlineEnabled, countOutlineColor, countOutlineThickness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, textSortingOrder);
+                            if (!animationSettings.Enabled)
+                            {
+                                baked.CountTextBaked = true;
+                                baked.CountTextBakedValue = node.HitCount;
+                                baked.CountTextBakedColor = textColors.TopLeft;
+                            }
+                        }
                     }
                 }
                 else if (node.NodeType == 1)
                 {
-                    float bThick = node.BorderThickness >= 0f ? node.BorderThickness : borderThickness;
                     ColorCorners bgColors = ColorCorners.Solid(bgNormal);
                     ColorCorners borderColors = ColorCorners.Solid(borderNormal);
-                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, bThick, cornerRadius, graphicSortingOrder);
+                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, baked.BorderThickness, cornerRadius, graphicSortingOrder);
 
-                    string label = !string.IsNullOrEmpty(node.CustomText) ? node.CustomText : "KPS";
-                    string val = KeyViewerManager.Instance.GetCurrentKps(config).ToString();
-                    DrawPairText(config, node, pos, size, finalScale, globalScale, label, val, kpsColor, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, countOutlineEnabled, countOutlineColor, countOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, ids.KpsLabel, ids.KpsValue, hideCountText, textSortingOrder);
+                    string label = baked.Label;
+                    int kps = KeyViewerManager.Instance.GetCurrentKps(config);
+                    if (config.CachedKpsText == null || config.CachedKpsValue != kps)
+                    {
+                        config.CachedKpsValue = kps;
+                        config.CachedKpsText = kps.ToString();
+                    }
+                    string val = config.CachedKpsText;
+                    // 节点勾选「独立颜色」时用节点自己的文本颜色（baked.TextNormal 已解析），
+                    // 否则回退到 config 级的「底部统计文本」颜色，保持老配置外观不变。
+                    uint kpsTextColor = node.UseCustomColor ? textNormal : kpsColor;
+                    DrawPairText(config, node, pos, size, finalScale, globalScale, label, val, kpsTextColor, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, countOutlineEnabled, countOutlineColor, countOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, ids.KpsLabel, ids.KpsValue, hideCountText, textSortingOrder, baked);
                 }
                 else if (node.NodeType == 2)
                 {
-                    float bThick = node.BorderThickness >= 0f ? node.BorderThickness : borderThickness;
                     ColorCorners bgColors = ColorCorners.Solid(bgNormal);
                     ColorCorners borderColors = ColorCorners.Solid(borderNormal);
-                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, bThick, cornerRadius, graphicSortingOrder);
+                    KeyViewerUnityRenderer.DrawRect(ids.Box, pos, size, bgColors.TopLeft, bgColors.TopRight, bgColors.BottomRight, bgColors.BottomLeft, borderColors.TopLeft, borderColors.TopRight, borderColors.BottomRight, borderColors.BottomLeft, baked.BorderThickness, cornerRadius, graphicSortingOrder);
 
-                    string label = !string.IsNullOrEmpty(node.CustomText) ? node.CustomText : "Total";
-                    string val = config.TotalHits.ToString();
-                    DrawPairText(config, node, pos, size, finalScale, globalScale, label, val, totalColor, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, countOutlineEnabled, countOutlineColor, countOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, ids.TotalLabel, ids.TotalValue, hideCountText, textSortingOrder);
+                    string label = baked.Label;
+                    if (config.CachedTotalHitsText == null || config.CachedTotalHitsValue != config.TotalHits)
+                    {
+                        config.CachedTotalHitsValue = config.TotalHits;
+                        config.CachedTotalHitsText = config.TotalHits.ToString();
+                    }
+                    string val = config.CachedTotalHitsText;
+                    uint totalTextColor = node.UseCustomColor ? textNormal : totalColor;
+                    DrawPairText(config, node, pos, size, finalScale, globalScale, label, val, totalTextColor, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, countOutlineEnabled, countOutlineColor, countOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, countShadowEnabled, countShadowColor, countShadowOffset, countShadowSoftness, ids.TotalLabel, ids.TotalValue, hideCountText, textSortingOrder, baked);
                 }
             }
         }
 
-        private void DrawPairText(KVConfiguration config, KVNode node, Vector2 pos, Vector2 size, float finalScale, float globalScale, string label, string value, uint color, bool keyOutlineEnabled, uint keyOutlineColor, float keyOutlineThickness, bool countOutlineEnabled, uint countOutlineColor, float countOutlineThickness, bool keyShadowEnabled, uint keyShadowColor, Vector2 keyShadowOffset, float keyShadowSoftness, bool countShadowEnabled, uint countShadowColor, Vector2 countShadowOffset, float countShadowSoftness, string labelId, string valueId, bool hideValue, int sortingOrder)
+        private void DrawPairText(KVConfiguration config, KVNode node, Vector2 pos, Vector2 size, float finalScale, float globalScale, string label, string value, uint color, bool keyOutlineEnabled, uint keyOutlineColor, float keyOutlineThickness, bool countOutlineEnabled, uint countOutlineColor, float countOutlineThickness, bool keyShadowEnabled, uint keyShadowColor, Vector2 keyShadowOffset, float keyShadowSoftness, bool countShadowEnabled, uint countShadowColor, Vector2 countShadowOffset, float countShadowSoftness, string labelId, string valueId, bool hideValue, int sortingOrder, BakedKvNode baked)
         {
             float keyFontSize = 20.0f * globalScale * node.TextScale;
-            string keyFontPath = GetKeyFontPath(config, node);
+            string keyFontPath = baked.KeyFontPath;
             float labelHeight = TextBoxHeight(keyFontSize);
             if (hideValue)
             {
                 Vector2 centeredLabelPos = new Vector2(
                     pos.x + node.TextOffsetX * finalScale,
                     pos.y + (size.y - labelHeight) * 0.5f + node.TextOffsetY * finalScale);
-                DrawText(labelId, label, keyFontPath, keyFontSize, centeredLabelPos, new Vector2(size.x, labelHeight), 1, color, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, sortingOrder);
+                if (!baked.PairLabelBaked || !SdfTextRenderer.KeepAlive(labelId, sortingOrder))
+                {
+                    DrawText(labelId, label, keyFontPath, keyFontSize, centeredLabelPos, new Vector2(size.x, labelHeight), 1, color, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, sortingOrder);
+                    baked.PairLabelBaked = true;
+                }
                 return;
             }
 
             Vector2 labelPos = new Vector2(
                 pos.x + node.TextOffsetX * finalScale,
                 pos.y + 5 * finalScale + node.TextOffsetY * finalScale);
-            DrawText(labelId, label, keyFontPath, keyFontSize, labelPos, new Vector2(size.x, labelHeight), 1, color, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, sortingOrder);
+            if (!baked.PairLabelBaked || !SdfTextRenderer.KeepAlive(labelId, sortingOrder))
+            {
+                DrawText(labelId, label, keyFontPath, keyFontSize, labelPos, new Vector2(size.x, labelHeight), 1, color, keyOutlineEnabled, keyOutlineColor, keyOutlineThickness, keyShadowEnabled, keyShadowColor, keyShadowOffset, keyShadowSoftness, sortingOrder);
+                baked.PairLabelBaked = true;
+            }
 
             float countFontSize = 20.0f * globalScale * node.CountScale;
-            string countFontPath = GetCountFontPath(config, node);
+            string countFontPath = baked.CountFontPath;
             float valueHeight = TextBoxHeight(countFontSize);
             Vector2 valuePos = new Vector2(
                 pos.x + node.CountOffsetX * finalScale,
@@ -680,102 +910,58 @@ namespace CheryTools
             float speed = config.KeyRainSpeed;
             float maxHeight = config.KeyRainMaxHeight;
             int fadeMode = config.KeyRainFadeMode;
-            float currentTime = Time.unscaledTime;
+            float currentTime = RenderTimelineClock.Time;
 
-            uint row1Color = Vector4ToColor(config.KeyRainColorRow1);
-            uint row2Color = Vector4ToColor(config.KeyRainColorRow2);
-            uint row1GradientEndColor = Vector4ToColor(config.KeyRainGradientEndColorRow1);
-            uint row2GradientEndColor = Vector4ToColor(config.KeyRainGradientEndColorRow2);
-            uint row1HorizontalGradientEndColor = Vector4ToColor(config.KeyRainHorizontalGradientEndColorRow1);
-            uint row2HorizontalGradientEndColor = Vector4ToColor(config.KeyRainHorizontalGradientEndColorRow2);
-            float row1Ratio = config.KeyRainWidthRatio1;
-            float row2Ratio = config.KeyRainWidthRatio2;
-            bool configShadowEnabled = false;
-            uint configShadowColor = 0u;
-            Vector2 configShadowOffset = Vector2.zero;
-            float configShadowSoftness = 0f;
-            float configShadowStrength = 1f;
-            if (config.KeyRainShadowEnabled && config.KeyRainShadowStrength > 0f)
+            _rainRow1Buffer.Clear();
+            _rainRow2Buffer.Clear();
+            var activeDrops = KeyViewerManager.Instance.ActiveDrops;
+            for (int i = 0; i < activeDrops.Count; i++)
             {
-                configShadowColor = Vector4ToColor(config.KeyRainShadowColor);
-                configShadowEnabled = Alpha01(configShadowColor) > 0f;
-                configShadowOffset = ResolvePair(config.KeyRainShadowOffset, 0f, 0f) * globalScale;
-                configShadowSoftness = Mathf.Max(0f, config.KeyRainShadowSoftness) * globalScale;
-                configShadowStrength = Mathf.Clamp01(config.KeyRainShadowStrength);
+                KeyDrop candidate = activeDrops[i];
+                KVNode candidateNode = candidate.Node;
+                if (candidateNode == null || candidateNode.NodeType != 0) continue;
+                if (candidateNode.UseCustomRain ? !candidateNode.EnableKeyRain : !config.EnableKeyRain) continue;
+                if (candidate.Config != null)
+                {
+                    if (!ReferenceEquals(candidate.Config, config)) continue;
+                }
+                else if (config.Nodes == null || !config.Nodes.Contains(candidateNode))
+                {
+                    continue;
+                }
+
+                if (candidateNode.RainRow == 1) _rainRow1Buffer.Add(candidate);
+                else _rainRow2Buffer.Add(candidate);
             }
 
+            // Row 1 drops must be emitted before row 2 so their triangles keep the
+            // same in-batch draw order as the old two-pass loop.
             for (int pass = 0; pass < 2; pass++)
             {
-                for (int i = 0; i < KeyViewerManager.Instance.ActiveDrops.Count; i++)
+                var drops = pass == 0 ? _rainRow1Buffer : _rainRow2Buffer;
+                for (int i = 0; i < drops.Count; i++)
                 {
-                    KeyDrop drop = KeyViewerManager.Instance.ActiveDrops[i];
+                    KeyDrop drop = drops[i];
                     KVNode node = drop.Node;
-                    if (node == null || node.NodeType != 0) continue;
-                    bool useCustomRain = node.UseCustomRain;
-                    if (useCustomRain ? !node.EnableKeyRain : !config.EnableKeyRain) continue;
-                    if (drop.Config != null)
-                    {
-                        if (!ReferenceEquals(drop.Config, config)) continue;
-                    }
-                    else if (config.Nodes == null || !config.Nodes.Contains(node))
-                    {
-                        continue;
-                    }
+                    BakedKvNode baked = GetBakedNode(config, node, center, globalScale,
+                        (float)Math.Floor(6 * globalScale), config.BorderThickness);
+                    if (!baked.RainEnabled) continue;
 
-                    bool isRow1 = node.RainRow == 1;
-                    if (pass == 0 && !isRow1) continue;
-                    if (pass == 1 && isRow1) continue;
+                    float ratio = baked.RainWidthRatio;
+                    uint baseColor = baked.RainBaseColor;
+                    uint farColor = baked.RainFarColor;
+                    bool gradientEnabled = baked.RainGradientEnabled;
+                    bool horizontalGradientEnabled = baked.RainHorizontalGradientEnabled;
+                    int gradientMode = baked.RainGradientMode;
+                    uint horizontalColor = baked.RainHorizontalColor;
+                    float fadeHeight = baked.RainFadeHeight;
+                    float fadePower = baked.RainFadePower;
+                    float gradientHeight = baked.RainGradientHeight;
+                    float gradientPower = baked.RainGradientPower;
 
-                    float ratio;
-                    uint baseColor;
-                    uint farColor;
-                    bool gradientEnabled;
-                    bool horizontalGradientEnabled;
-                    int gradientMode;
-                    uint horizontalColor;
-                    float currentYOffset;
-                    float cornerRadius;
-                    float fadeHeight;
-                    float fadePower;
-                    float gradientHeight;
-                    float gradientPower;
-                    if (useCustomRain)
-                    {
-                        ratio = node.RainWidthRatio;
-                        baseColor = Vector4ToColor(node.RainColor);
-                        farColor = Vector4ToColor(node.RainGradientEndColor);
-                        gradientEnabled = node.RainGradientEnabled;
-                        horizontalGradientEnabled = node.RainHorizontalGradientEnabled;
-                        gradientMode = node.RainGradientMode;
-                        horizontalColor = MatchAlpha(Vector4ToColor(node.RainHorizontalGradientEndColor), baseColor);
-                        currentYOffset = node.RainYOffset;
-                        cornerRadius = node.RainCornerRadius;
-                        fadeHeight = node.RainFadeHeight;
-                        fadePower = node.RainFadePower;
-                        gradientHeight = node.RainGradientHeight;
-                        gradientPower = node.RainGradientPower;
-                    }
-                    else
-                    {
-                        ratio = isRow1 ? row1Ratio : row2Ratio;
-                        baseColor = isRow1 ? row1Color : row2Color;
-                        farColor = isRow1 ? row1GradientEndColor : row2GradientEndColor;
-                        gradientEnabled = config.KeyRainGradientEnabled;
-                        horizontalGradientEnabled = config.KeyRainHorizontalGradientEnabled;
-                        gradientMode = config.KeyRainGradientMode;
-                        horizontalColor = MatchAlpha(isRow1 ? row1HorizontalGradientEndColor : row2HorizontalGradientEndColor, baseColor);
-                        currentYOffset = isRow1 ? config.KeyRainYOffsetRow1 : config.KeyRainYOffsetRow2;
-                        cornerRadius = config.KeyRainCornerRadius;
-                        fadeHeight = config.KeyRainFadeHeight;
-                        fadePower = config.KeyRainFadePower;
-                        gradientHeight = config.KeyRainGradientHeight;
-                        gradientPower = config.KeyRainGradientPower;
-                    }
-
-                    float finalScale = globalScale * node.Scale;
-                    float boxW = node.Width * finalScale;
-                    float keyX = center.x + node.PositionX * globalScale;
-                    float keyY = center.y + node.PositionY * globalScale - currentYOffset;
+                    float boxW = baked.BaseSize.x;
+                    float keyX = baked.BasePosition.x;
+                    float keyY = baked.BasePosition.y - baked.RainYOffset;
                     float dropW = boxW * ratio;
                     float dropX = keyX + (boxW - dropW) * 0.5f;
                     float endTime = drop.EndTime ?? currentTime;
@@ -820,45 +1006,26 @@ namespace CheryTools
                     float snapBottom = Mathf.Round(clampedBottomY);
                     if (snapRight <= snapLeft || snapBottom <= snapTop) continue;
 
-                    int shadowSortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerRainShadow);
-                    int sortingOrder = RenderDepth.ToSortingOrder(node.Depth, RenderDepth.SublayerRain);
                     bool useHeightCurveFill =
                         (fadeMode == 1 && (Mathf.Abs(fadeHeight - 1f) > 0.0001f || Mathf.Abs(fadePower - 1f) > 0.0001f))
                         || (gradientEnabled && gradientMode == 1 && (Mathf.Abs(gradientHeight - 1f) > 0.0001f || Mathf.Abs(gradientPower - 1f) > 0.0001f));
-                    bool currentShadowEnabled = configShadowEnabled;
-                    uint currentShadowColor = configShadowColor;
-                    Vector2 currentShadowOffset = configShadowOffset;
-                    float currentShadowSoftness = configShadowSoftness;
-                    float currentShadowStrength = configShadowStrength;
-                    if (node.UseCustomRainShadow)
+                    if (baked.RainShadowEnabled)
                     {
-                        currentShadowEnabled = node.RainShadowEnabled && node.RainShadowStrength > 0f;
-                        if (currentShadowEnabled)
-                        {
-                            currentShadowColor = Vector4ToColor(node.RainShadowColor);
-                            currentShadowEnabled = Alpha01(currentShadowColor) > 0f;
-                            currentShadowOffset = ResolvePair(node.RainShadowOffset, 0f, 0f) * globalScale;
-                            currentShadowSoftness = Mathf.Max(0f, node.RainShadowSoftness) * globalScale;
-                            currentShadowStrength = Mathf.Clamp01(node.RainShadowStrength);
-                        }
-                    }
-                    if (currentShadowEnabled)
-                    {
-                        uint shadowTopColor = MultiplyAlpha(currentShadowColor, currentShadowStrength * Alpha01(topColor));
-                        uint shadowBottomColor = MultiplyAlpha(currentShadowColor, currentShadowStrength * Alpha01(bottomColor));
+                        uint shadowTopColor = MultiplyAlpha(baked.RainShadowColor, baked.RainShadowStrength * Alpha01(topColor));
+                        uint shadowBottomColor = MultiplyAlpha(baked.RainShadowColor, baked.RainShadowStrength * Alpha01(bottomColor));
                         DrawKeyRainShadow(
                             new Vector2(snapLeft, snapTop),
                             new Vector2(snapRight - snapLeft, snapBottom - snapTop),
                             shadowTopColor,
                             shadowBottomColor,
-                            currentShadowOffset,
-                            currentShadowSoftness,
-                            shadowSortingOrder);
+                            baked.RainShadowOffset,
+                            baked.RainShadowSoftness,
+                            baked.RainShadowSortingOrder);
                     }
                     if (useHeightCurveFill)
                     {
                         KeyViewerUnityRenderer.DrawKeyRainCurveRect(
-                            drop.RenderId,
+                            "rain",
                             new Vector2(snapLeft, snapTop),
                             new Vector2(snapRight - snapLeft, snapBottom - snapTop),
                             baseColor,
@@ -874,8 +1041,8 @@ namespace CheryTools
                             gradientPower,
                             horizontalGradientEnabled,
                             horizontalColor,
-                            Mathf.Max(0f, cornerRadius) * globalScale,
-                            sortingOrder);
+                            baked.RainCornerRadius,
+                            baked.RainSortingOrder);
                     }
                     else
                     {
@@ -884,15 +1051,15 @@ namespace CheryTools
                             ? (gradientEnabled ? LerpColor(bottomColor, MatchAlpha(horizontalColor, bottomColor), 0.5f) : MatchAlpha(horizontalColor, bottomColor))
                             : bottomColor;
                         KeyViewerUnityRenderer.DrawGradientRect(
-                            drop.RenderId,
+                            "rain",
                             new Vector2(snapLeft, snapTop),
                             new Vector2(snapRight - snapLeft, snapBottom - snapTop),
                             topColor,
                             topRightColor,
                             bottomRightColor,
                             bottomColor,
-                            Mathf.Max(0f, cornerRadius) * globalScale,
-                            sortingOrder);
+                            baked.RainCornerRadius,
+                            baked.RainSortingOrder);
                     }
                 }
             }

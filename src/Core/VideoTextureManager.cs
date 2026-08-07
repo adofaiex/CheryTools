@@ -31,9 +31,25 @@ namespace CheryTools
         private const float HealthCheckInterval = 0.5f;
         private const float StallRestartDelay = 1.5f;
         private const float PrepareRetryInterval = 0.5f;
+        // Same retention policy as the KV/OV image caches: entries whose owner has not
+        // requested them for this many overlay frames are destroyed. Previously a
+        // removed video component kept its VideoPlayer + RenderTexture alive until
+        // Shutdown.
+        private const int UnusedEntryRetentionFrames = 600;
+        // Render textures are allocated on a 64px grid so that dragging/resizing a
+        // video by a few pixels in edit mode does not tear down and rebuild the whole
+        // VideoPlayer (decoder restarts cause a visible hitch). Videos are stretched
+        // onto their quad, so the texture being slightly larger is not visible.
+        private const int VideoSizeBucket = 64;
         private static readonly Dictionary<string, VideoEntry> _entries = new Dictionary<string, VideoEntry>();
         private static readonly Dictionary<string, int> _ownerFrameIds = new Dictionary<string, int>();
+        private static readonly List<string> _staleEntryBuffer = new List<string>();
         private static GameObject _root;
+
+        private static int BucketVideoSize(int size)
+        {
+            return Mathf.Clamp(Mathf.CeilToInt(size / (float)VideoSizeBucket) * VideoSizeBucket, VideoSizeBucket, 4096);
+        }
 
         public static bool HasEntries
         {
@@ -69,8 +85,8 @@ namespace CheryTools
             }
             owner = NormalizeOwner(owner);
 
-            widthHint = Mathf.Clamp(widthHint, 16, 4096);
-            heightHint = Mathf.Clamp(heightHint, 16, 4096);
+            widthHint = BucketVideoSize(Mathf.Clamp(widthHint, 16, 4096));
+            heightHint = BucketVideoSize(Mathf.Clamp(heightHint, 16, 4096));
 
             string key = owner + ":" + id;
             if (_entries.TryGetValue(key, out VideoEntry existing)
@@ -128,12 +144,34 @@ namespace CheryTools
         {
             if (_entries.Count == 0) return;
 
+            _staleEntryBuffer.Clear();
             foreach (var pair in _entries)
             {
                 VideoEntry entry = pair.Value;
-                if (entry == null || entry.Player == null) continue;
+                if (entry == null || entry.Player == null)
+                {
+                    _staleEntryBuffer.Add(pair.Key);
+                    continue;
+                }
                 if (!string.IsNullOrEmpty(owner) && !string.Equals(entry.Owner, owner, StringComparison.Ordinal)) continue;
-                ApplyPlaybackState(entry, entry.LastFrame == GetOwnerFrame(entry.Owner) && entry.ShouldPlay);
+
+                int ownerFrame = GetOwnerFrame(entry.Owner);
+                if (ownerFrame - entry.LastFrame > UnusedEntryRetentionFrames)
+                {
+                    _staleEntryBuffer.Add(pair.Key);
+                    continue;
+                }
+                ApplyPlaybackState(entry, entry.LastFrame == ownerFrame && entry.ShouldPlay);
+            }
+
+            for (int i = 0; i < _staleEntryBuffer.Count; i++)
+            {
+                string key = _staleEntryBuffer[i];
+                if (_entries.TryGetValue(key, out VideoEntry stale))
+                {
+                    DestroyEntry(stale);
+                    _entries.Remove(key);
+                }
             }
         }
 

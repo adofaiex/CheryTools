@@ -33,6 +33,17 @@ namespace CheryTools
         public List<OverlayerProgressBar> OverlayerProgressBars = new List<OverlayerProgressBar>();
     }
 
+    // Resolution metadata written into .cyt archives so that importing a full config
+    // can adapt positions/sizes to the local resolution, mirroring the .ctkv/.ctov
+    // behaviour. Older .cyt packages lack this entry and are imported unscaled.
+    [Serializable]
+    public class CytPackageInfo
+    {
+        public int FormatVersion = 1;
+        public int ExportScreenWidth = 0;
+        public int ExportScreenHeight = 0;
+    }
+
     public class PackageImportResult
     {
         public bool AppliedResolutionAdaptation = false;
@@ -77,23 +88,45 @@ namespace CheryTools
         private const string ArchiveAssetsPrefix = "Assets";
         private static readonly Dictionary<string, string> _resolvedAssetPathCache = new Dictionary<string, string>();
 
+        // Unresolved paths are remembered with a cooldown: a path that misses probes
+        // 4-5 File.Exists locations, and render paths call ResolveAssetPath every
+        // frame, so an unresolvable path must not re-probe the disk each time. After
+        // the cooldown the lookup runs again, so late-arriving files are still found.
+        private static readonly Dictionary<string, float> _unresolvedPathTimes = new Dictionary<string, float>();
+        private const float UnresolvedRetrySeconds = 5f;
+        private const int UnresolvedCacheCapacity = 256;
+
+        // Both roots are immutable for the lifetime of the process; ResolveAssetPath
+        // reads them several times per call, so the Path.GetFullPath/Combine work is
+        // done once and cached.
+        private static string _gameRoot;
+        private static string _assetsRoot;
+
         public static string GameRoot
         {
             get
             {
-                string dataPath = Application.dataPath;
-                if (!string.IsNullOrEmpty(dataPath))
+                if (_gameRoot == null)
                 {
-                    return Path.GetFullPath(Path.Combine(dataPath, ".."));
+                    string dataPath = Application.dataPath;
+                    _gameRoot = !string.IsNullOrEmpty(dataPath)
+                        ? Path.GetFullPath(Path.Combine(dataPath, ".."))
+                        : Directory.GetCurrentDirectory();
                 }
-
-                return Directory.GetCurrentDirectory();
+                return _gameRoot;
             }
         }
 
         public static string AssetsRoot
         {
-            get { return Path.Combine(GameRoot, AssetsFolderName); }
+            get
+            {
+                if (_assetsRoot == null)
+                {
+                    _assetsRoot = Path.Combine(GameRoot, AssetsFolderName);
+                }
+                return _assetsRoot;
+            }
         }
 
         public static string ResolveAssetPath(string path)
@@ -104,6 +137,15 @@ namespace CheryTools
             if (_resolvedAssetPathCache.TryGetValue(normalized, out string cachedPath))
             {
                 return cachedPath;
+            }
+
+            if (_unresolvedPathTimes.TryGetValue(normalized, out float missedAt))
+            {
+                if (UnityEngine.Time.realtimeSinceStartup - missedAt < UnresolvedRetrySeconds)
+                {
+                    return normalized;
+                }
+                _unresolvedPathTimes.Remove(normalized);
             }
 
             string archiveRelative = TryConvertArchiveRelativePath(normalized);
@@ -130,6 +172,10 @@ namespace CheryTools
                 if (File.Exists(fromMod)) return CacheResolvedAssetPath(normalized, Path.GetFullPath(fromMod));
             }
 
+            if (_unresolvedPathTimes.Count < UnresolvedCacheCapacity || _unresolvedPathTimes.ContainsKey(normalized))
+            {
+                _unresolvedPathTimes[normalized] = UnityEngine.Time.realtimeSinceStartup;
+            }
             return normalized;
         }
 
@@ -140,6 +186,7 @@ namespace CheryTools
                 _resolvedAssetPathCache.Clear();
             }
             _resolvedAssetPathCache[normalized] = resolved;
+            _unresolvedPathTimes.Remove(normalized);
             return resolved;
         }
 
@@ -252,6 +299,15 @@ namespace CheryTools
                 {
                     XmlSerializer serializer = new XmlSerializer(typeof(Settings));
                     serializer.Serialize(entryStream, exportSettings);
+                }
+
+                ZipArchiveEntry infoEntry = archive.CreateEntry("PackageInfo.xml", System.IO.Compression.CompressionLevel.Optimal);
+                using (Stream entryStream = infoEntry.Open())
+                {
+                    CytPackageInfo info = new CytPackageInfo();
+                    GetCurrentScreenSize(out info.ExportScreenWidth, out info.ExportScreenHeight);
+                    XmlSerializer serializer = new XmlSerializer(typeof(CytPackageInfo));
+                    serializer.Serialize(entryStream, info);
                 }
 
                 HashSet<string> addedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -670,6 +726,58 @@ namespace CheryTools
             return result;
         }
 
+        // Reusable runtime/import entry points: scale the live Settings layout from a
+        // recorded source resolution to the current screen resolution. Shared by the
+        // package importers and the runtime resolution watcher so behaviour stays
+        // identical regardless of how the scale is triggered.
+        //
+        // reversible selects the uniform scale used for fonts/sizes/config.Scale:
+        //  - reversible=false (imports): UniformScale = min(scaleX, scaleY). Conservative,
+        //    keeps content on-screen, but is NOT invertible (min loses information), which
+        //    is fine for a one-shot import.
+        //  - reversible=true (runtime resolution watcher): uses scaleY. The vertical axis
+        //    is the layout's reference (key heights, line heights), and scaleY is exactly
+        //    invertible, so repeatedly switching resolutions back and forth does not drift
+        //    the font size / KV scale towards zero.
+        internal static bool TryAdaptSettingsToCurrentResolution(Settings settings, int sourceWidth, int sourceHeight, bool reversible = false)
+        {
+            if (settings == null) return false;
+
+            PackageImportResult result = CreateResolutionImportResult(sourceWidth, sourceHeight);
+            if (!result.AppliedResolutionAdaptation)
+            {
+                return false;
+            }
+
+            float uniformScale = reversible ? result.ScaleY : result.UniformScale;
+
+            ScaleKeyViewerConfigurations(settings.KeyViewerConfigurations, uniformScale);
+            ScaleOverlayerTexts(settings.OverlayerTexts, result.ScaleX, result.ScaleY, uniformScale);
+            ScaleOverlayerImages(settings.OverlayerImages, result.ScaleX, result.ScaleY, uniformScale);
+            ScaleOverlayerVideos(settings.OverlayerVideos, result.ScaleX, result.ScaleY, uniformScale);
+            ScaleOverlayerProgressBars(settings.OverlayerProgressBars, result.ScaleX, result.ScaleY, uniformScale);
+            return true;
+        }
+
+        internal static void GetCurrentScreenSizeInternal(out int width, out int height)
+        {
+            GetCurrentScreenSize(out width, out height);
+        }
+
+        // Marks the current screen resolution as the baseline the layout is adapted
+        // to. Called after any import that rescales (or already matches) the local
+        // resolution, so the runtime watcher does not rescale again immediately.
+        internal static void UpdateBaselineToCurrentResolution(Settings settings)
+        {
+            if (settings == null) return;
+            int width;
+            int height;
+            GetCurrentScreenSize(out width, out height);
+            if (width <= 0 || height <= 0) return;
+            settings.LastKnownScreenWidth = width;
+            settings.LastKnownScreenHeight = height;
+        }
+
         private static void ScaleKeyViewerConfigurations(List<KVConfiguration> configurations, float scale)
         {
             if (configurations == null) return;
@@ -1056,6 +1164,20 @@ namespace CheryTools
 
         public static void ImportCytPackage(string packagePath, string settingsPath)
         {
+            int sourceWidth;
+            int sourceHeight;
+            ImportCytPackage(packagePath, settingsPath, out sourceWidth, out sourceHeight);
+        }
+
+        // Imports a .cyt archive and reports the resolution recorded at export time
+        // (0x0 for legacy packages that carry no PackageInfo.xml). The caller is
+        // expected to adapt the freshly loaded Settings via
+        // TryAdaptSettingsToCurrentResolution when a valid resolution is returned.
+        public static void ImportCytPackage(string packagePath, string settingsPath, out int sourceWidth, out int sourceHeight)
+        {
+            sourceWidth = 0;
+            sourceHeight = 0;
+
             string normalizedPackagePath = NormalizeInputPath(packagePath);
             if (string.IsNullOrEmpty(normalizedPackagePath) || !File.Exists(normalizedPackagePath))
             {
@@ -1076,6 +1198,8 @@ namespace CheryTools
                 {
                     throw new InvalidDataException("CYT package does not contain Settings.xml.");
                 }
+
+                ReadCytPackageInfo(archive, out sourceWidth, out sourceHeight);
 
                 foreach (ZipArchiveEntry entry in archive.Entries)
                 {
@@ -1118,6 +1242,32 @@ namespace CheryTools
                     Directory.CreateDirectory(settingsDirectory);
                 }
                 settingsEntry.ExtractToFile(settingsPath, true);
+            }
+        }
+
+        private static void ReadCytPackageInfo(ZipArchive archive, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+
+            ZipArchiveEntry infoEntry = archive.GetEntry("PackageInfo.xml");
+            if (infoEntry == null) return;
+
+            try
+            {
+                using (Stream entryStream = infoEntry.Open())
+                {
+                    XmlSerializer serializer = new XmlSerializer(typeof(CytPackageInfo));
+                    CytPackageInfo info = serializer.Deserialize(entryStream) as CytPackageInfo;
+                    if (info == null) return;
+                    width = info.ExportScreenWidth;
+                    height = info.ExportScreenHeight;
+                }
+            }
+            catch
+            {
+                width = 0;
+                height = 0;
             }
         }
 
