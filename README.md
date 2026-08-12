@@ -2,6 +2,8 @@
 
 欢迎使用CheryTools！下面是MOD介绍！
 
+多加载器开发、构建与分包方式见 [MULTILOADER.md](MULTILOADER.md)。
+
 ## 一、KeyViewer / KV 按键显示系统
 
 CheryTools 内置了高度可自定义的按键显示系统，可以在屏幕上显示玩家当前使用的按键、按键次数、KPS、总点击数以及键雨效果。

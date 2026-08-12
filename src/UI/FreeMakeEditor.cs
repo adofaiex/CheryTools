@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using ImGuiNET;
-using UnityModManagerNet;
 
 
 using Vector2 = System.Numerics.Vector2;

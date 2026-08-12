@@ -6,7 +6,6 @@ using System.Numerics;
 using System.Text.RegularExpressions;
 using ImGuiNET;
 using UnityEngine;
-using UnityModManagerNet;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
@@ -591,7 +590,7 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private static void ReloadSettingsAfterImport(string sourcePath, int sourceWidth, int sourceHeight)
 	{
-		Main.Settings = UnityModManager.ModSettings.Load<Settings>(Main.ModEntry);
+		Main.ReloadSettingsFromDisk();
 		Main.Settings.InitNulls();
 		Main.Settings.EnsureImGuiPanelScaleBaseline(true);
 

@@ -6,6 +6,7 @@
 .vs/
 out/
 output/
+dist/
 Backups/
 
 # Local agent/tooling state

@@ -3,8 +3,8 @@
   "DisplayName": "Chery Tools",
   "Author": "Chery",
   "Version": "26.4 Alpha",
-  "AssemblyName": "CheryTools.dll",
-  "EntryMethod": "CheryTools.Main.Load",
+  "AssemblyName": "CheryTools.Loader.UMM.dll",
+  "EntryMethod": "CheryTools.Loaders.UMM.UmmEntry.Load",
   "HomePage": "",
   "Repository": ""
 }

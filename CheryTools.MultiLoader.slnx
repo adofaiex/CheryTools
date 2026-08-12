@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/loaders/" />
+  <Folder Name="/loaders/BepInEx/">
+    <Project Path="loaders/BepInEx/CheryTools.Loader.BepInEx.csproj" />
+  </Folder>
+  <Folder Name="/loaders/MelonLoader/">
+    <Project Path="loaders/MelonLoader/CheryTools.Loader.MelonLoader.csproj" />
+  </Folder>
+  <Folder Name="/loaders/UMM/">
+    <Project Path="loaders/UMM/CheryTools.Loader.UMM.csproj" />
+  </Folder>
+  <Project Path="CheryTools.csproj" />
+</Solution>

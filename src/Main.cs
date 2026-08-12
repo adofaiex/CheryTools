@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
-using UnityModManagerNet;
 
 namespace CheryTools
 {
@@ -415,7 +414,7 @@ namespace CheryTools
         }
     }
 
-    public class Settings : UnityModManager.ModSettings
+    public class Settings
     {
         public const int MaxToolsLimitedKeys = 128;
 
@@ -537,20 +536,58 @@ namespace CheryTools
 
         public System.Collections.Generic.List<KVConfiguration> KeyViewerConfigurations = new System.Collections.Generic.List<KVConfiguration>();
 
-        public override void Save(UnityModManager.ModEntry modEntry)
+        private static readonly object SaveLock = new object();
+
+        public static Settings Load(IModHost modEntry)
         {
+            if (modEntry == null || string.IsNullOrEmpty(modEntry.Path))
+                return new Settings();
+
+            string path = System.IO.Path.Combine(modEntry.Path, "Settings.xml");
+            if (!System.IO.File.Exists(path))
+                return new Settings();
+
             try
             {
-                string filepath = System.IO.Path.Combine(modEntry.Path, "Settings.xml");
-                if (System.IO.File.Exists(filepath))
+                var serializer = new System.Xml.Serialization.XmlSerializer(typeof(Settings));
+                using (var stream = System.IO.File.OpenRead(path))
+                    return serializer.Deserialize(stream) as Settings ?? new Settings();
+            }
+            catch (Exception ex)
+            {
+                modEntry.Logger?.Warning("Failed to load settings; using defaults: " + ex.Message);
+                return new Settings();
+            }
+        }
+
+        public void Save(IModHost modEntry)
+        {
+            if (modEntry == null || string.IsNullOrEmpty(modEntry.Path)) return;
+
+            try
+            {
+                lock (SaveLock)
                 {
-                    System.IO.File.Delete(filepath);
+                    System.IO.Directory.CreateDirectory(modEntry.Path);
+                    string path = System.IO.Path.Combine(modEntry.Path, "Settings.xml");
+                    string tempPath = path + ".tmp";
+                    var serializer = new System.Xml.Serialization.XmlSerializer(typeof(Settings));
+                    using (var stream = new System.IO.FileStream(
+                        tempPath,
+                        System.IO.FileMode.Create,
+                        System.IO.FileAccess.Write,
+                        System.IO.FileShare.None))
+                    {
+                        serializer.Serialize(stream, this);
+                    }
+
+                    System.IO.File.Copy(tempPath, path, true);
+                    System.IO.File.Delete(tempPath);
                 }
-                Save(this, modEntry);
             }
             catch (Exception e)
             {
-                Main.Logger.Log("Failed to save settings: " + e.Message);
+                Main.Logger?.Error("Failed to save settings: " + e.Message);
             }
         }
 
@@ -1689,7 +1726,7 @@ namespace CheryTools
                 float row2Y = startY + boxHeight + padding;
                 float kWidth = count == 12 ? (2 * boxWidth + padding) : (3 * boxWidth + 2 * padding);
                 int row2Keys = count == 12 ? 4 : 2;
-                
+
                 list.Add(new KVNode(1, startX, row2Y, kWidth, boxHeight));
                 float totalX = startX + kWidth + padding + row2Keys * (boxWidth + padding);
                 list.Add(new KVNode(2, totalX, row2Y, kWidth, boxHeight));
@@ -1703,12 +1740,20 @@ namespace CheryTools
 
     public static class Main
     {
-        public static UnityModManager.ModEntry.ModLogger Logger;
+        private const string AppDomainOwnerKey = "CheryTools.MultiLoader.Owner";
+
+        public static IModLogger Logger;
         public static Settings Settings;
         public static Harmony harmony;
         public static bool IsEnabled = false;
 
-        public static UnityModManager.ModEntry ModEntry;
+        public static IModHost ModEntry;
+        private static bool _initialized;
+        private static string _ownerToken;
+
+        public static string SettingsPath => ModEntry == null
+            ? string.Empty
+            : System.IO.Path.Combine(ModEntry.Path, "Settings.xml");
         
         public static bool _isSaveRequested = false;
         public static void RequestSave()
@@ -1726,7 +1771,7 @@ namespace CheryTools
 
         private const string BundledDefaultConfigFileName = "CheryTools_Default_Jipper.cyt";
 
-        private static bool TryInstallBundledDefaultConfig(UnityModManager.ModEntry modEntry,
+        private static bool TryInstallBundledDefaultConfig(IModHost modEntry,
             out int sourceWidth, out int sourceHeight)
         {
             sourceWidth = 0;
@@ -1764,63 +1809,114 @@ namespace CheryTools
             }
         }
 
-        static bool Load(UnityModManager.ModEntry modEntry)
+        public static bool Initialize(IModHost modEntry)
         {
+            if (modEntry == null) return false;
+            if (_initialized)
+            {
+                modEntry.Logger?.Warning("CheryTools is already initialized by " + ModEntry?.LoaderName + ".");
+                return false;
+            }
+
+            object existingOwner = AppDomain.CurrentDomain.GetData(AppDomainOwnerKey);
+            if (existingOwner != null)
+            {
+                modEntry.Logger?.Warning("Another CheryTools loader is already active (" + existingOwner + ").");
+                return false;
+            }
+
+            _ownerToken = modEntry.LoaderName + ":" + Guid.NewGuid().ToString("N");
+            AppDomain.CurrentDomain.SetData(AppDomainOwnerKey, _ownerToken);
             Logger = modEntry.Logger;
             ModEntry = modEntry;
-            string settingsPath = System.IO.Path.Combine(modEntry.Path, "Settings.xml");
-            bool hadExistingSettings = System.IO.File.Exists(settingsPath);
-            int defaultSourceWidth;
-            int defaultSourceHeight;
-            bool installedBundledDefault = TryInstallBundledDefaultConfig(
-                modEntry,
-                out defaultSourceWidth,
-                out defaultSourceHeight);
-            Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
-            Settings.InitNulls();
-            bool migratedPanelScale = Settings.EnsureImGuiPanelScaleBaseline(hadExistingSettings && !installedBundledDefault);
-            if (installedBundledDefault)
+            try
             {
-                if (defaultSourceWidth > 0 && defaultSourceHeight > 0)
+                System.IO.Directory.CreateDirectory(modEntry.Path);
+                string settingsPath = System.IO.Path.Combine(modEntry.Path, "Settings.xml");
+                bool hadExistingSettings = System.IO.File.Exists(settingsPath);
+                int defaultSourceWidth;
+                int defaultSourceHeight;
+                bool installedBundledDefault = TryInstallBundledDefaultConfig(
+                    modEntry,
+                    out defaultSourceWidth,
+                    out defaultSourceHeight);
+                Settings = Settings.Load(modEntry);
+                Settings.InitNulls();
+                bool migratedPanelScale = Settings.EnsureImGuiPanelScaleBaseline(hadExistingSettings && !installedBundledDefault);
+                if (installedBundledDefault)
                 {
-                    CheryToolsAssets.TryAdaptSettingsToCurrentResolution(
-                        Settings,
-                        defaultSourceWidth,
-                        defaultSourceHeight);
+                    if (defaultSourceWidth > 0 && defaultSourceHeight > 0)
+                    {
+                        CheryToolsAssets.TryAdaptSettingsToCurrentResolution(
+                            Settings,
+                            defaultSourceWidth,
+                            defaultSourceHeight);
+                    }
+                    CheryToolsAssets.UpdateBaselineToCurrentResolution(Settings);
                 }
-                CheryToolsAssets.UpdateBaselineToCurrentResolution(Settings);
+                LocalizationManager.Initialize(Settings.Language);
+                if (CheryToolsAssets.ImportSettingsAssets(Settings) || installedBundledDefault || migratedPanelScale)
+                {
+                    Settings.Save(modEntry);
+                    LocalizationManager.Reload(Settings.Language);
+                }
+
+                EnsureNativeDependenciesLoaded(modEntry);
+
+                harmony = new Harmony(modEntry.Info.Id);
+                _initialized = true;
+                Logger?.Log("CheryTools initialized through " + modEntry.LoaderName + ".");
+                return true;
             }
-            LocalizationManager.Initialize(Settings.Language);
-            if (CheryToolsAssets.ImportSettingsAssets(Settings) || installedBundledDefault || migratedPanelScale)
+            catch (Exception ex)
             {
-                Settings.Save(modEntry);
-                LocalizationManager.Reload(Settings.Language);
+                modEntry.Logger?.Error("CheryTools initialization failed: " + ex);
+                ReleaseLoaderOwnership();
+                return false;
             }
-            
-            EnsureNativeDependenciesLoaded(modEntry);
-
-            harmony = new Harmony(modEntry.Info.Id);
-
-            modEntry.OnToggle = OnToggle;
-            modEntry.OnGUI = OnGUI;
-            modEntry.OnSaveGUI = OnSaveGUI;
-
-            return true;
         }
 
-        static void OnGUI(UnityModManager.ModEntry modEntry)
+        private static void ReleaseLoaderOwnership()
+        {
+            if (string.Equals(
+                AppDomain.CurrentDomain.GetData(AppDomainOwnerKey) as string,
+                _ownerToken,
+                StringComparison.Ordinal))
+            {
+                AppDomain.CurrentDomain.SetData(AppDomainOwnerKey, null);
+            }
+
+            _initialized = false;
+            _ownerToken = null;
+            IsEnabled = false;
+            ModEntry = null;
+            Logger = null;
+            Settings = null;
+            harmony = null;
+        }
+
+        public static void DrawLoaderGui()
         {
             GUILayout.Label("CheryTools 正在使用 Dear ImGui 作为其界面。");
-            string keyName = Settings.ToggleMenuKey.ToString();
+            string keyName = Settings != null ? Settings.ToggleMenuKey.ToString() : KeyCode.Insert.ToString();
             if (GUILayout.Button($"打开 ImGui 面板 (或在游戏中按 {keyName} 键)", GUILayout.Width(350)))
             {
                 CheryToolsMenu.IsMenuOpen = !CheryToolsMenu.IsMenuOpen;
             }
         }
 
-        static void OnSaveGUI(UnityModManager.ModEntry modEntry)
+        public static void SaveSettings()
         {
-            Settings.Save(modEntry);
+            Settings?.Save(ModEntry);
+        }
+
+        public static bool ReloadSettingsFromDisk()
+        {
+            if (!_initialized || ModEntry == null) return false;
+            Settings loaded = Settings.Load(ModEntry);
+            loaded.InitNulls();
+            Settings = loaded;
+            return true;
         }
 
         public static bool IsGamePlaying()
@@ -1844,8 +1940,11 @@ namespace CheryTools
             return true;
         }
 
-        static bool OnToggle(UnityModManager.ModEntry modEntry, bool value)
+        public static bool SetEnabled(bool value)
         {
+            if (!_initialized || ModEntry == null || harmony == null) return false;
+            if (IsEnabled == value) return true;
+
             IsEnabled = value;
             if (value)
             {
@@ -1891,7 +1990,7 @@ namespace CheryTools
             }
             else
             {
-                harmony.UnpatchAll(modEntry.Info.Id);
+                harmony.UnpatchAll(ModEntry.Info.Id);
                 InputInterceptor.ResetPatches();
                 
                 if (_imguiGameObject != null)
@@ -1909,7 +2008,22 @@ namespace CheryTools
             return true;
         }
 
-        private static void EnsureNativeDependenciesLoaded(UnityModManager.ModEntry modEntry)
+        public static void Shutdown()
+        {
+            if (!_initialized) return;
+
+            try
+            {
+                SaveSettings();
+                if (IsEnabled) SetEnabled(false);
+            }
+            finally
+            {
+                ReleaseLoaderOwnership();
+            }
+        }
+
+        private static void EnsureNativeDependenciesLoaded(IModHost modEntry)
         {
             if (_cimguiHandle != IntPtr.Zero || modEntry == null)
             {
