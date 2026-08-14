@@ -639,6 +639,360 @@ public class CheryToolsMenu : MonoBehaviour
 		ImportLegacyKeyViewer(sourcePath, true);
 	}
 
+	private static string CreateConfigShareTempPath(string type)
+	{
+		string directory = Path.Combine(Path.GetTempPath(), "CheryTools_ConfigShare");
+		Directory.CreateDirectory(directory);
+		return Path.Combine(directory, "CheryTools-" + type + "-" + Guid.NewGuid().ToString("N") + "." + type);
+	}
+
+	private static void DeleteConfigShareTemp(string path)
+	{
+		try
+		{
+			if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path);
+		}
+		catch
+		{
+			// 临时文件清理失败不影响配置分享结果。
+		}
+	}
+
+	private static bool TryPrepareConfigShare(string type, out string message)
+	{
+		message = "";
+		if (ConfigShareClient.IsBusy)
+		{
+			message = "已有配置码请求正在进行，请稍候。";
+			return false;
+		}
+		return true;
+	}
+
+	private sealed class SponsorSettingsSnapshot
+	{
+		public string KeyHash = "";
+		public bool TitleEnabled;
+		public bool CustomTitleEnabled;
+		public string CustomTitle = "";
+		public string CustomSubtitle = "";
+	}
+
+	private static SponsorSettingsSnapshot CaptureSponsorSettings()
+	{
+		return new SponsorSettingsSnapshot
+		{
+			KeyHash = Main.Settings.SponsorKeyHash,
+			TitleEnabled = Main.Settings.SponsorTitleEnabled,
+			CustomTitleEnabled = Main.Settings.SponsorCustomTitleEnabled,
+			CustomTitle = Main.Settings.SponsorCustomTitle,
+			CustomSubtitle = Main.Settings.SponsorCustomSubtitle,
+		};
+	}
+
+	private static void RestoreSponsorSettings(SponsorSettingsSnapshot snapshot)
+	{
+		if (snapshot == null || Main.Settings == null) return;
+		Main.Settings.SponsorKeyHash = snapshot.KeyHash;
+		Main.Settings.SponsorTitleEnabled = snapshot.TitleEnabled;
+		Main.Settings.SponsorCustomTitleEnabled = snapshot.CustomTitleEnabled;
+		Main.Settings.SponsorCustomTitle = snapshot.CustomTitle;
+		Main.Settings.SponsorCustomSubtitle = snapshot.CustomSubtitle;
+	}
+
+	private void UploadCytShare()
+	{
+		if (!TryPrepareConfigShare("cyt", out string busyMessage))
+		{
+			_cytShareMessage = busyMessage;
+			return;
+		}
+		string path = CreateConfigShareTempPath("cyt");
+		try
+		{
+			Main.Settings.Save(Main.ModEntry);
+			CheryToolsAssets.ExportCytPackage(Main.Settings, path);
+			_cytShareMessage = "正在上传并生成配置码...";
+			ConfigShareClient.UploadPackage("cyt", path, (result, error) =>
+			{
+				DeleteConfigShareTemp(path);
+				if (error != null)
+				{
+					_cytShareMessage = "上传失败: " + error.Message;
+					return;
+				}
+				_cytShareCodeInput = result.Code;
+				GUIUtility.systemCopyBuffer = result.Code;
+				_cytShareMessage = "配置码 " + result.Code + " 已复制，24 小时内有效。";
+			});
+		}
+		catch (Exception ex)
+		{
+			DeleteConfigShareTemp(path);
+			_cytShareMessage = "CYT 上传失败: " + ex.Message;
+		}
+	}
+
+	private void DownloadCytShare()
+	{
+		if (!ConfigShareClient.TryNormalizeCode(_cytShareCodeInput, out string code))
+		{
+			_cytShareMessage = "请输入 6 位配置码。";
+			return;
+		}
+		if (!TryPrepareConfigShare("cyt", out string busyMessage))
+		{
+			_cytShareMessage = busyMessage;
+			return;
+		}
+		_cytShareCodeInput = code;
+		_cytShareMessage = "正在下载并校验 CYT...";
+		ConfigShareClient.DownloadPackage("cyt", code, (result, error) =>
+		{
+			if (error != null)
+			{
+				_cytShareMessage = "下载失败: " + error.Message;
+				return;
+			}
+			try
+			{
+				SponsorSettingsSnapshot sponsor = CaptureSponsorSettings();
+				string settingsPath = Main.SettingsPath;
+				if (File.Exists(settingsPath))
+				{
+					string backupDirectory = Path.Combine(Main.ModEntry.Path, "Backups");
+					Directory.CreateDirectory(backupDirectory);
+					string backupPath = Path.Combine(backupDirectory, "Settings.ShareBackup-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".xml");
+					File.Copy(settingsPath, backupPath, true);
+				}
+				CheryToolsAssets.ImportCytPackage(result.FilePath, settingsPath, out int sourceWidth, out int sourceHeight);
+				ReloadSettingsAfterImport(result.FilePath, sourceWidth, sourceHeight);
+				RestoreSponsorSettings(sponsor);
+				Main.Settings.Save(Main.ModEntry);
+				_cytShareMessage = "CYT 已下载并应用，已保留本机赞助设置。";
+			}
+			catch (Exception ex)
+			{
+				_cytShareMessage = "CYT 应用失败: " + ex.Message;
+			}
+			finally
+			{
+				DeleteConfigShareTemp(result.FilePath);
+			}
+		});
+	}
+
+	private void UploadKeyViewerShare()
+	{
+		if (!TryPrepareConfigShare("ctkv", out string busyMessage))
+		{
+			_keyViewerShareMessage = busyMessage;
+			return;
+		}
+		KVConfiguration selected = Main.Settings.GetSelectedKeyViewerConfiguration();
+		if (selected == null)
+		{
+			_keyViewerShareMessage = "没有可上传的 KeyViewer 配置。";
+			return;
+		}
+		string path = CreateConfigShareTempPath("ctkv");
+		try
+		{
+			CheryToolsAssets.ExportKeyViewerPackage(Main.Settings, selected, path);
+			_keyViewerShareMessage = "正在上传并生成配置码...";
+			ConfigShareClient.UploadPackage("ctkv", path, (result, error) =>
+			{
+				DeleteConfigShareTemp(path);
+				if (error != null)
+				{
+					_keyViewerShareMessage = "上传失败: " + error.Message;
+					return;
+				}
+				_keyViewerShareCodeInput = result.Code;
+				GUIUtility.systemCopyBuffer = result.Code;
+				_keyViewerShareMessage = "配置码 " + result.Code + " 已复制，24 小时内有效。";
+			});
+		}
+		catch (Exception ex)
+		{
+			DeleteConfigShareTemp(path);
+			_keyViewerShareMessage = "KeyViewer 上传失败: " + ex.Message;
+		}
+	}
+
+	private void DownloadKeyViewerShare()
+	{
+		if (!ConfigShareClient.TryNormalizeCode(_keyViewerShareCodeInput, out string code))
+		{
+			_keyViewerShareMessage = "请输入 6 位配置码。";
+			return;
+		}
+		if (!TryPrepareConfigShare("ctkv", out string busyMessage))
+		{
+			_keyViewerShareMessage = busyMessage;
+			return;
+		}
+		_keyViewerShareCodeInput = code;
+		_keyViewerShareMessage = "正在下载并校验 KeyViewer...";
+		ConfigShareClient.DownloadPackage("ctkv", code, (result, error) =>
+		{
+			if (error != null)
+			{
+				_keyViewerShareMessage = "下载失败: " + error.Message;
+				return;
+			}
+			try
+			{
+				ImportKeyViewerPackageAtPath(result.FilePath);
+				_keyViewerShareMessage = "KeyViewer 已下载并应用。";
+			}
+			catch (Exception ex)
+			{
+				_keyViewerShareMessage = "KeyViewer 应用失败: " + ex.Message;
+			}
+			finally
+			{
+				DeleteConfigShareTemp(result.FilePath);
+			}
+		});
+	}
+
+	private void UploadOverlayerShare()
+	{
+		if (!TryPrepareConfigShare("ctov", out string busyMessage))
+		{
+			_overlayerShareMessage = busyMessage;
+			return;
+		}
+		string path = CreateConfigShareTempPath("ctov");
+		try
+		{
+			CheryToolsAssets.ExportOverlayerPackage(Main.Settings, path);
+			_overlayerShareMessage = "正在上传并生成配置码...";
+			ConfigShareClient.UploadPackage("ctov", path, (result, error) =>
+			{
+				DeleteConfigShareTemp(path);
+				if (error != null)
+				{
+					_overlayerShareMessage = "上传失败: " + error.Message;
+					return;
+				}
+				_overlayerShareCodeInput = result.Code;
+				GUIUtility.systemCopyBuffer = result.Code;
+				_overlayerShareMessage = "配置码 " + result.Code + " 已复制，24 小时内有效。";
+			});
+		}
+		catch (Exception ex)
+		{
+			DeleteConfigShareTemp(path);
+			_overlayerShareMessage = "Overlayer 上传失败: " + ex.Message;
+		}
+	}
+
+	private void DownloadOverlayerShare()
+	{
+		if (!ConfigShareClient.TryNormalizeCode(_overlayerShareCodeInput, out string code))
+		{
+			_overlayerShareMessage = "请输入 6 位配置码。";
+			return;
+		}
+		if (!TryPrepareConfigShare("ctov", out string busyMessage))
+		{
+			_overlayerShareMessage = busyMessage;
+			return;
+		}
+		_overlayerShareCodeInput = code;
+		_overlayerShareMessage = "正在下载并校验 Overlayer...";
+		ConfigShareClient.DownloadPackage("ctov", code, (result, error) =>
+		{
+			if (error != null)
+			{
+				_overlayerShareMessage = "下载失败: " + error.Message;
+				return;
+			}
+			try
+			{
+				ImportOverlayerPackageAtPath(result.FilePath);
+				_overlayerShareMessage = "Overlayer 已下载并应用。";
+			}
+			catch (Exception ex)
+			{
+				_overlayerShareMessage = "Overlayer 应用失败: " + ex.Message;
+			}
+			finally
+			{
+				DeleteConfigShareTemp(result.FilePath);
+			}
+		});
+	}
+
+	private static bool CopyShareCode(ref string input, ref string message)
+	{
+		if (!ConfigShareClient.TryNormalizeCode(input, out string code))
+		{
+			message = "请输入 6 位配置码。";
+			return false;
+		}
+		input = code;
+		GUIUtility.systemCopyBuffer = code;
+		message = "配置码已复制。";
+		return true;
+	}
+
+	private void DrawCytShareControls()
+	{
+		ImGui.Separator();
+		ImGui.Text("临时配置码（24 小时有效）");
+		if (ImGui.Button("上传当前 CYT 并生成配置码##cyt_share_upload")) UploadCytShare();
+		ImGui.SameLine();
+		ImGui.SetNextItemWidth(150f);
+		ImGui.InputText("##cyt_share_code", ref _cytShareCodeInput, 16u);
+		ImGui.SameLine();
+		if (ImGui.Button("下载并应用##cyt_share_download")) DownloadCytShare();
+		ImGui.SameLine();
+		if (ImGui.Button("复制##cyt_share_copy")) CopyShareCode(ref _cytShareCodeInput, ref _cytShareMessage);
+		if (!string.IsNullOrEmpty(_cytShareMessage))
+		{
+			ImGui.TextColored(new Vector4(0.45f, 0.85f, 1f, 1f), _cytShareMessage);
+		}
+	}
+
+	private void DrawKeyViewerShareControls()
+	{
+		ImGui.Separator();
+		ImGui.Text("临时配置码（24 小时有效）");
+		if (ImGui.Button("上传当前 KeyViewer 并生成配置码##kv_share_upload")) UploadKeyViewerShare();
+		ImGui.SameLine();
+		ImGui.SetNextItemWidth(150f);
+		ImGui.InputText("##kv_share_code", ref _keyViewerShareCodeInput, 16u);
+		ImGui.SameLine();
+		if (ImGui.Button("下载并应用##kv_share_download")) DownloadKeyViewerShare();
+		ImGui.SameLine();
+		if (ImGui.Button("复制##kv_share_copy")) CopyShareCode(ref _keyViewerShareCodeInput, ref _keyViewerShareMessage);
+		if (!string.IsNullOrEmpty(_keyViewerShareMessage))
+		{
+			ImGui.TextColored(new Vector4(0.45f, 0.85f, 1f, 1f), _keyViewerShareMessage);
+		}
+	}
+
+	private void DrawOverlayerShareControls()
+	{
+		ImGui.Separator();
+		ImGui.Text("临时配置码（24 小时有效）");
+		if (ImGui.Button("上传当前 Overlayer 并生成配置码##ov_share_upload")) UploadOverlayerShare();
+		ImGui.SameLine();
+		ImGui.SetNextItemWidth(150f);
+		ImGui.InputText("##ov_share_code", ref _overlayerShareCodeInput, 16u);
+		ImGui.SameLine();
+		if (ImGui.Button("下载并应用##ov_share_download")) DownloadOverlayerShare();
+		ImGui.SameLine();
+		if (ImGui.Button("复制##ov_share_copy")) CopyShareCode(ref _overlayerShareCodeInput, ref _overlayerShareMessage);
+		if (!string.IsNullOrEmpty(_overlayerShareMessage))
+		{
+			ImGui.TextColored(new Vector4(0.45f, 0.85f, 1f, 1f), _overlayerShareMessage);
+		}
+	}
+
 	private void ImportLegacyKeyViewer(string sourcePath, bool isCyt)
 	{
 		try
@@ -720,33 +1074,7 @@ public class CheryToolsMenu : MonoBehaviour
 			
 			if (!string.IsNullOrEmpty(path))
 			{
-				PackageImportResult importResult = CheryToolsAssets.ImportKeyViewerPackage(Main.Settings, path);
-				Main.Settings.InitNulls();
-				if (CheryToolsAssets.ImportSettingsAssets(Main.Settings))
-				{
-					_keyViewerExportMessage = "已导入并同步外置资源: " + path;
-				}
-				else
-				{
-					_keyViewerExportMessage = "已导入: " + path;
-				}
-				if (importResult != null)
-				{
-					_keyViewerExportMessage += "\n" + importResult.ToSummary();
-				}
-				_selectedKVSidebarTab = Main.Settings.KeyViewerSelectedConfigIndex;
-				if ((Object)KeyViewerManager.Instance != (Object)null)
-				{
-					KeyViewerManager.Instance.RefreshKeys();
-				}
-				OverlayRenderInvalidator.InvalidateAll();
-				InputInterceptor.UpdateAllowedKeys();
-			TextureManager.Clear();
-			VideoTextureManager.Shutdown();
-			ImGuiController.NeedsFontAtlasRebuild = true;
-			CheryToolsAssets.UpdateBaselineToCurrentResolution(Main.Settings);
-			Main.Settings.Save(Main.ModEntry);
-			Main.Logger.Log("KeyViewer package imported from: " + path);
+				ImportKeyViewerPackageAtPath(path);
 			}
 			else
 			{
@@ -758,6 +1086,37 @@ public class CheryToolsMenu : MonoBehaviour
 			_keyViewerExportMessage = "KV 导入失败: " + ex.Message;
 			Main.Logger.Log("Failed to import KeyViewer package: " + ex.ToString());
 		}
+	}
+
+	private void ImportKeyViewerPackageAtPath(string path)
+	{
+		PackageImportResult importResult = CheryToolsAssets.ImportKeyViewerPackage(Main.Settings, path);
+		Main.Settings.InitNulls();
+		if (CheryToolsAssets.ImportSettingsAssets(Main.Settings))
+		{
+			_keyViewerExportMessage = "已导入并同步外置资源: " + path;
+		}
+		else
+		{
+			_keyViewerExportMessage = "已导入: " + path;
+		}
+		if (importResult != null)
+		{
+			_keyViewerExportMessage += "\n" + importResult.ToSummary();
+		}
+		_selectedKVSidebarTab = Main.Settings.KeyViewerSelectedConfigIndex;
+		if ((Object)KeyViewerManager.Instance != (Object)null)
+		{
+			KeyViewerManager.Instance.RefreshKeys();
+		}
+		OverlayRenderInvalidator.InvalidateAll();
+		InputInterceptor.UpdateAllowedKeys();
+		TextureManager.Clear();
+		VideoTextureManager.Shutdown();
+		ImGuiController.NeedsFontAtlasRebuild = true;
+		CheryToolsAssets.UpdateBaselineToCurrentResolution(Main.Settings);
+		Main.Settings.Save(Main.ModEntry);
+		Main.Logger.Log("KeyViewer package imported from: " + path);
 	}
 
 	private void ExportOverlayerPackage()
@@ -827,34 +1186,7 @@ public class CheryToolsMenu : MonoBehaviour
 			
 			if (!string.IsNullOrEmpty(path))
 			{
-				PackageImportResult importResult = CheryToolsAssets.ImportOverlayerPackage(Main.Settings, path);
-				Main.Settings.InitNulls();
-				if (CheryToolsAssets.ImportSettingsAssets(Main.Settings))
-				{
-					_overlayerExportMessage = "已导入并同步外置资源: " + path;
-				}
-				else
-				{
-					_overlayerExportMessage = "已导入: " + path;
-				}
-				if (importResult != null)
-				{
-					_overlayerExportMessage += "\n" + importResult.ToSummary();
-				}
-				if (importResult != null && importResult.FirstImportedIndex >= 0)
-				{
-					if (importResult.ImportedComponentKind == "text") _selectedOvSidebarTab = importResult.FirstImportedIndex;
-					else if (importResult.ImportedComponentKind == "image") _selectedOvSidebarImgTab = importResult.FirstImportedIndex;
-					else if (importResult.ImportedComponentKind == "video") _selectedOvSidebarVideoTab = importResult.FirstImportedIndex;
-					else if (importResult.ImportedComponentKind == "progress") _selectedOvSidebarBarTab = importResult.FirstImportedIndex;
-				}
-			TextureManager.Clear();
-			VideoTextureManager.Shutdown();
-			SdfTextRenderer.Shutdown();
-			ImGuiController.NeedsFontAtlasRebuild = true;
-			CheryToolsAssets.UpdateBaselineToCurrentResolution(Main.Settings);
-			Main.Settings.Save(Main.ModEntry);
-			Main.Logger.Log("Overlayer package imported from: " + path);
+				ImportOverlayerPackageAtPath(path);
 			}
 			else
 			{
@@ -866,6 +1198,38 @@ public class CheryToolsMenu : MonoBehaviour
 			_overlayerExportMessage = "OV 导入失败: " + ex.Message;
 			Main.Logger.Log("Failed to import Overlayer package: " + ex.ToString());
 		}
+	}
+
+	private void ImportOverlayerPackageAtPath(string path)
+	{
+		PackageImportResult importResult = CheryToolsAssets.ImportOverlayerPackage(Main.Settings, path);
+		Main.Settings.InitNulls();
+		if (CheryToolsAssets.ImportSettingsAssets(Main.Settings))
+		{
+			_overlayerExportMessage = "已导入并同步外置资源: " + path;
+		}
+		else
+		{
+			_overlayerExportMessage = "已导入: " + path;
+		}
+		if (importResult != null)
+		{
+			_overlayerExportMessage += "\n" + importResult.ToSummary();
+		}
+		if (importResult != null && importResult.FirstImportedIndex >= 0)
+		{
+			if (importResult.ImportedComponentKind == "text") _selectedOvSidebarTab = importResult.FirstImportedIndex;
+			else if (importResult.ImportedComponentKind == "image") _selectedOvSidebarImgTab = importResult.FirstImportedIndex;
+			else if (importResult.ImportedComponentKind == "video") _selectedOvSidebarVideoTab = importResult.FirstImportedIndex;
+			else if (importResult.ImportedComponentKind == "progress") _selectedOvSidebarBarTab = importResult.FirstImportedIndex;
+		}
+		TextureManager.Clear();
+		VideoTextureManager.Shutdown();
+		SdfTextRenderer.Shutdown();
+		ImGuiController.NeedsFontAtlasRebuild = true;
+		CheryToolsAssets.UpdateBaselineToCurrentResolution(Main.Settings);
+		Main.Settings.Save(Main.ModEntry);
+		Main.Logger.Log("Overlayer package imported from: " + path);
 	}
 
 
@@ -956,6 +1320,13 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private string _overlayerExportMessage = "";
 
+	private string _cytShareCodeInput = "";
+	private string _cytShareMessage = "";
+	private string _keyViewerShareCodeInput = "";
+	private string _keyViewerShareMessage = "";
+	private string _overlayerShareCodeInput = "";
+	private string _overlayerShareMessage = "";
+
 	private string _languageConfigMessage = "";
 
 	private string _sponsorKeyInput = "";
@@ -982,6 +1353,7 @@ public class CheryToolsMenu : MonoBehaviour
 
 	private void Update()
 	{
+		ConfigShareClient.PumpMainThread();
 		if (Input.GetKeyDown(Main.Settings.ToggleMenuKey))
 		{
 			IsMenuOpen = !IsMenuOpen;
@@ -2146,6 +2518,7 @@ public class CheryToolsMenu : MonoBehaviour
 			ImGui.SameLine();
 			ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1f), Tr("settings.configSavedInGameRoot", "配置已保存在游戏根目录!"));
 		}
+		DrawCytShareControls();
 
 		ImGui.Separator();
 		ImGui.Text(Tr("settings.legacyKvMigration", "旧 KV 配置迁移"));
@@ -3643,6 +4016,7 @@ public class CheryToolsMenu : MonoBehaviour
 				{
 					ImGui.TextColored(new System.Numerics.Vector4(0.75f, 0.85f, 1f, 1f), _keyViewerExportMessage);
 				}
+				DrawKeyViewerShareControls();
 				ImGui.Separator();
 				DrawKeyViewerConfigurations();
 			}
@@ -3712,6 +4086,7 @@ public class CheryToolsMenu : MonoBehaviour
 				{
 					ImGui.TextColored(new System.Numerics.Vector4(0.75f, 0.85f, 1f, 1f), _overlayerExportMessage);
 				}
+				DrawOverlayerShareControls();
 				ImGui.Separator();
 				ImGui.Spacing();
 				if (v21 && ImGui.BeginTabBar("OvTabBar"))
