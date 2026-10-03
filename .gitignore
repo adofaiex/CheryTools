@@ -1,0 +1,6 @@
+*.zip
+*.dll
+dist/
+bin/
+obj/
+.vs/
