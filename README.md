@@ -120,6 +120,11 @@ lib/         随发布包分发的运行库
 
 基于本项目的修改版请使用不同的名称，并注明源自 CheryTools Sonnet。
 
+## 特别感谢
+
+- [ADOFAI Tweaks](https://github.com/PizzaLovers007/AdofaiTweaks)
+- [AETC](https://github.com/adofaiex/ADOFAI.EditorTweaks.ChartRendering)（AAA幽蓝色栗子梦男）：AET Recorder 的渲染功能源自这个项目
+
 ## 作者
 
 CherySui · ADOFAIEX
