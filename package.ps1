@@ -62,6 +62,12 @@ $infoJson = [regex]::Replace($infoJson, '("Version"\s*:\s*")[^"]*(")', "`${1}$ve
 Copy-Item -LiteralPath (Join-Path $root 'Resources\MiSans-Bold.ttf') -Destination $resourcesRoot
 Copy-Item -LiteralPath (Join-Path $root 'Resources\CyreneBackground.png') -Destination $resourcesRoot
 
+# GPL-3.0 requires the license to travel with every binary package; Contracts carries its own MIT
+# license, and the notices cover the bundled third-party files.
+Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $root 'Contracts\LICENSE') -Destination (Join-Path $packageRoot 'LICENSE-Contracts')
+Copy-Item -LiteralPath (Join-Path $root 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot
+
 $runtimeFiles = @(
     'cimgui.dll',
     'ImGui.NET.dll',
