@@ -1,5 +1,7 @@
 # CheryTools Sonnet
 
+**简体中文** | [English](README.en.md) | [한국어](README.ko.md)
+
 《冰与火之舞》（A Dance of Fire and Ice）的综合辅助模组，基于 UnityModManager 运行。
 
 愿世界，如你我所愿。
