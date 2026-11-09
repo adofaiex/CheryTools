@@ -1,0 +1,10 @@
+{
+  "Id": "CheryTools",
+  "DisplayName": "CheryTools Sonnet",
+  "Author": "Chery",
+  "Version": "26w43e",
+  "AssemblyName": "CheryTools.Sonnet.Framework.dll",
+  "EntryMethod": "CheryTools.Sonnet.Framework.EntryPoint.Load",
+  "HomePage": "",
+  "Repository": ""
+}

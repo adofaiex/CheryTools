@@ -1,0 +1,12 @@
+Third-party notice: FFmpeg
+==========================
+
+CheryTools distributes FFmpeg as a separate executable:
+  ThirdParty/FFmpeg/ffmpeg.exe
+
+FFmpeg is copyright (c) the FFmpeg developers and other contributors.
+The bundled Windows build is distributed under the GNU General Public License version 3 (GPLv3).
+
+Build: ffmpeg version 8.1.2-essentials_build-www.gyan.dev
+Project: https://ffmpeg.org/
+Build page: https://www.gyan.dev/ffmpeg/builds/

@@ -1,0 +1,27 @@
+<Project>
+  <PropertyGroup>
+    <!-- Single source of the release version. Stamped into every assembly as InformationalVersion
+         (read at runtime for the UI and the {ctversion} tag) and read by package.ps1 for the
+         package name and Info.json. -->
+    <CheryToolsVersion>26w45f</CheryToolsVersion>
+    <!-- Release name shown in the panel header; the build code above stays the precise identifier. -->
+    <CheryToolsReleaseName>26.5.1</CheryToolsReleaseName>
+    <InformationalVersion>$(CheryToolsVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- Override with -p:GameExePath=... or -p:ManagedAssembliesDir=... when the game lives elsewhere. -->
+    <GameExePath Condition="'$(GameExePath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\A Dance of Fire and Ice\A Dance of Fire and Ice.exe</GameExePath>
+    <GameDir>$([System.IO.Path]::GetDirectoryName($(GameExePath)))</GameDir>
+    <GameFileName>$([System.IO.Path]::GetFileNameWithoutExtension($(GameExePath)))</GameFileName>
+    <ManagedAssembliesDir>$(GameDir)\$(GameFileName)_Data\Managed</ManagedAssembliesDir>
+    <!-- Runtime libraries shipped next to the framework (ImGui natives and .NET support assemblies). -->
+    <CheryToolsLibDir>$(MSBuildThisFileDirectory)lib</CheryToolsLibDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="CheryToolsReleaseName" Value="$(CheryToolsReleaseName)" />
+  </ItemGroup>
+</Project>

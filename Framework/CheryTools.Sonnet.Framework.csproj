@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>CheryTools.Sonnet.Framework</RootNamespace>
+    <AssemblyName>CheryTools.Sonnet.Framework</AssemblyName>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <OutputPath>..\out\Framework\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Contracts\CheryTools.Sonnet.Contracts.csproj" />
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.UIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.UI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityModManagerNet">
+      <HintPath>$(ManagedAssembliesDir)\UnityModManager\UnityModManager.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(ManagedAssembliesDir)\UnityModManager\0Harmony.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Shared sources compiled into this assembly; see Shared\SonnetWindowChrome.cs -->
+    <Compile Include="..\Shared\SonnetWindowChrome.cs" Link="Shared\SonnetWindowChrome.cs" />
+    <Compile Include="..\Shared\SonnetWidgets.cs" Link="Shared\SonnetWidgets.cs" />
+    <Compile Include="..\Shared\SonnetText.cs" Link="Shared\SonnetText.cs" />
+  </ItemGroup>
+</Project>

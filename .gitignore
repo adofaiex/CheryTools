@@ -1,0 +1,14 @@
+bin/
+obj/
+out/
+dist/
+*.user
+*.suo
+.vs/
+
+# User settings written by the framework at runtime
+Framework.xml
+
+# FFmpeg is downloaded separately (see README); only its notice is tracked
+ThirdParty/FFmpeg/*
+!ThirdParty/FFmpeg/FFmpeg-NOTICE.txt

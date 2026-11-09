@@ -1,0 +1,80 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>CheryTools.Tools.Preview</RootNamespace>
+    <AssemblyName>CheryTools.Tools.Preview</AssemblyName>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <OutputPath>..\..\out\Modules\</OutputPath>
+    <!-- Assembly-CSharp and ImGui.NET target compatible runtime assemblies under Unity's shared AppDomain. -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Contracts\CheryTools.Sonnet.Contracts.csproj" />
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedAssembliesDir)\Assembly-CSharp.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(ManagedAssembliesDir)\UnityModManager\0Harmony.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="ImGui.NET">
+      <HintPath>$(NuGetPackageRoot)imgui.net\1.91.6.1\lib\netstandard2.0\ImGui.NET.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Numerics.Vectors">
+      <HintPath>$(CheryToolsLibDir)\System.Numerics.Vectors.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe">
+      <HintPath>$(CheryToolsLibDir)\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RDTools">
+      <HintPath>$(ManagedAssembliesDir)\RDTools.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="SkyHook.Unity">
+      <HintPath>$(ManagedAssembliesDir)\SkyHook.Unity.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.UI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(ManagedAssembliesDir)\UnityEngine.UIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Shared sources compiled into this assembly; see Shared\SonnetWindowChrome.cs -->
+    <Compile Include="..\..\Shared\SonnetJudgements.cs" Link="Shared\SonnetJudgements.cs" />
+    <Compile Include="..\..\Shared\SonnetWidgets.cs" Link="Shared\SonnetWidgets.cs" />
+    <Compile Include="..\..\Shared\SonnetText.cs" Link="Shared\SonnetText.cs" />
+    <Compile Include="..\..\Shared\SonnetPalette.cs" Link="Shared\SonnetPalette.cs" />
+  </ItemGroup>
+</Project>
