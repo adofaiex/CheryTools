@@ -10,6 +10,7 @@
 >
 > - 第三方模组和模组加载器可能导致游戏崩溃或不稳定。游戏更新后，请先移除模组和模组加载器，确认新版本兼容后再装回。
 > - CheryTools 的代码在 AI 辅助下编写，功能设计、取舍和发布由作者负责。
+> - 官方 CheryTools 不包含任何修改判定、打击时机或自动游玩的功能。具有此类功能的版本或模块均非官方，与 CheryTools 无关。
 
 ## 功能
 
@@ -104,15 +105,11 @@ lib/         随发布包分发的运行库
 
 ## 编写模块
 
-模块是放在 `Mods\CheryTools\Modules\` 下的独立 DLL，只需要引用 `CheryTools.Sonnet.Contracts`。`Modules/Example` 是一个最小示例。
+模块是放在 `Mods\CheryTools\Modules\` 下的独立 DLL，只需要引用 `CheryTools.Sonnet.Contracts`，`Modules/Example` 是一个最小示例。
 
-- 实现 `ModuleMetadata` 注册左侧导航，通过 `Tabs` 注册模块内的页签。
-- 界面在 `Draw(ModuleUiContext context)` 中绘制，运行逻辑放在 `Update()`。
-- 不要创建自己的 ImGui context，也不要调用 `ImGui.NewFrame()` 或 `ImGui.Render()`，绘制由框架统一调度。
-- UGUI 内容通过 `ModuleContext.Ugui` 创建，框架为每个模块分配独立的根节点。
-- 框架会隔离模块在初始化、更新和绘制中抛出的异常，出错的模块会被停用，不影响其他模块。
+除 KeyViewer、Overlayer、AET Recorder、Tools 四个官方模块外，其他模块都是第三方模块：默认不加载，需要玩家在框架设置中手动允许；加载后 CheryTools 会以 `CheryTools-Unofficial` 的身份运行，画面左下角也会常驻提示。
 
-`Contracts/` 以 MIT 协议发布，模块本身可以使用任何协议。
+编写模块前请先阅读 [模块制作准则](MODULE_GUIDE.md)，其中包括必须遵守的规则、工程配置、接口说明和运行规则。
 
 ## 协议
 

@@ -322,10 +322,11 @@ namespace CheryTools.Sonnet.Framework
                     new NumVector2(min.X + 5.5f, min.Y + size.Y - 8f),
                     ImGui.GetColorU32(SonnetTheme.Accent), 2f);
             }
-            NumVector2 textSize = ImGui.CalcTextSize(module.Metadata.DisplayName);
+            string label = module.Metadata.DisplayName + (module.ThirdParty ? L(" [第三方]", " [3rd-party]") : string.Empty);
+            NumVector2 textSize = ImGui.CalcTextSize(label);
             NumVector2 textPos = min + new NumVector2((width - textSize.X) * 0.5f, (size.Y - textSize.Y) * 0.5f);
             ImGui.GetWindowDrawList().AddText(textPos,
-                ImGui.GetColorU32(active ? SonnetTheme.Text : SonnetTheme.MutedText), module.Metadata.DisplayName);
+                ImGui.GetColorU32(active ? SonnetTheme.Text : SonnetTheme.MutedText), label);
 
             if (clicked && !_moduleDragActive && !_modulePressPending)
                 SelectModule(module);
@@ -597,7 +598,8 @@ namespace CheryTools.Sonnet.Framework
             if (HeadingFont.NativePtr != null) ImGui.PopFont();
             ImGui.SameLine();
             ImGui.SetCursorPosY(29f);
-            ImGui.TextColored(SonnetTheme.MutedText, module == null ? "Framework" : L("模块版本 ", "Module version ") + module.Metadata.Version);
+            ImGui.TextColored(SonnetTheme.MutedText, module == null ? "Framework" : L("模块版本 ", "Module version ") + SonnetWidgets.Plain(module.Metadata.Version)
+                + (module.ThirdParty ? L("　第三方模块，不在官方支持范围内", "　Third-party module, not officially supported") : string.Empty));
 
             NumVector2 closeMin = new NumVector2(ImGui.GetWindowPos().X + width - 55f, ImGui.GetWindowPos().Y + 20f);
             ImGui.SetCursorScreenPos(closeMin);
@@ -746,6 +748,8 @@ namespace CheryTools.Sonnet.Framework
             }
             ImGui.TextWrapped(SonnetWidgets.Plain(SonnetPanelBackground.Status));
             ImGui.Spacing();
+            DrawThirdPartySettings();
+            ImGui.Spacing();
             ImGui.TextColored(SonnetTheme.Text, L("特别感谢", "Special thanks"));
             ImGui.Separator();
             ImGui.TextUnformatted("ADOFAI Tweaks");
@@ -762,6 +766,31 @@ namespace CheryTools.Sonnet.Framework
                 Application.OpenURL("https://space.bilibili.com/1458477881");
             ImGui.Spacing();
             ImGui.TextDisabled(L("模块通过独立 DLL 接入；KV、OV 不属于 Framework 本体。", "Modules load as separate DLLs; KV and OV are not part of the Framework itself."));
+        }
+
+        private static void DrawThirdPartySettings()
+        {
+            ImGui.TextColored(SonnetTheme.Text, L("第三方模块", "Third-party modules"));
+            ImGui.Separator();
+            bool allow = SonnetMain.Settings.AllowThirdPartyModules;
+            if (ImGui.Checkbox(L("允许加载第三方模块（重启游戏后生效）", "Allow third-party modules (takes effect after restarting the game)"), ref allow))
+            {
+                SonnetMain.Settings.AllowThirdPartyModules = allow;
+                SonnetMain.SaveSettings();
+            }
+            string status;
+            if (ModuleIntegrity.ThirdPartyActive)
+                status = L("当前：已加载第三方模块，本次运行的模组 ID 为 ", "Now: third-party modules are loaded; the mod id for this session is ") + ModuleIntegrity.UnofficialModId;
+            else if (ModuleIntegrity.Blocked.Count > 0)
+                status = L("当前：有 ", "Now: ") + ModuleIntegrity.Blocked.Count + L(" 个第三方模块未加载：", " third-party module(s) not loaded: ")
+                    + string.Join(", ", ModuleIntegrity.Blocked.Select(file => file.FileName));
+            else
+                status = L("当前：只加载了官方模块", "Now: only official modules are loaded");
+            ImGui.TextWrapped(SonnetWidgets.Plain(status));
+            if (allow != ModuleIntegrity.AllowedAtStartup)
+                ImGui.TextColored(SonnetTheme.Accent, L("设置已更改，重启游戏后生效。", "Setting changed; restart the game to apply it."));
+            if (!ModuleIntegrity.HashesVerified)
+                ImGui.TextDisabled(L("开发构建：官方模块只按文件名识别。", "Development build: official modules are recognized by file name only."));
         }
 
         private string _shortcutLabel(KeyCode key) => key == KeyCode.None ? L("未设置", "Not set") : key.ToString();

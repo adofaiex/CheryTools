@@ -31,6 +31,27 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Sonnet build failed; packaging stopped.'
 }
 
+# The framework only trusts modules whose SHA-256 matches; rebuild it with the hashes of the modules
+# just built (ModuleIntegrity reads them from the CheryToolsOfficialModules assembly metadata).
+$officialModules = @(
+    'CheryTools.Tools.Preview.dll',
+    'CheryTools.KeyViewer.Preview.dll',
+    'CheryTools.Overlayer.Preview.dll',
+    'CheryTools.AetRecorder.Preview.dll'
+)
+$manifest = ($officialModules | ForEach-Object {
+    $_ + '=' + (Get-FileHash -LiteralPath (Join-Path $root "out\Modules\$_") -Algorithm SHA256).Hash
+}) -join '|'
+$frameworkArgs = @((Join-Path $root 'Framework\CheryTools.Sonnet.Framework.csproj'), '-c', $Configuration, '--no-restore',
+    "-p:CheryToolsOfficialModules=$manifest")
+if (-not [string]::IsNullOrWhiteSpace($ManagedAssembliesDir)) {
+    $frameworkArgs += "-p:ManagedAssembliesDir=$([System.IO.Path]::GetFullPath($ManagedAssembliesDir))"
+}
+dotnet build @frameworkArgs
+if ($LASTEXITCODE -ne 0) {
+    throw 'Framework rebuild with module hashes failed; packaging stopped.'
+}
+
 New-Item -ItemType Directory -Path $modulesRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $resourcesRoot -Force | Out-Null
 
@@ -43,10 +64,9 @@ if (Test-Path -LiteralPath $ffmpegSourceDir) {
 
 Copy-Item -LiteralPath (Join-Path $root 'out\Framework\CheryTools.Sonnet.Framework.dll') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $root 'out\Contracts\CheryTools.Sonnet.Contracts.dll') -Destination $packageRoot
-Copy-Item -LiteralPath (Join-Path $root 'out\Modules\CheryTools.Tools.Preview.dll') -Destination $modulesRoot
-Copy-Item -LiteralPath (Join-Path $root 'out\Modules\CheryTools.KeyViewer.Preview.dll') -Destination $modulesRoot
-Copy-Item -LiteralPath (Join-Path $root 'out\Modules\CheryTools.Overlayer.Preview.dll') -Destination $modulesRoot
-Copy-Item -LiteralPath (Join-Path $root 'out\Modules\CheryTools.AetRecorder.Preview.dll') -Destination $modulesRoot
+foreach ($module in $officialModules) {
+    Copy-Item -LiteralPath (Join-Path $root "out\Modules\$module") -Destination $modulesRoot
+}
 # ReadHelper 实验模块暂不随默认包发布（保留源码与工程，需要时取消注释即可带入）
 # Copy-Item -LiteralPath (Join-Path $root 'out\Modules\CheryTools.ReadHelper.Preview.dll') -Destination $modulesRoot
 $defaultsSourceDir = Join-Path $root 'Package\Defaults'
@@ -104,6 +124,13 @@ try {
 
 Write-Host "Package: $zipPath"
 Get-FileHash -LiteralPath $zipPath -Algorithm SHA256
+# Per-file hashes for the release notes, so anyone can check that a build is official.
+Write-Host 'Official binaries (SHA-256):'
+$hashTargets = @('out\Framework\CheryTools.Sonnet.Framework.dll', 'out\Contracts\CheryTools.Sonnet.Contracts.dll') +
+    ($officialModules | ForEach-Object { "out\Modules\$_" })
+foreach ($target in $hashTargets) {
+    Write-Host ('  {0}  {1}' -f (Get-FileHash -LiteralPath (Join-Path $root $target) -Algorithm SHA256).Hash, (Split-Path -Leaf $target))
+}
 
 if ($Deploy) {
     Write-Host "Deploying directly to $TargetGameDir ..."

@@ -48,6 +48,8 @@ namespace CheryTools.Sonnet.Framework
         public bool EnableUiAnimations = true;
         // UI language: LanguageAuto follows the game's language, the others force one.
         public string Language = LanguageAuto;
+        // Loads DLLs in Modules\ that are not official modules. Read once at startup (see ModuleIntegrity).
+        public bool AllowThirdPartyModules;
 
         internal const string LanguageAuto = "auto";
         internal const string LanguageChinese = "zh";

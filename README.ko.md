@@ -10,6 +10,7 @@ May the world... be as we wish.
 >
 > - 서드파티 모드와 모드 로더는 게임 충돌이나 불안정을 일으킬 수 있습니다. 게임이 업데이트되면 먼저 모드와 모드 로더를 제거하고, 새 버전과의 호환이 확인된 뒤 다시 설치해 주세요.
 > - CheryTools의 코드는 AI의 도움을 받아 작성되었습니다. 기능 설계, 결정 및 배포는 제작자가 책임집니다.
+> - 공식 CheryTools에는 판정, 입력 타이밍, 오토플레이를 바꾸는 기능이 없습니다. 이런 기능이 있는 빌드나 모듈은 비공식이며 CheryTools와 무관합니다.
 
 ## 기능
 
@@ -106,13 +107,9 @@ lib/         릴리스 패키지와 함께 배포되는 런타임 라이브러�
 
 모듈은 `Mods\CheryTools\Modules\`에 두는 독립 DLL이며, `CheryTools.Sonnet.Contracts`만 참조하면 됩니다. `Modules/Example`이 최소 예제입니다.
 
-- `ModuleMetadata`를 구현해 왼쪽 내비게이션에 등록하고, `Tabs`로 모듈 내부 탭을 등록합니다.
-- UI는 `Draw(ModuleUiContext context)`에서 그리고, 런타임 로직은 `Update()`에 둡니다.
-- 자체 ImGui 컨텍스트를 만들거나 `ImGui.NewFrame()`, `ImGui.Render()`를 호출하지 마세요. 그리기는 프레임워크가 일괄 처리합니다.
-- UGUI 콘텐츠는 `ModuleContext.Ugui`를 통해 만듭니다. 프레임워크가 모듈마다 독립된 루트 오브젝트를 할당합니다.
-- 프레임워크는 모듈이 초기화, 업데이트, 그리기 중에 던진 예외를 격리합니다. 오류가 난 모듈은 비활성화되며 다른 모듈에는 영향을 주지 않습니다.
+KeyViewer, Overlayer, AET Recorder, Tools 네 가지 공식 모듈 외의 모든 모듈은 서드파티 모듈입니다. 서드파티 모듈은 플레이어가 프레임워크 설정에서 허용하지 않으면 로드되지 않으며, 로드되어 있는 동안 CheryTools는 `CheryTools-Unofficial`로 동작하고 화면 왼쪽 아래에 안내가 계속 표시됩니다.
 
-`Contracts/`는 MIT 라이선스로 배포되므로, 모듈 자체는 어떤 라이선스를 써도 됩니다.
+모듈을 만들기 전에 [모듈 제작 가이드](MODULE_GUIDE.ko.md)를 먼저 읽어 주세요. 반드시 지켜야 할 규칙, 프로젝트 설정, 인터페이스, 실행 규칙이 정리되어 있습니다.
 
 ## 라이선스
 

@@ -51,6 +51,11 @@
   <ItemGroup>
     <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
   </ItemGroup>
+  <ItemGroup Condition="'$(CheryToolsOfficialModules)' != ''">
+    <!-- SHA-256 of each official module, "File.dll=HASH|File2.dll=HASH"; stamped by package.ps1 after
+         the modules are built. A build without it recognizes official modules by file name only. -->
+    <AssemblyMetadata Include="CheryToolsOfficialModules" Value="$(CheryToolsOfficialModules)" />
+  </ItemGroup>
   <ItemGroup>
     <!-- Shared sources compiled into this assembly; see Shared\SonnetWindowChrome.cs -->
     <Compile Include="..\Shared\SonnetWindowChrome.cs" Link="Shared\SonnetWindowChrome.cs" />

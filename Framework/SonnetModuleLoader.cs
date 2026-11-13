@@ -18,6 +18,7 @@ namespace CheryTools.Sonnet.Framework
         internal string AssemblyPath;
         internal FrameworkUguiContext Ugui;
         internal bool Failed;
+        internal bool ThirdParty;
     }
 
     internal sealed class FrameworkUguiContext : IUguiModuleContext
@@ -109,17 +110,38 @@ namespace CheryTools.Sonnet.Framework
             _uguiParent = root.transform;
         }
 
+        // Loads the files ModuleIntegrity.Scan cleared at startup; blocked third-party DLLs never get here.
         internal void LoadAll()
         {
             Directory.CreateDirectory(_modulesDirectory);
-            foreach (string path in Directory.GetFiles(_modulesDirectory, "*.dll", SearchOption.TopDirectoryOnly).OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                string fileName = Path.GetFileName(path);
-                if (string.Equals(fileName, "CheryTools.Sonnet.Contracts.dll", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(fileName, "CheryTools.Sonnet.Example.dll", StringComparison.OrdinalIgnoreCase)) continue;
-                LoadAssembly(path);
-            }
+            foreach (ModuleFile file in ModuleIntegrity.ToLoad)
+                LoadAssembly(file.Path, !file.Official);
             RebuildDisplayOrder(null);
+            if (ModuleIntegrity.ThirdPartyActive) CreateThirdPartyNotice();
+        }
+
+        // Always on screen while third-party code runs, on the module canvas so it also shows up in
+        // recordings. Not under the module root, so disabling CheryTools does not hide it.
+        private void CreateThirdPartyNotice()
+        {
+            var noticeObject = new GameObject("CheryTools_Sonnet_ThirdPartyNotice", typeof(RectTransform));
+            noticeObject.transform.SetParent(_canvas.transform, false);
+            RectTransform rect = noticeObject.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.zero;
+            rect.pivot = Vector2.zero;
+            rect.anchoredPosition = new Vector2(8f, 6f);
+            rect.sizeDelta = new Vector2(640f, 24f);
+            var label = noticeObject.AddComponent<Text>();
+            label.font = Font.CreateDynamicFontFromOSFont(new[] { "Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "Arial" }, 14);
+            label.fontSize = 14;
+            label.color = new Color(1f, 1f, 1f, 0.75f);
+            label.alignment = TextAnchor.LowerLeft;
+            label.raycastTarget = false;
+            label.text = "CT 第三方模块已启用 / CT third-party modules active";
+            var shadow = noticeObject.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.6f);
+            shadow.effectDistance = new Vector2(1f, -1f);
         }
 
         internal void ApplyDisplayOrder(IList<string> savedOrder)
@@ -170,7 +192,7 @@ namespace CheryTools.Sonnet.Framework
             }
         }
 
-        private void LoadAssembly(string path)
+        private void LoadAssembly(string path, bool thirdParty)
         {
             try
             {
@@ -196,6 +218,7 @@ namespace CheryTools.Sonnet.Framework
                         Instance = module,
                         Metadata = module.Metadata,
                         AssemblyPath = path,
+                        ThirdParty = thirdParty,
                         Ugui = new FrameworkUguiContext(_canvas, _uguiParent, module.Metadata.Id)
                     };
                     try

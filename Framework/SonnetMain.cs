@@ -99,6 +99,10 @@ namespace CheryTools.Sonnet.Framework
             FrameworkDirectory = entry.Path;
             Settings = FrameworkSettings.Load(Path.Combine(entry.Path, "Framework.xml"), Logger);
             UpdateLanguage(force: true);
+            // Classify modules while UMM is still loading mods, so the id is already changed before any
+            // mod loaded after this one (or a later whitelist check) looks at it.
+            ModuleIntegrity.Scan(Path.Combine(entry.Path, "Modules"), Settings.AllowThirdPartyModules, Logger);
+            ModuleIntegrity.ApplyModId(entry, Logger);
             IsPanelOpen = Settings.PanelOpen;
             IsEnabled = true;
             _hasOpenOverlay = false;

@@ -3,9 +3,9 @@
     <!-- Single source of the release version. Stamped into every assembly as InformationalVersion
          (read at runtime for the UI and the {ctversion} tag) and read by package.ps1 for the
          package name and Info.json. -->
-    <CheryToolsVersion>26w45f</CheryToolsVersion>
+    <CheryToolsVersion>26w46b</CheryToolsVersion>
     <!-- Release name shown in the panel header; the build code above stays the precise identifier. -->
-    <CheryToolsReleaseName>26.5.1</CheryToolsReleaseName>
+    <CheryToolsReleaseName>26.5.2</CheryToolsReleaseName>
     <InformationalVersion>$(CheryToolsVersion)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <LangVersion>latest</LangVersion>

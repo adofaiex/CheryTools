@@ -10,6 +10,7 @@ May the world... be as we wish.
 >
 > - Third-party mods and mod loaders can crash the game or make it unstable. After a game update, remove mods and the mod loader first, and put them back once the new version is confirmed compatible.
 > - CheryTools is written with AI assistance. Feature design, trade-offs and releases are the author's responsibility.
+> - Official CheryTools has no feature that changes judgements, hit timing or autoplay. Any build or module with such features is unofficial and has nothing to do with CheryTools.
 
 ## Features
 
@@ -106,13 +107,9 @@ lib/         Runtime libraries shipped with the release package
 
 A module is a separate DLL placed in `Mods\CheryTools\Modules\` that only needs to reference `CheryTools.Sonnet.Contracts`. `Modules/Example` is a minimal example.
 
-- Implement `ModuleMetadata` to register the left-side navigation entry, and register the module's own tabs through `Tabs`.
-- Draw the UI in `Draw(ModuleUiContext context)` and put runtime logic in `Update()`.
-- Do not create your own ImGui context or call `ImGui.NewFrame()` or `ImGui.Render()`; the framework schedules all drawing.
-- Create UGUI content through `ModuleContext.Ugui`; the framework gives each module its own root object.
-- The framework isolates exceptions a module throws during initialization, updates and drawing. A failing module is disabled without affecting other modules.
+Apart from the four official modules (KeyViewer, Overlayer, AET Recorder and Tools), every module is a third-party module. Third-party modules are not loaded unless the player allows them in the framework settings; while they are loaded, CheryTools runs as `CheryTools-Unofficial` and a notice stays in the lower-left corner of the screen.
 
-`Contracts/` is released under the MIT license, so a module itself may use any license.
+Before writing a module, please read the [Module Guidelines](MODULE_GUIDE.en.md). They cover the rules you must follow, project setup, the interface and the runtime rules.
 
 ## License
 
